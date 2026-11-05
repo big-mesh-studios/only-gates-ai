@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MyWasmProject</title>
+  </head>
+  <body>
+    <h1>MyWasmProject</h1>
+    <button id="call-func">Call C func()</button>
+    <pre id="output"></pre>
+
+    <script type="module">
+      import createModule from "./dist/only-gates-ai.js";
+
+      const output = document.getElementById("output");
+      const Module = await createModule({
+        // Capture C's printf() output in the page (and the console).
+        print: (text) => {
+          output.textContent += text + "\n";
+          console.log(text);
+        },
+      });
+
+      document.getElementById("call-func").addEventListener("click", () => {
+        // C's `func` is exported to JS as `Module._func`.
+        Module._func();
+      });
+    </script>
+  </body>
+</html>

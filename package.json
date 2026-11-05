@@ -1,0 +1,13 @@
+{
+  "name": "only-gates-ai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:wasm": "bash ./build.sh",
+    "dev": "npm run build:wasm && vite"
+  },
+  "devDependencies": {
+    "vite": "^8.3.6"
+  }
+}
