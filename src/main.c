@@ -25,5 +25,19 @@ typedef struct {
   };
 } GateProbabilities;
 
+typedef struct {
+  GateProbabilities gate_probabilities;
+  float out;
+} Cell;
+
+struct {
+  bool *inputs;
+  float *outputs;
+  int *shape;
+  int shape_len;
+  Cell *cells;
+  int cell_len;
+} Circuit;
+
 EMSCRIPTEN_KEEPALIVE
 void func() { printf("Hello from C\n"); }
