@@ -5,9 +5,11 @@
 /build-tests/
 /cmake-build-*/
 
-# TypeScript package build output
+# TypeScript package and app build output
 /packages/*/dist/
 /packages/*/wasm/
+/apps/*/dist/
+/apps/*/.vite/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake

@@ -1,0 +1,23 @@
+{
+  "name": "@only-gates-ai/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:core": "pnpm --filter @only-gates-ai/core build",
+    "dev": "pnpm run build:core && vite",
+    "build": "pnpm run build:core && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@only-gates-ai/core": "workspace:*",
+    "@solidjs/web": "2.0.0-rc.21",
+    "solid-js": "2.0.0-rc.21"
+  },
+  "devDependencies": {
+    "@solidjs/vite-plugin": "3.0.0-next.56",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.6"
+  }
+}
