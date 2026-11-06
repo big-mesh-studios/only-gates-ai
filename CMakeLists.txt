@@ -31,8 +31,10 @@ if(EMSCRIPTEN)
         # malloc/free are needed to pass JS arrays into C as pointers.
         "-sEXPORTED_FUNCTIONS=['_func','_get_error','_create_circuit','_destroy_circuit','_circuit_set_input','_circuit_read_output','_circuit_feed_forward','_circuit_back_propergate','_circuit_get_inputs_len','_circuit_get_outputs_len','_circuit_get_shape_len','_circuit_get_shape','_circuit_get_cell_len','_circuit_get_connection_probabilities_len','_circuit_get_connection_probabilities','_circuit_get_cell_gate_probabilities','_circuit_get_activations_len','_circuit_get_activations','_create_hard_circuit','_destroy_hard_circuit','_hard_circuit_set_input','_hard_circuit_read_output','_hard_circuit_feed_forward','_hard_circuit_get_connections_len','_hard_circuit_get_connections','_hard_circuit_get_gates_len','_hard_circuit_get_gates','_hard_circuit_get_activations_len','_hard_circuit_get_activations','_create_trainer','_destroy_trainer','_trainer_reset','_trainer_set_learning_rate','_trainer_step','_malloc','_free']"
 
-        # Emscripten helper utilities we want to use in JS
-        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
+        # Emscripten helper utilities we want to use in JS. The HEAP views must
+        # be listed explicitly: recent Emscripten versions no longer attach them
+        # to the module automatically.
+        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','HEAPU8','HEAP32','HEAPF32']"
 
         # Keep DWARF in a separate wasm file so the served binary stays small.
         # The main wasm points at this file via an external_debug_info section.
