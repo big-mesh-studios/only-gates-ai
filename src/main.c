@@ -85,23 +85,24 @@ Circuit *create_circuit(int shape[], int shape_len) {
     set_error(ERR_OUT_OF_MEMORY);
     return NULL;
   }
-  #define memory_cleanup() { \
-    if (inputs_allocated) { \
-      free(result->inputs); \
-    }\
-    if (outputs_allocated) { \
-      free(result->outputs); \
-    } \
-    if (shape_allocated) { \
-      free(result->shape); \
-    } \
-    if (cells_allocated) { \
-      free(result->cells); \
-    } \
-    if (connection_probabilities_allocated) { \
-      free(result->connection_probabilities); \
-    } \
-    free(result); \
+#define memory_cleanup()                                                       \
+  {                                                                            \
+    if (inputs_allocated) {                                                    \
+      free(result->inputs);                                                    \
+    }                                                                          \
+    if (outputs_allocated) {                                                   \
+      free(result->outputs);                                                   \
+    }                                                                          \
+    if (shape_allocated) {                                                     \
+      free(result->shape);                                                     \
+    }                                                                          \
+    if (cells_allocated) {                                                     \
+      free(result->cells);                                                     \
+    }                                                                          \
+    if (connection_probabilities_allocated) {                                  \
+      free(result->connection_probabilities);                                  \
+    }                                                                          \
+    free(result);                                                              \
   }
   result->inputs = malloc(shape[0] * sizeof((*result->inputs)));
   if (result->inputs == NULL) {
@@ -125,7 +126,7 @@ Circuit *create_circuit(int shape[], int shape_len) {
   }
   shape_allocated = true;
   int cell_len = 0;
-  for (int i = 1; i < shape_len-1; ++i) {
+  for (int i = 1; i < shape_len - 1; ++i) {
     cell_len += shape[i];
   }
   result->cells = malloc(cell_len * sizeof(Cell));
@@ -142,7 +143,8 @@ Circuit *create_circuit(int shape[], int shape_len) {
     int num_gates = shape[i];
     connection_len += (num_pre_gates * num_gates) << 1;
   }
-  result->connection_probabilities = malloc(connection_len * sizeof(*result->connection_probabilities));
+  result->connection_probabilities =
+      malloc(connection_len * sizeof(*result->connection_probabilities));
   if (result->connection_probabilities == NULL) {
     memory_cleanup();
     set_error(ERR_OUT_OF_MEMORY);
@@ -150,7 +152,7 @@ Circuit *create_circuit(int shape[], int shape_len) {
   }
   connection_probabilities_allocated = true;
   result->connection_probabilities_len = connection_len;
-  #undef memory_cleanup
+#undef memory_cleanup
   return result;
 }
 
