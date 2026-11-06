@@ -7,7 +7,9 @@ import {
   untrack,
 } from "solid-js";
 import { createOnlyGatesAI, type OnlyGatesAI } from "@only-gates-ai/core";
+import type { ForestLabelSource } from "@only-gates-ai/compiler";
 
+import CompileDialog from "./components/CompileDialog";
 import DrawingPad from "./components/DrawingPad";
 import LivePrediction from "./components/LivePrediction";
 import ModelStoragePanel from "./components/ModelStoragePanel";
@@ -127,6 +129,8 @@ export default function App() {
   const [storageError, setStorageError] = createSignal<string | null>(null);
   const [storedModelAt, setStoredModelAt] = createSignal<number | null>(null);
 
+  const [compileOpen, setCompileOpen] = createSignal(false);
+
   let disposed = false;
   let loadingRuntime = false;
   let restoreStarted = false;
@@ -141,6 +145,14 @@ export default function App() {
   const parsedShape = createMemo(() => parseShape(shapeText(), gridSize()));
   const selectedLabel = createMemo(
     () => labels().find((label) => label.id === selectedLabelId()) ?? null,
+  );
+  const compileLabels = createMemo<ForestLabelSource[]>(() =>
+    ensembles().map((ensemble) => ({
+      id: ensemble.labelId,
+      name: ensemble.labelName,
+      color: ensemble.color,
+      circuits: ensemble.hardCircuits,
+    })),
   );
 
   const trainableLabels = createMemo(() => {
@@ -910,13 +922,28 @@ export default function App() {
             </p>
           </div>
         </div>
-        <div class={["runtime-pill", runtime()]}>
-          <span class="runtime-dot" />
-          {runtime() === "ready"
-            ? "Runtime ready"
-            : runtime() === "loading"
-              ? "Loading runtime"
-              : "Runtime error"}
+        <div class="header-actions">
+          <button
+            type="button"
+            class="button secondary"
+            disabled={busy() || modelInfo() === null}
+            title={
+              modelInfo() === null
+                ? "Train a forest before compiling it."
+                : "Compile the hard-mode forest into standalone JavaScript."
+            }
+            onClick={() => setCompileOpen(true)}
+          >
+            Compile
+          </button>
+          <div class={["runtime-pill", runtime()]}>
+            <span class="runtime-dot" />
+            {runtime() === "ready"
+              ? "Runtime ready"
+              : runtime() === "loading"
+                ? "Loading runtime"
+                : "Runtime error"}
+          </div>
         </div>
       </header>
 
@@ -1076,6 +1103,12 @@ export default function App() {
           />
         </div>
       </main>
+
+      <CompileDialog
+        open={compileOpen()}
+        labels={compileLabels()}
+        onClose={() => setCompileOpen(false)}
+      />
 
       <footer class="app-footer">
         <span>

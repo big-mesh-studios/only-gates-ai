@@ -7,12 +7,14 @@
   "scripts": {
     "build:wasm": "bash ./build.sh",
     "build:lib": "pnpm --filter @only-gates-ai/core build",
+    "build:compiler": "pnpm --filter @only-gates-ai/compiler build",
     "build:app": "pnpm --filter @only-gates-ai/app build",
     "dev": "npm run build:wasm && vite",
     "dev:app": "pnpm --filter @only-gates-ai/app dev",
     "test": "cmake -S . -B build-tests -DBUILD_TESTING=ON && cmake --build build-tests --parallel && ctest --test-dir build-tests --output-on-failure",
     "test:lib": "pnpm --filter @only-gates-ai/core test",
-    "typecheck:app": "pnpm --filter @only-gates-ai/app typecheck",
+    "test:compiler": "pnpm --filter @only-gates-ai/compiler test",
+    "typecheck:app": "pnpm --filter @only-gates-ai/compiler build && pnpm --filter @only-gates-ai/app typecheck",
     "format": "find . -type f \\( -name \"*.cpp\" -o -name \"*.h\" -o -name \"*.c\" -o -name \"*.hpp\" \\) | xargs clang-format -i"
   },
   "devDependencies": {

@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "build:core": "pnpm --filter @only-gates-ai/core build",
-    "dev": "pnpm run build:core && vite",
-    "build": "pnpm run build:core && vite build",
+    "build:compiler": "pnpm --filter @only-gates-ai/compiler build",
+    "dev": "pnpm run build:core && pnpm run build:compiler && vite",
+    "build": "pnpm run build:core && pnpm run build:compiler && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@only-gates-ai/compiler": "workspace:*",
     "@only-gates-ai/core": "workspace:*",
     "@solidjs/web": "2.0.0-rc.21",
     "solid-js": "2.0.0-rc.21"
