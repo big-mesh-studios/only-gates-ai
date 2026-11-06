@@ -151,6 +151,26 @@ const SoftGateFunc *soft_gates[16] = {
     soft_gate_proj_a, soft_gate_cimp,  soft_gate_or,     soft_gate_one,
 };
 
+void softmax(const float *input, float *output, int size) {
+  if (size <= 0) {
+    return;
+  }
+  float max_val = input[0];
+  for (int i = 1; i < size; i++) {
+    if (input[i] > max_val) {
+      max_val = input[i];
+    }
+  }
+  float sum = 0.0f;
+  for (int i = 0; i < size; i++) {
+    output[i] = expf(input[i] - max_val);
+    sum += output[i];
+  }
+  for (int i = 0; i < size; i++) {
+    output[i] /= sum;
+  }
+}
+
 EMSCRIPTEN_KEEPALIVE
 Circuit *create_circuit(int shape[], int shape_len) {
   clear_error();
