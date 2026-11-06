@@ -140,7 +140,7 @@ Circuit *create_circuit(int shape[], int shape_len) {
   for (int i = 1; i < shape_len; ++i) {
     int num_pre_gates = shape[i - 1];
     int num_gates = shape[i];
-    connection_len = (num_pre_gates * num_gates) << 1;
+    connection_len += (num_pre_gates * num_gates) << 1;
   }
   result->connection_probabilities = malloc(connection_len * sizeof(*result->connection_probabilities));
   if (result->connection_probabilities == NULL) {
@@ -148,6 +148,8 @@ Circuit *create_circuit(int shape[], int shape_len) {
     set_error(ERR_OUT_OF_MEMORY);
     return NULL;
   }
+  connection_probabilities_allocated = true;
+  result->connection_probabilities_len = connection_len;
   #undef memory_cleanup;
   return result;
 }
