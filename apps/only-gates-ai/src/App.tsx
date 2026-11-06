@@ -98,7 +98,7 @@ export default function App() {
   const [instance, setInstance] = createSignal<OnlyGatesAI | null>(null);
 
   const [mode, setMode] = createSignal<"train" | "test">("train");
-  const [inferenceMode, setInferenceMode] = createSignal<InferenceMode>("soft");
+  const [inferenceMode, setInferenceMode] = createSignal<InferenceMode>("hard");
 
   const [labels, setLabels] = createSignal<SymbolLabel[]>([]);
   const [samples, setSamples] = createSignal<DrawingSample[]>([]);
