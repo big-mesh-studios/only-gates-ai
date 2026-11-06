@@ -10,6 +10,7 @@ import { createOnlyGatesAI, type OnlyGatesAI } from "@only-gates-ai/core";
 
 import DrawingPad from "./components/DrawingPad";
 import LivePrediction from "./components/LivePrediction";
+import ModelStoragePanel from "./components/ModelStoragePanel";
 import SettingsPanel from "./components/SettingsPanel";
 import TestingPanel from "./components/TestingPanel";
 import TrainingPanel from "./components/TrainingPanel";
@@ -24,6 +25,15 @@ import {
   TrainingCancelledError,
   type TrainingProgress,
 } from "./lib/model";
+import {
+  deleteModelFromStorage,
+  loadModelFromStorage,
+  parseSerializedModel,
+  restoreModel,
+  saveModelToStorage,
+  serializeModel,
+  type SerializedModel,
+} from "./lib/modelStorage";
 import {
   cloneStrokes,
   DEFAULT_GRID_SIZE,
@@ -112,8 +122,14 @@ export default function App() {
   const [progress, setProgress] = createSignal<TrainingProgress | null>(null);
   const [status, setStatus] = createSignal<StatusMessage | null>(null);
 
+  const [storageBusy, setStorageBusy] = createSignal(false);
+  const [storageAvailable, setStorageAvailable] = createSignal(true);
+  const [storageError, setStorageError] = createSignal<string | null>(null);
+  const [storedModelAt, setStoredModelAt] = createSignal<number | null>(null);
+
   let disposed = false;
   let loadingRuntime = false;
+  let restoreStarted = false;
   let statusTimer: ReturnType<typeof setTimeout> | undefined;
   let trainingToken: { cancelled: boolean } | null = null;
 
@@ -150,6 +166,7 @@ export default function App() {
     () =>
       runtime() === "ready" &&
       !busy() &&
+      !storageBusy() &&
       parsedShape().error === null &&
       trainableLabels().length > 0,
   );
@@ -251,6 +268,7 @@ export default function App() {
       }
       setInstance(loaded);
       setRuntime("ready");
+      void restoreSavedModel(loaded);
     } catch (error) {
       if (disposed) {
         return;
@@ -292,6 +310,237 @@ export default function App() {
       setModelStale(true);
     }
     clearPredictions();
+  }
+
+  function installModel(
+    restored: { ensembles: LabelEnsemble[]; info: ModelInfo },
+    loadedGridSize: number,
+    loadedShape: readonly number[],
+  ): void {
+    if (loadedGridSize !== gridSize()) {
+      setSamples((previous) =>
+        previous.map((sample) => ({
+          ...sample,
+          gridSize: loadedGridSize,
+          input: rasterizeStrokes(sample.strokes, loadedGridSize),
+        })),
+      );
+      setGridSize(loadedGridSize);
+      setGridDraft(String(loadedGridSize));
+    }
+
+    setShapeText(formatShape(loadedShape));
+    destroyEnsembles(ensembles());
+    setEnsembles(restored.ensembles);
+    setModelInfo(restored.info);
+    setModelStale(false);
+    setPredictions([]);
+  }
+
+  async function restoreSavedModel(og: OnlyGatesAI): Promise<void> {
+    if (restoreStarted) {
+      return;
+    }
+    restoreStarted = true;
+    setStorageBusy(true);
+
+    try {
+      const stored = await loadModelFromStorage();
+      if (disposed) {
+        return;
+      }
+      setStorageAvailable(true);
+      setStorageError(null);
+      if (!stored) {
+        return;
+      }
+
+      const restored = restoreModel(og, stored);
+      if (disposed) {
+        destroyEnsembles(restored.ensembles);
+        return;
+      }
+
+      installModel(restored, stored.gridSize, stored.shape);
+      setStoredModelAt(stored.savedAt);
+      showStatus(
+        "info",
+        `Restored the model saved in this browser (${restored.ensembles.length} label${
+          restored.ensembles.length === 1 ? "" : "s"
+        }).`,
+      );
+    } catch (error) {
+      if (disposed) {
+        return;
+      }
+      const message = errorMessage(error);
+      setStorageAvailable(false);
+      setStorageError(message);
+    } finally {
+      if (!disposed) {
+        setStorageBusy(false);
+      }
+    }
+  }
+
+  async function persistModel(
+    info: ModelInfo,
+    currentEnsembles: readonly LabelEnsemble[],
+  ): Promise<string | null> {
+    setStorageBusy(true);
+    try {
+      const stored = serializeModel(info, currentEnsembles);
+      await saveModelToStorage(stored);
+      setStorageAvailable(true);
+      setStorageError(null);
+      setStoredModelAt(stored.savedAt);
+      return null;
+    } catch (error) {
+      const message = errorMessage(error);
+      setStorageAvailable(false);
+      setStorageError(message);
+      return message;
+    } finally {
+      if (!disposed) {
+        setStorageBusy(false);
+      }
+    }
+  }
+
+  function handleSaveModelFile(): void {
+    const info = modelInfo();
+    if (!info || ensembles().length === 0) {
+      return;
+    }
+
+    try {
+      const stored = serializeModel(info, ensembles());
+      const blob = new Blob([JSON.stringify(stored)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      anchor.href = url;
+      anchor.download = `gate-forest-model-${stamp}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      showStatus("success", "Model saved to a file.");
+    } catch (error) {
+      showStatus(
+        "error",
+        `Could not save the model file: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  async function handleLoadModelFile(file: File): Promise<void> {
+    const og = instance();
+    if (!og || runtime() !== "ready") {
+      showStatus("error", "Wait for the runtime before loading a model.");
+      return;
+    }
+    if (busy() || storageBusy()) {
+      return;
+    }
+
+    setStorageBusy(true);
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch {
+        throw new Error("The selected file is not valid JSON.");
+      }
+
+      const stored = parseSerializedModel(parsed);
+      const restored = restoreModel(og, stored);
+      if (disposed) {
+        destroyEnsembles(restored.ensembles);
+        return;
+      }
+
+      installModel(restored, stored.gridSize, stored.shape);
+
+      let saveError: string | null = null;
+      try {
+        const persisted: SerializedModel = { ...stored, savedAt: Date.now() };
+        await saveModelToStorage(persisted);
+        setStorageAvailable(true);
+        setStorageError(null);
+        setStoredModelAt(persisted.savedAt);
+      } catch (error) {
+        saveError = errorMessage(error);
+        setStorageAvailable(false);
+        setStorageError(saveError);
+      }
+
+      const summary = `Loaded ${restored.ensembles.length} label${
+        restored.ensembles.length === 1 ? "" : "s"
+      } from the file.`;
+      showStatus(
+        saveError ? "error" : "success",
+        saveError
+          ? `${summary} Could not save it in this browser: ${saveError}`
+          : `${summary} Saved it in this browser.`,
+      );
+    } catch (error) {
+      showStatus(
+        "error",
+        `Could not load the model: ${errorMessage(error)}`,
+      );
+    } finally {
+      if (!disposed) {
+        setStorageBusy(false);
+      }
+    }
+  }
+
+  async function handleClearModel(): Promise<void> {
+    if (busy() || storageBusy()) {
+      return;
+    }
+    if (
+      !window.confirm(
+        "Clear the trained model from memory and this browser? Your labels and drawings will be kept.",
+      )
+    ) {
+      return;
+    }
+
+    setStorageBusy(true);
+    let storageErrorText: string | null = null;
+    try {
+      await deleteModelFromStorage();
+      setStorageAvailable(true);
+      setStorageError(null);
+      setStoredModelAt(null);
+    } catch (error) {
+      storageErrorText = errorMessage(error);
+      setStorageAvailable(false);
+      setStorageError(storageErrorText);
+    } finally {
+      if (!disposed) {
+        setStorageBusy(false);
+      }
+    }
+
+    destroyEnsembles(ensembles());
+    setEnsembles([]);
+    setModelInfo(null);
+    setModelStale(false);
+    setPredictions([]);
+
+    if (storageErrorText) {
+      showStatus(
+        "error",
+        `Model cleared from memory, but browser storage could not be cleared: ${storageErrorText}`,
+      );
+    } else {
+      showStatus("success", "Model cleared from memory and browser storage.");
+    }
   }
 
   function handleStrokeStart(point: Point): void {
@@ -566,6 +815,7 @@ export default function App() {
       !runtimeInstance ||
       runtime() !== "ready" ||
       busy() ||
+      storageBusy() ||
       parsed.error !== null
     ) {
       return;
@@ -602,28 +852,33 @@ export default function App() {
       }
 
       const previousEnsembles = ensembles();
-      setEnsembles(result.ensembles);
-      destroyEnsembles(previousEnsembles);
-      setModelInfo({
+      const nextInfo: ModelInfo = {
         shape: [...parsed.shape],
         gridSize: gridSize(),
         labelCount: result.ensembles.length,
         totalCircuits: result.totalCircuits,
         averageLoss: result.averageLoss,
         trainedAt: Date.now(),
-      });
+      };
+      setEnsembles(result.ensembles);
+      destroyEnsembles(previousEnsembles);
+      setModelInfo(nextInfo);
       setModelStale(false);
       setPredictions([]);
 
+      const saveError = await persistModel(nextInfo, result.ensembles);
       const skipped =
         result.skipped.length > 0
           ? ` Skipped ${result.skipped.map((entry) => entry.label.name).join(", ")}.`
           : "";
+      const summary = `Trained ${result.totalCircuits} circuits across ${result.ensembles.length} label${
+        result.ensembles.length === 1 ? "" : "s"
+      }.${skipped}`;
       showStatus(
-        "success",
-        `Trained ${result.totalCircuits} circuits across ${result.ensembles.length} label${
-          result.ensembles.length === 1 ? "" : "s"
-        }.${skipped}`,
+        saveError ? "error" : "success",
+        saveError
+          ? `${summary} Could not save it in this browser: ${saveError}`
+          : `${summary} Saved in this browser.`,
       );
     } catch (error) {
       if (error instanceof TrainingCancelledError || token.cancelled) {
@@ -803,10 +1058,21 @@ export default function App() {
             shapeError={parsedShape().error}
             parameterCount={parsedShape().parameterCount}
             inputSize={inputSize()}
-            disabled={busy()}
+            disabled={busy() || storageBusy()}
             onGridDraftChange={setGridDraft}
             onGridCommit={handleGridCommit}
             onShapeTextChange={handleShapeTextChange}
+          />
+
+          <ModelStoragePanel
+            hasModel={modelInfo() !== null}
+            busy={busy() || storageBusy()}
+            storageAvailable={storageAvailable()}
+            storageError={storageError()}
+            storedAt={storedModelAt()}
+            onSave={handleSaveModelFile}
+            onLoad={(file) => void handleLoadModelFile(file)}
+            onClear={() => void handleClearModel()}
           />
         </div>
       </main>

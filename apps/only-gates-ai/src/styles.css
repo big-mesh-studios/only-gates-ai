@@ -818,6 +818,59 @@ input:disabled {
   box-shadow: 0 0 0 3px rgba(242, 204, 96, 0.1);
 }
 
+.storage-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 0.78rem;
+}
+
+.storage-status strong {
+  display: block;
+  font-weight: 650;
+}
+
+.storage-status p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.storage-status .status-dot {
+  margin-top: 5px;
+  background: var(--muted);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
+}
+
+.storage-status.saved {
+  border-color: rgba(126, 231, 135, 0.2);
+  background: rgba(126, 231, 135, 0.06);
+}
+
+.storage-status.saved .status-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(126, 231, 135, 0.1);
+}
+
+.storage-status.error {
+  border-color: rgba(255, 123, 114, 0.26);
+  background: rgba(255, 123, 114, 0.07);
+}
+
+.storage-status.error .status-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px rgba(255, 123, 114, 0.1);
+}
+
+.storage-actions {
+  margin-top: 14px;
+}
+
 .inference-block {
   padding: 14px;
   border: 1px solid var(--border);
