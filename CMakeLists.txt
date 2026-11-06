@@ -4,15 +4,14 @@ project(MyWasmProject VERSION 1.0 LANGUAGES C)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-add_executable(${PROJECT_NAME}
-    src/main.c
-)
-
-# Use a consistent output name for both native and Emscripten builds
-set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "only-gates-ai")
-
-# Detect if we are cross-compiling with Emscripten
 if(EMSCRIPTEN)
+    add_executable(${PROJECT_NAME}
+        src/main.c
+    )
+
+    # Use a consistent output name for the wasm module
+    set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "only-gates-ai")
+
     # DWARF is generated at compile time, but Emscripten strips it at link time
     # unless a -g flag is also passed there. Debug info must be present in the
     # object files for it to survive into the linked wasm, so pass it here too.
@@ -39,4 +38,9 @@ if(EMSCRIPTEN)
 
     # Change output extension from a native binary to JavaScript/Wasm
     set_target_properties(${PROJECT_NAME} PROPERTIES SUFFIX ".js")
+endif()
+
+include(CTest)
+if(BUILD_TESTING AND NOT EMSCRIPTEN)
+    add_subdirectory(tests)
 endif()

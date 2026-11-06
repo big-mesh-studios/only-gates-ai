@@ -1,6 +1,7 @@
 # Emscripten / CMake build output
 /dist/
 /build/
+/build-tests/
 /cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
