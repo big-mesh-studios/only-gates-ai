@@ -39,7 +39,7 @@ export class HardCircuit {
     return this.module.HEAP32.slice(start, start + length);
   }
 
-  /** Selected gate index for every hidden cell. */
+  /** Selected gate index for every cell, including the output layer. */
   get gates(): Int32Array {
     this.assertAlive();
     const length = this.module._hard_circuit_get_gates_len(this.pointer);

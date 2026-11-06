@@ -18,7 +18,7 @@ test("creates, initializes and runs a circuit", async () => {
 
   assert.equal(circuit.inputsLength, 2);
   assert.equal(circuit.outputsLength, 1);
-  assert.equal(circuit.cellCount, 3);
+  assert.equal(circuit.cellCount, 4);
 
   circuit.setInput([true, false]);
   circuit.feedForward();
@@ -58,6 +58,10 @@ test("back-propagates through a deterministic AND circuit", async () => {
     0,
     [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
   );
+  circuit.setGates(
+    1,
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+  );
   circuit.setInput([true, false]);
   circuit.feedForward();
   assert.equal(circuit.getOutput()[0], 0);
@@ -81,6 +85,9 @@ test("trains on a dataset with trainer.step and trainEpoch", async () => {
   circuit.setConnections([0.6, 0.4, 0.4, 0.6, 1, 1]);
   circuit.setGates(0, [
     0, 0.25, 0, 0, 0, 0, 0.25, 0, 0.25, 0, 0, 0, 0, 0, 0.25, 0,
+  ]);
+  circuit.setGates(1, [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
   ]);
 
   const dataset = {
@@ -131,14 +138,17 @@ test("creates a hard circuit from the highest-probability choices", async () => 
   circuit.setGates(1, [
     0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
   ]);
+  circuit.setGates(2, [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+  ]);
 
   const hard = circuit.createHardCircuit();
   assert.deepEqual(Array.from(hard.connections), [1, 0, 1, 1, 1, 0]);
-  assert.deepEqual(Array.from(hard.gates), [8, 7]);
+  assert.deepEqual(Array.from(hard.gates), [8, 7, 14]);
 
   hard.setInput([true, false]);
   hard.feedForward();
-  assert.equal(hard.getOutput()[0], 0.5);
+  assert.equal(hard.getOutput()[0], 1);
 
   hard.destroy();
   assert.throws(() => hard.feedForward(), /destroyed/);

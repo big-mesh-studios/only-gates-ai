@@ -43,6 +43,7 @@ static void test_trainer_trains_or(void) {
   gate[6] = 0.25f;  // xor
   gate[8] = 0.25f;  // and
   gate[14] = 0.25f; // or
+  circuit->cells[1].gate_probabilities.proj_a = 1.0f;
 
   const bool inputs[] = {
       false, false, // 0, 0 -> 0

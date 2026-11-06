@@ -34,8 +34,16 @@ static void test_finite_difference_gradients(void) {
   gate[8] = 0.20f;  // and
   gate[11] = 0.10f; // imp
   gate[14] = 0.20f; // or
-  float gate_backup[16];
-  memcpy(gate_backup, gate, sizeof(gate_backup));
+
+  float *output_gate = circuit->cells[1].gate_probabilities.data;
+  output_gate[6] = 0.25f;  // xor
+  output_gate[8] = 0.25f;  // and
+  output_gate[12] = 0.25f; // proj_a
+  output_gate[14] = 0.25f; // or
+
+  float gate_backup[32];
+  memcpy(gate_backup, gate, 16 * sizeof(float));
+  memcpy(gate_backup + 16, output_gate, 16 * sizeof(float));
 
   circuit->inputs[0] = true;
   circuit->inputs[1] = false;
@@ -45,7 +53,7 @@ static void test_finite_difference_gradients(void) {
   const float learning_rate = 1e-3f;
 
   float numerical_connection_gradients[6] = {0};
-  float numerical_gate_gradients[16] = {0};
+  float numerical_gate_gradients[32] = {0};
 
   // Compute ambient gradients by perturbing without renormalizing.
   for (int group = 0; group < 2; ++group) {
@@ -63,15 +71,20 @@ static void test_finite_difference_gradients(void) {
     }
   }
 
-  for (int i = 0; i < 16; ++i) {
+  for (int i = 0; i < 32; ++i) {
     memcpy(connections, connections_backup, sizeof(connections_backup));
-    memcpy(gate, gate_backup, sizeof(gate_backup));
-    gate[i] += eps;
+    memcpy(gate, gate_backup, 16 * sizeof(float));
+    memcpy(output_gate, gate_backup + 16, 16 * sizeof(float));
+
+    float *parameter = i < 16 ? gate + i : output_gate + (i - 16);
+    *parameter += eps;
     float plus = loss(circuit, target);
 
     memcpy(connections, connections_backup, sizeof(connections_backup));
-    memcpy(gate, gate_backup, sizeof(gate_backup));
-    gate[i] -= eps;
+    memcpy(gate, gate_backup, 16 * sizeof(float));
+    memcpy(output_gate, gate_backup + 16, 16 * sizeof(float));
+
+    *parameter -= eps;
     float minus = loss(circuit, target);
 
     numerical_gate_gradients[i] = (plus - minus) / (2 * eps);
@@ -79,7 +92,8 @@ static void test_finite_difference_gradients(void) {
 
   // Restore the parameters and apply one analytic update.
   memcpy(connections, connections_backup, sizeof(connections_backup));
-  memcpy(gate, gate_backup, sizeof(gate_backup));
+  memcpy(gate, gate_backup, 16 * sizeof(float));
+  memcpy(output_gate, gate_backup + 16, 16 * sizeof(float));
   circuit_feed_forward(circuit);
 
   const float output_before = circuit->outputs[0];
@@ -112,24 +126,28 @@ static void test_finite_difference_gradients(void) {
     expect_near(name, connections[start + 1], predicted[1], 2e-4f);
   }
 
-  float mean_gate_gradient = 0.0f;
-  for (int i = 0; i < 16; ++i) {
-    mean_gate_gradient += numerical_gate_gradients[i];
-  }
-  mean_gate_gradient /= 16.0f;
+  for (int cell = 0; cell < 2; ++cell) {
+    float *cell_gate = circuit->cells[cell].gate_probabilities.data;
+    float mean_gate_gradient = 0.0f;
+    for (int i = 0; i < 16; ++i) {
+      mean_gate_gradient += numerical_gate_gradients[cell * 16 + i];
+    }
+    mean_gate_gradient /= 16.0f;
 
-  float predicted_gate[16];
-  for (int i = 0; i < 16; ++i) {
-    predicted_gate[i] =
-        gate_backup[i] -
-        learning_rate * (numerical_gate_gradients[i] - mean_gate_gradient);
-  }
-  normalize_probabilities(predicted_gate, 16);
+    float predicted_gate[16];
+    for (int i = 0; i < 16; ++i) {
+      predicted_gate[i] =
+          gate_backup[cell * 16 + i] -
+          learning_rate *
+              (numerical_gate_gradients[cell * 16 + i] - mean_gate_gradient);
+    }
+    normalize_probabilities(predicted_gate, 16);
 
-  for (int i = 0; i < 16; ++i) {
-    char name[64];
-    snprintf(name, sizeof(name), "gate[%d]", i);
-    expect_near(name, gate[i], predicted_gate[i], 2e-4f);
+    for (int i = 0; i < 16; ++i) {
+      char name[64];
+      snprintf(name, sizeof(name), "gate[%d][%d]", cell, i);
+      expect_near(name, cell_gate[i], predicted_gate[i], 2e-4f);
+    }
   }
 
   destroy_circuit(circuit);

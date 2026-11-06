@@ -24,6 +24,7 @@ static void test_forward_and_derivatives(void) {
   memset(circuit->cells, 0, circuit->cell_len * sizeof(Cell));
   circuit->cells[0].gate_probabilities.and = 1.0f;
   circuit->cells[1].gate_probabilities.or = 1.0f;
+  circuit->cells[2].gate_probabilities.or = 1.0f;
 
   circuit->inputs[0] = true;
   circuit->inputs[1] = false;
@@ -31,13 +32,13 @@ static void test_forward_and_derivatives(void) {
 
   expect_near("forward hidden AND(1, 0)", circuit->cells[0].out, 0.0f, 1e-6f);
   expect_near("forward hidden OR(0, 1)", circuit->cells[1].out, 1.0f, 1e-6f);
-  expect_near("forward output average", circuit->outputs[0], 0.5f, 1e-6f);
+  expect_near("forward output OR(0, 1)", circuit->outputs[0], 1.0f, 1e-6f);
   expect_near("forward d AND / da", circuit->derivatives[0], 0.0f, 1e-6f);
   expect_near("forward d AND / db", circuit->derivatives[1], 1.0f, 1e-6f);
   expect_near("forward d OR / da", circuit->derivatives[2], 0.0f, 1e-6f);
   expect_near("forward d OR / db", circuit->derivatives[3], 1.0f, 1e-6f);
-  expect_near("forward d output / da", circuit->derivatives[4], 0.5f, 1e-6f);
-  expect_near("forward d output / db", circuit->derivatives[5], 0.5f, 1e-6f);
+  expect_near("forward d output / da", circuit->derivatives[4], 0.0f, 1e-6f);
+  expect_near("forward d output / db", circuit->derivatives[5], 1.0f, 1e-6f);
 
   destroy_circuit(circuit);
 }
@@ -61,6 +62,7 @@ static void test_soft_gate_mixture(void) {
   memset(circuit->cells, 0, circuit->cell_len * sizeof(Cell));
   circuit->cells[0].gate_probabilities.and = 0.5f;
   circuit->cells[0].gate_probabilities.or = 0.5f;
+  circuit->cells[1].gate_probabilities.proj_a = 1.0f;
 
   circuit->inputs[0] = true;
   circuit->inputs[1] = false;
@@ -70,6 +72,8 @@ static void test_soft_gate_mixture(void) {
   expect_near("mixture output", circuit->outputs[0], 0.5f, 1e-6f);
   expect_near("mixture d/da", circuit->derivatives[0], 0.5f, 1e-6f);
   expect_near("mixture d/db", circuit->derivatives[1], 0.5f, 1e-6f);
+  expect_near("output projection d/da", circuit->derivatives[2], 1.0f, 1e-6f);
+  expect_near("output projection d/db", circuit->derivatives[3], 0.0f, 1e-6f);
 
   destroy_circuit(circuit);
 }
@@ -102,7 +106,8 @@ static void test_backpropagation_smoke(void) {
     return;
   }
 
-  // The output layer copies the hidden cell, which is a deterministic AND.
+  // The output gate is proj_a, so it copies the hidden cell, which is a
+  // deterministic AND.
   float connections[] = {
       1, 0, // hidden pin a -> x0
       0, 1, // hidden pin b -> x1
@@ -113,6 +118,7 @@ static void test_backpropagation_smoke(void) {
 
   memset(circuit->cells, 0, circuit->cell_len * sizeof(Cell));
   circuit->cells[0].gate_probabilities.and = 1.0f;
+  circuit->cells[1].gate_probabilities.proj_a = 1.0f;
   circuit->inputs[0] = true;
   circuit->inputs[1] = false;
 
@@ -144,6 +150,13 @@ static void test_backpropagation_smoke(void) {
     gate_sum += circuit->cells[0].gate_probabilities.data[k];
   }
   expect_near("backprop gate probabilities normalized", gate_sum, 1.0f, 1e-6f);
+
+  float output_gate_sum = 0.0f;
+  for (int k = 0; k < 16; ++k) {
+    output_gate_sum += circuit->cells[1].gate_probabilities.data[k];
+  }
+  expect_near("backprop output gate probabilities normalized", output_gate_sum,
+              1.0f, 1e-6f);
 
   destroy_circuit(circuit);
 }

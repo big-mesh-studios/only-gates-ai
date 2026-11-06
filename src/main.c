@@ -39,7 +39,7 @@ typedef struct {
        * Probability for the xor gate: returns `(a && !b) || (!a && b)` (aka `a
        * xor b`)
        */
-      float xor ;
+      float xor;
       /**
        * Probability for the nand gate: returns `!(a && b)`
        */
@@ -72,7 +72,7 @@ typedef struct {
       /**
        * Probability for the or gate: returns `a || b`
        */
-      float or ;
+      float or;
       /**
        * Probability for the one gate: returns `true`
        */
@@ -119,11 +119,11 @@ typedef struct {
   float *activations;
   int activations_len;
   /**
-   * Local derivatives for back-propagation, two floats per gate in layer order.
-   * For gate `g`, `derivatives[2 * g]` is `d(out) / d(a)` and
-   * `derivatives[2 * g + 1]` is `d(out) / d(b)`, where `a` and `b` are the two
-   * input pins of that gate. Hidden cells come first in the same order as
-   * `cells`, followed by the output layer.
+   * Local derivatives for back-propagation, two floats per cell in layer order.
+   * For cell `c`, `derivatives[2 * c]` is `d(out) / d(a)` and
+   * `derivatives[2 * c + 1]` is `d(out) / d(b)`, where `a` and `b` are the two
+   * input pins of that cell. Cells appear in the same order as `cells`,
+   * including the output layer.
    */
   float *derivatives;
   int derivatives_len;
@@ -139,12 +139,9 @@ typedef struct {
 /**
  * Deterministic version of a trained `Circuit`, analogous to diff-logic's
  * evaluation mode. Every pin reads a single previous-layer neuron (the wire
- * with the highest probability) and every hidden cell uses a single gate (the
- * gate with the highest probability), so forward evaluation performs no
- * probability arithmetic.
- *
- * The output layer has no gate, matching `Circuit`. It averages its two
- * selected inputs, so outputs are 0, 0.5 or 1.
+ * with the highest probability) and every cell, including the output layer,
+ * uses a single gate (the gate with the highest probability), so forward
+ * evaluation performs no probability arithmetic and outputs are pure booleans.
  *
  * A hard circuit owns copies of everything it needs and stays valid after the
  * source `Circuit` changes or is destroyed.
@@ -167,8 +164,8 @@ typedef struct {
   int *connections;
   int connections_len;
   /**
-   * Selected gate index (0..15) per hidden cell, using the same ordering as
-   * `Circuit.cells`.
+   * Selected gate index (0..15) per cell, using the same ordering as
+   * `Circuit.cells`, including the output layer.
    */
   int *gates;
   int gates_len;
@@ -436,7 +433,7 @@ Circuit *create_circuit(int shape[], int shape_len) {
   result->inputs_len = shape[0];
   result->outputs_len = shape[shape_len - 1];
   int cell_len = 0;
-  for (int i = 1; i < shape_len - 1; ++i) {
+  for (int i = 1; i < shape_len; ++i) {
     cell_len += shape[i];
   }
   if (cell_len > 0) {
@@ -482,14 +479,19 @@ Circuit *create_circuit(int shape[], int shape_len) {
   }
   activations_allocated = true;
   result->activations_len = activations_len;
-  int derivatives_len = (cell_len + shape[shape_len - 1]) << 1;
-  result->derivatives = malloc(derivatives_len * sizeof(*result->derivatives));
-  if (result->derivatives == NULL) {
-    memory_cleanup();
-    set_error(ERR_OUT_OF_MEMORY);
-    return NULL;
+  int derivatives_len = cell_len << 1;
+  if (derivatives_len > 0) {
+    result->derivatives =
+        malloc(derivatives_len * sizeof(*result->derivatives));
+    if (result->derivatives == NULL) {
+      memory_cleanup();
+      set_error(ERR_OUT_OF_MEMORY);
+      return NULL;
+    }
+    derivatives_allocated = true;
+  } else {
+    result->derivatives = NULL;
   }
-  derivatives_allocated = true;
   result->derivatives_len = derivatives_len;
   result->gradients = malloc(activations_len * sizeof(*result->gradients));
   if (result->gradients == NULL) {
@@ -610,7 +612,8 @@ float *circuit_get_activations(Circuit *circuit) {
 EMSCRIPTEN_KEEPALIVE
 void circuit_feed_forward(Circuit *circuit) {
   if (circuit == NULL || circuit->shape == NULL || circuit->inputs == NULL ||
-      circuit->activations == NULL || circuit->derivatives == NULL ||
+      circuit->activations == NULL ||
+      (circuit->derivatives_len > 0 && circuit->derivatives == NULL) ||
       circuit->shape_len <= 0) {
     set_error(ERR_INVALID_PARAMS);
     return;
@@ -641,7 +644,6 @@ void circuit_feed_forward(Circuit *circuit) {
     float *curr = activations + curr_offset;
     const float *connections =
         circuit->connection_probabilities + connection_offset;
-    const bool is_output_layer = (layer == shape_len - 1);
 
     for (int gate = 0; gate < curr_len; ++gate) {
       // Each pin has one probability per output in the previous layer. The
@@ -655,49 +657,33 @@ void circuit_feed_forward(Circuit *circuit) {
         b += wire_b[j] * prev[j];
       }
 
-      float out;
-      float d_a;
-      float d_b;
-      if (is_output_layer) {
-        // The output layer has no gate, so combine its two pins evenly.
-        out = 0.5f * (a + b);
-        d_a = 0.5f;
-        d_b = 0.5f;
-      } else {
-        Cell *cell = &circuit->cells[cell_offset + gate];
-        const float *gate_probabilities = cell->gate_probabilities.data;
-        float cell_out = 0.0f;
-        float cell_d_a = 0.0f;
-        float cell_d_b = 0.0f;
-        for (int k = 0; k < 16; ++k) {
-          const float probability = gate_probabilities[k];
-          if (probability == 0.0f) {
-            continue;
-          }
-          float value;
-          float gate_d_a;
-          float gate_d_b;
-          soft_gate_forward_and_derivative(k, a, b, &value, &gate_d_a,
-                                           &gate_d_b);
-          cell_out += probability * value;
-          cell_d_a += probability * gate_d_a;
-          cell_d_b += probability * gate_d_b;
+      Cell *cell = &circuit->cells[cell_offset + gate];
+      const float *gate_probabilities = cell->gate_probabilities.data;
+      float cell_out = 0.0f;
+      float cell_d_a = 0.0f;
+      float cell_d_b = 0.0f;
+      for (int k = 0; k < 16; ++k) {
+        const float probability = gate_probabilities[k];
+        if (probability == 0.0f) {
+          continue;
         }
-        cell->out = cell_out;
-        out = cell_out;
-        d_a = cell_d_a;
-        d_b = cell_d_b;
+        float value;
+        float gate_d_a;
+        float gate_d_b;
+        soft_gate_forward_and_derivative(k, a, b, &value, &gate_d_a, &gate_d_b);
+        cell_out += probability * value;
+        cell_d_a += probability * gate_d_a;
+        cell_d_b += probability * gate_d_b;
       }
+      cell->out = cell_out;
 
-      curr[gate] = out;
+      curr[gate] = cell_out;
       // Cache the chain-rule terms back-propagation needs from this gate.
-      derivatives[derivative_offset++] = d_a;
-      derivatives[derivative_offset++] = d_b;
+      derivatives[derivative_offset++] = cell_d_a;
+      derivatives[derivative_offset++] = cell_d_b;
     }
 
-    if (!is_output_layer) {
-      cell_offset += curr_len;
-    }
+    cell_offset += curr_len;
     connection_offset += (prev_len * curr_len) << 1;
     prev_offset = curr_offset;
     prev_len = curr_len;
@@ -763,8 +749,9 @@ static inline bool hard_gate_forward(int gate, bool a, bool b) {
 
 /**
  * Builds a deterministic `HardCircuit` by taking the highest-probability wire
- * for every pin and the highest-probability gate for every hidden cell. Ties
- * resolve to the lowest index, which keeps the conversion deterministic.
+ * for every pin and the highest-probability gate for every cell, including the
+ * output layer. Ties resolve to the lowest index, which keeps the conversion
+ * deterministic.
  */
 EMSCRIPTEN_KEEPALIVE
 HardCircuit *create_hard_circuit(Circuit *circuit) {
@@ -842,7 +829,6 @@ HardCircuit *create_hard_circuit(Circuit *circuit) {
     const float *layer_connections =
         circuit->connection_probabilities + connection_offset;
     int *hard_connections = result->connections + hard_connection_offset;
-    const bool is_output_layer = (layer == shape_len - 1);
 
     for (int gate = 0; gate < curr_len; ++gate) {
       for (int pin = 0; pin < 2; ++pin) {
@@ -853,16 +839,13 @@ HardCircuit *create_hard_circuit(Circuit *circuit) {
       }
     }
 
-    if (!is_output_layer) {
-      for (int gate = 0; gate < curr_len; ++gate) {
-        const float *probabilities =
-            circuit->cells[cell_offset + gate].gate_probabilities.data;
-        result->gates[gate_offset + gate] =
-            argmax_probability(probabilities, 16);
-      }
-      cell_offset += curr_len;
-      gate_offset += curr_len;
+    for (int gate = 0; gate < curr_len; ++gate) {
+      const float *probabilities =
+          circuit->cells[cell_offset + gate].gate_probabilities.data;
+      result->gates[gate_offset + gate] = argmax_probability(probabilities, 16);
     }
+    cell_offset += curr_len;
+    gate_offset += curr_len;
 
     connection_offset += (prev_len * curr_len) << 1;
     hard_connection_offset += curr_len << 1;
@@ -953,9 +936,9 @@ void hard_circuit_read_output(HardCircuit *hard_circuit, float output[]) {
 }
 
 /**
- * Runs a deterministic forward pass. Hidden gates read their single selected
- * wire and evaluate a single gate; the output layer averages its two selected
- * inputs.
+ * Runs a deterministic forward pass. Every cell, including the output layer,
+ * reads its two single selected wires and evaluates a single gate, so outputs
+ * are pure booleans.
  */
 EMSCRIPTEN_KEEPALIVE
 void hard_circuit_feed_forward(HardCircuit *hard_circuit) {
@@ -990,24 +973,17 @@ void hard_circuit_feed_forward(HardCircuit *hard_circuit) {
     const float *prev = activations + prev_offset;
     float *curr = activations + curr_offset;
     const int *connections = hard_circuit->connections + connection_offset;
-    const bool is_output_layer = (layer == shape_len - 1);
 
     for (int gate = 0; gate < curr_len; ++gate) {
       const bool a = prev[connections[(gate << 1)]] != 0.0f;
       const bool b = prev[connections[(gate << 1) + 1]] != 0.0f;
-      if (is_output_layer) {
-        curr[gate] = 0.5f * ((a ? 1.0f : 0.0f) + (b ? 1.0f : 0.0f));
-      } else {
-        curr[gate] =
-            hard_gate_forward(hard_circuit->gates[gate_offset + gate], a, b)
-                ? 1.0f
-                : 0.0f;
-      }
+      curr[gate] =
+          hard_gate_forward(hard_circuit->gates[gate_offset + gate], a, b)
+              ? 1.0f
+              : 0.0f;
     }
 
-    if (!is_output_layer) {
-      gate_offset += curr_len;
-    }
+    gate_offset += curr_len;
     connection_offset += curr_len << 1;
     prev_offset = curr_offset;
     prev_len = curr_len;
@@ -1023,7 +999,8 @@ EMSCRIPTEN_KEEPALIVE
 void circuit_back_propergate(Circuit *circuit, float error[],
                              float learning_rate) {
   if (circuit == NULL || error == NULL || circuit->shape == NULL ||
-      circuit->activations == NULL || circuit->derivatives == NULL ||
+      circuit->activations == NULL ||
+      (circuit->derivatives_len > 0 && circuit->derivatives == NULL) ||
       circuit->gradients == NULL || circuit->shape_len <= 0) {
     set_error(ERR_INVALID_PARAMS);
     return;
@@ -1043,13 +1020,12 @@ void circuit_back_propergate(Circuit *circuit, float error[],
   }
 
   int connection_offset = circuit->connection_probabilities_len;
-  int hidden_cell_offset = cell_len;
+  int cell_offset = cell_len;
 
   for (int layer = last_layer; layer >= 1; --layer) {
     const int prev_len = shape[layer - 1];
     const int curr_len = shape[layer];
     const int prev_offset = curr_offset - prev_len;
-    const bool is_output_layer = (layer == last_layer);
     const float *prev = circuit->activations + prev_offset;
     const float *curr_deltas = circuit->gradients + curr_offset;
     float *prev_deltas = circuit->gradients + prev_offset;
@@ -1057,9 +1033,7 @@ void circuit_back_propergate(Circuit *circuit, float error[],
     connection_offset -= (prev_len * curr_len) << 1;
     float *connections = circuit->connection_probabilities + connection_offset;
 
-    if (!is_output_layer) {
-      hidden_cell_offset -= curr_len;
-    }
+    cell_offset -= curr_len;
 
     for (int j = 0; j < prev_len; ++j) {
       prev_deltas[j] = 0.0f;
@@ -1067,9 +1041,7 @@ void circuit_back_propergate(Circuit *circuit, float error[],
 
     for (int gate = 0; gate < curr_len; ++gate) {
       const float grad_out = curr_deltas[gate];
-      const int derivative_index = is_output_layer
-                                       ? ((cell_len + gate) << 1)
-                                       : ((hidden_cell_offset + gate) << 1);
+      const int derivative_index = (cell_offset + gate) << 1;
       const float grad_a = grad_out * circuit->derivatives[derivative_index];
       const float grad_b =
           grad_out * circuit->derivatives[derivative_index + 1];
@@ -1111,8 +1083,8 @@ void circuit_back_propergate(Circuit *circuit, float error[],
         normalize_probabilities(wire_b, prev_len);
       }
 
-      if (!is_output_layer && learning_rate != 0.0f) {
-        Cell *cell = &circuit->cells[hidden_cell_offset + gate];
+      if (learning_rate != 0.0f) {
+        Cell *cell = &circuit->cells[cell_offset + gate];
         float *gate_probabilities = cell->gate_probabilities.data;
         float gate_gradients[16];
         float gradient_sum = 0.0f;

@@ -19,7 +19,7 @@ import { createOnlyGatesAI } from "@only-gates-ai/core";
 
 const og = await createOnlyGatesAI();
 
-// Layers: 2 inputs -> 4 hidden gates -> 1 output.
+// Layers: 2 inputs -> 4 hidden gates -> 1 output gate.
 const circuit = og.createCircuit([2, 4, 1]);
 circuit.randomize(42);
 

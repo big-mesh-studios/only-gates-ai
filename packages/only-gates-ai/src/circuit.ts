@@ -162,7 +162,7 @@ export class Circuit {
     return this;
   }
 
-  /** The 16 gate probabilities for one hidden cell. */
+  /** The 16 gate probabilities for one cell. */
   getGates(cell: number): Float32Array {
     this.assertAlive();
     this.assertCell(cell);
@@ -174,7 +174,7 @@ export class Circuit {
     return readFloats(this.module, pointer, 16);
   }
 
-  /** Replaces all 16 gate probabilities for one hidden cell. */
+  /** Replaces all 16 gate probabilities for one cell. */
   setGates(cell: number, values: ArrayLike<number>): this {
     this.assertAlive();
     this.assertCell(cell);

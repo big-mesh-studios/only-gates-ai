@@ -8,7 +8,7 @@ import { parseShape as parseCircuitShape } from "./model";
 import type { LabelEnsemble, ModelInfo } from "./types";
 
 const MODEL_FORMAT = "gate-forest-model" as const;
-const MODEL_VERSION = 1 as const;
+const MODEL_VERSION = 2 as const;
 
 const DB_NAME = "gate-forest";
 const DB_VERSION = 1;
@@ -232,7 +232,9 @@ export function parseSerializedModel(value: unknown): SerializedModel {
     throw new Error("This is not a Gate Forest model.");
   }
   if (record.version !== MODEL_VERSION) {
-    throw new Error(`Unsupported model version: ${String(record.version)}.`);
+    throw new Error(
+      `Unsupported model version: ${String(record.version)}. Retrain the model to save it in the current format.`,
+    );
   }
 
   const gridSize = asPositiveInteger(record.gridSize, "The grid size");

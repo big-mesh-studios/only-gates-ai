@@ -37,11 +37,9 @@ export function shapeParameterCount(shape: readonly number[]): number {
     // Every cell has two input pins, each with a distribution over the
     // previous layer.
     count += previous * current * 2;
-    // Hidden cells also have a 16-way gate distribution. The output layer has
-    // no gate.
-    if (layer < shape.length - 1) {
-      count += current * 16;
-    }
+    // Every cell also has a 16-way gate distribution, including the output
+    // layer.
+    count += current * 16;
   }
   return count;
 }

@@ -61,6 +61,7 @@ static void test_create_hard_circuit_argmax(void) {
   circuit->cells[1].gate_probabilities.nand = 0.6f;
   circuit->cells[1].gate_probabilities.xor = 0.3f;
   circuit->cells[1].gate_probabilities.one = 0.1f;
+  circuit->cells[2].gate_probabilities.or = 1.0f;
 
   HardCircuit *hard = create_hard_circuit(circuit);
   if (hard == NULL) {
@@ -70,7 +71,7 @@ static void test_create_hard_circuit_argmax(void) {
   }
 
   expect_true("hard connections_len", hard->connections_len == 6);
-  expect_true("hard gates_len", hard->gates_len == 2);
+  expect_true("hard gates_len", hard->gates_len == 3);
   expect_true("hard wire 0", hard->connections[0] == 1);
   expect_true("hard wire 1", hard->connections[1] == 0);
   expect_true("hard wire 2", hard->connections[2] == 1);
@@ -79,18 +80,28 @@ static void test_create_hard_circuit_argmax(void) {
   expect_true("hard wire 5", hard->connections[5] == 0);
   expect_true("hard gate 0 is AND", hard->gates[0] == 8);
   expect_true("hard gate 1 is NAND", hard->gates[1] == 7);
+  expect_true("hard gate 2 is OR", hard->gates[2] == 14);
 
   bool input[] = {true, false};
   hard_circuit_set_input(hard, input);
   hard_circuit_feed_forward(hard);
-  // hidden = {AND(0, 1), NAND(0, 0)} = {0, 1}, output = 0.5 * (1 + 0).
+  // hidden = {AND(0, 1), NAND(0, 0)} = {0, 1}, output = OR(1, 0) = 1.
   expect_near("hard forward hidden 0", hard->activations[2], 0.0f, 1e-6f);
   expect_near("hard forward hidden 1", hard->activations[3], 1.0f, 1e-6f);
-  expect_near("hard forward output", hard->outputs[0], 0.5f, 1e-6f);
+  expect_near("hard forward output", hard->outputs[0], 1.0f, 1e-6f);
 
   float output[1];
   hard_circuit_read_output(hard, output);
-  expect_near("hard read output", output[0], 0.5f, 1e-6f);
+  expect_near("hard read output", output[0], 1.0f, 1e-6f);
+
+  // A hard circuit is pure logic, so every output must be exactly 0 or 1.
+  for (int index = 0; index < 4; ++index) {
+    bool sample[] = {(index & 2) != 0, (index & 1) != 0};
+    hard_circuit_set_input(hard, sample);
+    hard_circuit_feed_forward(hard);
+    expect_true("hard output is boolean",
+                hard->outputs[0] == 0.0f || hard->outputs[0] == 1.0f);
+  }
 
   // Hard circuits copy their structure, so changing the soft circuit must not
   // affect an existing hard circuit.
@@ -158,6 +169,7 @@ static void test_ties_choose_lowest_index(void) {
   expect_true("tie wire a", hard->connections[0] == 0);
   expect_true("tie wire b", hard->connections[1] == 0);
   expect_true("tie gate", hard->gates[0] == 0);
+  expect_true("tie output gate", hard->gates[1] == 0);
 
   bool input[] = {true, true};
   hard_circuit_set_input(hard, input);
