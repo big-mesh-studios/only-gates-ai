@@ -1,0 +1,54 @@
+name: Deploy the app to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install latest corepack
+        run: npm install corepack@latest -g
+
+      - run: corepack enable
+
+      - name: Setup Emscripten
+        uses: emscripten-core/setup-emsdk@v16
+        with:
+          # Pinned so a Pages build never picks up an untested Emscripten
+          # release. Bump this deliberately when upgrading the Wasm toolchain.
+          version: 6.0.13
+          actions-cache-folder: emsdk-cache
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The app build also rebuilds @only-gates-ai/core, including its Wasm
+      # module, so Emscripten must be on PATH before this runs.
+      - name: Build the app
+        run: pnpm build:app
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./apps/only-gates-ai/dist
+          publish_branch: gh-pages

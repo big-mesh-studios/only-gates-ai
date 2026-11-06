@@ -13,9 +13,7 @@ interface TestingPanelProps {
   readonly inferenceMode: InferenceMode;
   readonly busy: boolean;
   readonly hasDrawing: boolean;
-  readonly canPredict: boolean;
   readonly predictHint: string;
-  readonly onPredict: () => void;
   readonly onInferenceModeChange: (mode: InferenceMode) => void;
 }
 
@@ -66,14 +64,6 @@ export default function TestingPanel(props: TestingPanelProps) {
         </p>
       </div>
 
-      <button
-        type="button"
-        class="button primary wide-button"
-        disabled={!props.canPredict || props.busy}
-        onClick={props.onPredict}
-      >
-        Predict my symbol
-      </button>
       <p class="hint">{props.predictHint}</p>
 
       <Show when={topPrediction()}>
@@ -124,7 +114,8 @@ export default function TestingPanel(props: TestingPanelProps) {
         fallback={
           <Show when={topPrediction() === null}>
             <div class="empty-state">
-              No prediction yet. Draw a symbol and press “Predict my symbol”.
+              No prediction yet. Draw a symbol in the canvas — results update
+              automatically.
             </div>
           </Show>
         }

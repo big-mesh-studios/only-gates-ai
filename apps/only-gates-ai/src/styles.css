@@ -857,6 +857,72 @@ input:disabled {
   opacity: 0.5;
 }
 
+.live-prediction {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.live-prediction .section-heading {
+  margin-bottom: 0;
+}
+
+.live-verdict {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.live-verdict-text {
+  min-width: 0;
+}
+
+.live-verdict-name {
+  display: block;
+  overflow: hidden;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-score {
+  flex: none;
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
+
+.live-runners {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.live-runner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.live-runner strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
 .prediction-card {
   display: flex;
   flex-direction: column;

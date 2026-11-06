@@ -1,7 +1,15 @@
-import { createMemo, createSignal, onSettled, Show, untrack } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onSettled,
+  Show,
+  untrack,
+} from "solid-js";
 import { createOnlyGatesAI, type OnlyGatesAI } from "@only-gates-ai/core";
 
 import DrawingPad from "./components/DrawingPad";
+import LivePrediction from "./components/LivePrediction";
 import SettingsPanel from "./components/SettingsPanel";
 import TestingPanel from "./components/TestingPanel";
 import TrainingPanel from "./components/TrainingPanel";
@@ -36,6 +44,7 @@ import type {
 } from "./lib/types";
 
 const MAX_LABELS = 24;
+const PREDICTION_DEBOUNCE_MS = 140;
 const LABEL_COLORS = [
   "#7ee787",
   "#79c0ff",
@@ -145,14 +154,6 @@ export default function App() {
       trainableLabels().length > 0,
   );
 
-  const canPredict = createMemo(
-    () =>
-      runtime() === "ready" &&
-      !busy() &&
-      hasDrawing() &&
-      ensembles().length > 0,
-  );
-
   const trainHint = createMemo(() => {
     if (runtime() !== "ready") {
       return "Waiting for the WebAssembly runtime.";
@@ -177,13 +178,53 @@ export default function App() {
       return "Train the forest first, then come back to test it.";
     }
     if (!hasDrawing()) {
-      return "Draw a symbol in the canvas to get a prediction.";
+      return "Draw a symbol in the canvas — predictions appear automatically.";
     }
     if (modelStale()) {
-      return "This uses the last trained model. Retrain to include your latest drawings.";
+      return "Using the last trained model. Retrain to include your latest drawings.";
     }
-    return "Ready to predict with the current forest.";
+    return "Predictions update automatically as you draw.";
   });
+
+  // In testing mode, recompute the forest's vote shortly after the drawing
+  // settles. Debouncing keeps continuous strokes from re-running every circuit
+  // on every pointer move.
+  createEffect(
+    () => ({
+      mode: mode(),
+      runtime: runtime(),
+      busy: busy(),
+      ensembles: ensembles(),
+      inferenceMode: inferenceMode(),
+      input: currentInput(),
+    }),
+    (state) => {
+      if (state.mode !== "test" || state.runtime !== "ready" || state.busy) {
+        return;
+      }
+      if (state.ensembles.length === 0 || !inputHasInk(state.input)) {
+        clearPredictions();
+        return;
+      }
+
+      const timer = setTimeout(() => {
+        try {
+          setPredictions(
+            predictEnsembles(
+              state.ensembles,
+              state.input,
+              state.inferenceMode,
+            ),
+          );
+        } catch (error) {
+          clearPredictions();
+          showStatus("error", `Prediction failed: ${errorMessage(error)}`);
+        }
+      }, PREDICTION_DEBOUNCE_MS);
+
+      return () => clearTimeout(timer);
+    },
+  );
 
   function showStatus(kind: StatusMessage["kind"], text: string): void {
     setStatus({ kind, text });
@@ -255,7 +296,6 @@ export default function App() {
 
   function handleStrokeStart(point: Point): void {
     setStrokes((previous) => [...previous, [point]]);
-    clearPredictions();
   }
 
   function handleStrokeMove(point: Point): void {
@@ -277,7 +317,6 @@ export default function App() {
       next[next.length - 1] = [...last, point];
       return next;
     });
-    clearPredictions();
   }
 
   function handleStrokeEnd(): void {
@@ -510,33 +549,6 @@ export default function App() {
       return;
     }
     setInferenceMode(next);
-    if (
-      predictions().length > 0 &&
-      hasDrawing() &&
-      ensembles().length > 0
-    ) {
-      setPredictions(predictEnsembles(ensembles(), currentInput(), next));
-    }
-  }
-
-  function handlePredict(): void {
-    if (runtime() !== "ready" || busy()) {
-      return;
-    }
-    if (ensembles().length === 0) {
-      showStatus("error", "Train the forest before predicting.");
-      return;
-    }
-    const input = currentInput();
-    if (!inputHasInk(input)) {
-      showStatus("error", "Draw a symbol in the canvas first.");
-      return;
-    }
-    try {
-      setPredictions(predictEnsembles(ensembles(), input, inferenceMode()));
-    } catch (error) {
-      showStatus("error", `Prediction failed: ${errorMessage(error)}`);
-    }
   }
 
   function handleCancelTrain(): void {
@@ -727,6 +739,16 @@ export default function App() {
             onClear={handleClear}
           />
 
+          <Show when={mode() === "test"}>
+            <LivePrediction
+              predictions={predictions()}
+              hasDrawing={hasDrawing()}
+              hasModel={modelInfo() !== null}
+              modelStale={modelStale()}
+              inferenceMode={inferenceMode()}
+            />
+          </Show>
+
           <p class="hint">
             Saved drawings remember their strokes. The input is rebuilt by
             replaying those strokes onto a {gridSize()} × {gridSize()} grid after
@@ -746,9 +768,7 @@ export default function App() {
                   inferenceMode={inferenceMode()}
                   busy={busy()}
                   hasDrawing={hasDrawing()}
-                  canPredict={canPredict()}
                   predictHint={predictHint()}
-                  onPredict={handlePredict}
                   onInferenceModeChange={handleInferenceModeChange}
                 />
               }
