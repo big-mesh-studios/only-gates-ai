@@ -1,0 +1,30 @@
+{
+  "name": "@only-gates-ai/core",
+  "version": "0.1.0",
+  "description": "TypeScript wrapper for the only-gates-ai differentiable logic circuit WebAssembly module",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "wasm",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "pnpm run build:wasm && tsc -p tsconfig.json",
+    "build:wasm": "bash ./scripts/build-wasm.sh",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,8 +1,13 @@
 # Emscripten / CMake build output
 /dist/
+/dist-lib/
 /build/
 /build-tests/
 /cmake-build-*/
+
+# TypeScript package build output
+/packages/*/dist/
+/packages/*/wasm/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake

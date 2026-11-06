@@ -517,10 +517,95 @@ void destroy_circuit(Circuit *circuit) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-void circuit_set_input(Circuit *circuit, bool input[]) {}
+void circuit_set_input(Circuit *circuit, bool input[]) {
+  if (circuit == NULL || input == NULL || circuit->inputs == NULL ||
+      circuit->inputs_len <= 0) {
+    set_error(ERR_INVALID_PARAMS);
+    return;
+  }
+  clear_error();
+  memcpy(circuit->inputs, input,
+         circuit->inputs_len * sizeof(*circuit->inputs));
+}
 
 EMSCRIPTEN_KEEPALIVE
-void circuit_read_output(Circuit *circuit, float output[]) {}
+void circuit_read_output(Circuit *circuit, float output[]) {
+  if (circuit == NULL || output == NULL || circuit->outputs == NULL ||
+      circuit->outputs_len <= 0) {
+    set_error(ERR_INVALID_PARAMS);
+    return;
+  }
+  clear_error();
+  memcpy(output, circuit->outputs,
+         circuit->outputs_len * sizeof(*circuit->outputs));
+}
+
+EMSCRIPTEN_KEEPALIVE
+int circuit_get_inputs_len(Circuit *circuit) {
+  return circuit != NULL ? circuit->inputs_len : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int circuit_get_outputs_len(Circuit *circuit) {
+  return circuit != NULL ? circuit->outputs_len : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int circuit_get_shape_len(Circuit *circuit) {
+  return circuit != NULL ? circuit->shape_len : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int circuit_get_shape(Circuit *circuit, int index) {
+  if (circuit == NULL || circuit->shape == NULL || index < 0 ||
+      index >= circuit->shape_len) {
+    return 0;
+  }
+  return circuit->shape[index];
+}
+
+EMSCRIPTEN_KEEPALIVE
+int circuit_get_cell_len(Circuit *circuit) {
+  return circuit != NULL ? circuit->cell_len : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int circuit_get_connection_probabilities_len(Circuit *circuit) {
+  return circuit != NULL ? circuit->connection_probabilities_len : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float *circuit_get_connection_probabilities(Circuit *circuit) {
+  if (circuit == NULL) {
+    set_error(ERR_INVALID_PARAMS);
+    return NULL;
+  }
+  return circuit->connection_probabilities;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float *circuit_get_cell_gate_probabilities(Circuit *circuit, int cell_index) {
+  if (circuit == NULL || circuit->cells == NULL || cell_index < 0 ||
+      cell_index >= circuit->cell_len) {
+    set_error(ERR_INVALID_PARAMS);
+    return NULL;
+  }
+  return circuit->cells[cell_index].gate_probabilities.data;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int circuit_get_activations_len(Circuit *circuit) {
+  return circuit != NULL ? circuit->activations_len : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float *circuit_get_activations(Circuit *circuit) {
+  if (circuit == NULL) {
+    set_error(ERR_INVALID_PARAMS);
+    return NULL;
+  }
+  return circuit->activations;
+}
 
 EMSCRIPTEN_KEEPALIVE
 void circuit_feed_forward(Circuit *circuit) {
@@ -799,6 +884,48 @@ void destroy_hard_circuit(HardCircuit *hard_circuit) {
   free(hard_circuit->gates);
   free(hard_circuit->activations);
   free(hard_circuit);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int hard_circuit_get_connections_len(HardCircuit *hard_circuit) {
+  return hard_circuit != NULL ? hard_circuit->connections_len : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int *hard_circuit_get_connections(HardCircuit *hard_circuit) {
+  if (hard_circuit == NULL) {
+    set_error(ERR_INVALID_PARAMS);
+    return NULL;
+  }
+  return hard_circuit->connections;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int hard_circuit_get_gates_len(HardCircuit *hard_circuit) {
+  return hard_circuit != NULL ? hard_circuit->gates_len : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int *hard_circuit_get_gates(HardCircuit *hard_circuit) {
+  if (hard_circuit == NULL) {
+    set_error(ERR_INVALID_PARAMS);
+    return NULL;
+  }
+  return hard_circuit->gates;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int hard_circuit_get_activations_len(HardCircuit *hard_circuit) {
+  return hard_circuit != NULL ? hard_circuit->activations_len : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float *hard_circuit_get_activations(HardCircuit *hard_circuit) {
+  if (hard_circuit == NULL) {
+    set_error(ERR_INVALID_PARAMS);
+    return NULL;
+  }
+  return hard_circuit->activations;
 }
 
 EMSCRIPTEN_KEEPALIVE
