@@ -21,7 +21,7 @@ if(EMSCRIPTEN)
 
         # Functions we want to call from JS.
         # C functions get an underscore prefix in JS, so "func" is Module._func.
-        "-sEXPORTED_FUNCTIONS=['_func']"
+        "-sEXPORTED_FUNCTIONS=['_func', '_create_circuit', '_destroy_circuit']"
 
         # Emscripten helper utilities we want to use in JS
         "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
