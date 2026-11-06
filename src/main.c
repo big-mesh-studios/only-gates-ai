@@ -55,9 +55,9 @@ const int ERR_INVALID_PARAMS = 3;
 
 static int _last_error = ERR_NONE;
 
-inline void clear_error() { _last_error = ERR_NONE; }
+static inline void clear_error(void) { _last_error = ERR_NONE; }
 
-inline void set_error(int error_code) { _last_error = error_code; }
+static inline void set_error(int error_code) { _last_error = error_code; }
 
 EMSCRIPTEN_KEEPALIVE
 int get_error() { return _last_error; }
@@ -150,7 +150,7 @@ Circuit *create_circuit(int shape[], int shape_len) {
   }
   connection_probabilities_allocated = true;
   result->connection_probabilities_len = connection_len;
-  #undef memory_cleanup;
+  #undef memory_cleanup
   return result;
 }
 

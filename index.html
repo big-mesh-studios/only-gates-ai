@@ -22,9 +22,29 @@
         },
       });
 
+      // C functions that take a pointer need memory allocated inside the wasm
+      // heap. A JS array can't be passed directly: it isn't an address, and the
+      // wasm side would receive a null/garbage pointer.
+      function createCircuit(shape) {
+        const bytes = shape.length * Int32Array.BYTES_PER_ELEMENT;
+        const ptr = Module._malloc(bytes);
+        if (!ptr) throw new Error("out of memory");
+
+        try {
+          // HEAP32 is an Int32Array view over the wasm heap. The pointer is a
+          // byte offset, so shift it down to an int index.
+          Module.HEAP32.set(shape, ptr >> 2);
+          return Module._create_circuit(ptr, shape.length);
+        } finally {
+          // create_circuit copies `shape`, so this temporary can be freed.
+          Module._free(ptr);
+        }
+      }
+
       document.getElementById("call-func").addEventListener("click", () => {
         // C's `func` is exported to JS as `Module._func`.
         Module._func();
+        createCircuit([5, 5, 5]);
       });
     </script>
   </body>
