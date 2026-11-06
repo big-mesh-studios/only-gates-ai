@@ -285,7 +285,7 @@ EMSCRIPTEN_KEEPALIVE
 void circuit_feed_forward(Circuit *circuit) {}
 
 EMSCRIPTEN_KEEPALIVE
-void circuit_back_propergate(Circuit *circuit, float learning_rate) {}
+void circuit_back_propergate(Circuit *circuit, float error[], float learning_rate) {}
 
 EMSCRIPTEN_KEEPALIVE
 void func() { printf("Hello from C\n"); }
