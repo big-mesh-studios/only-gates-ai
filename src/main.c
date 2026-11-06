@@ -205,7 +205,14 @@ Circuit *create_circuit(int shape[], int shape_len) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-void destroy_circuit(Circuit *circuit) { free(circuit); }
+void destroy_circuit(Circuit *circuit) {
+  free(circuit->inputs);
+  free(circuit->outputs);
+  free(circuit->shape);
+  free(circuit->cells);
+  free(circuit->connection_probabilities);
+  free(circuit);
+}
 
 EMSCRIPTEN_KEEPALIVE
 void func() { printf("Hello from C\n"); }
