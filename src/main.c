@@ -110,6 +110,47 @@ static inline void set_error(int error_code) { _last_error = error_code; }
 EMSCRIPTEN_KEEPALIVE
 int get_error() { return _last_error; }
 
+float soft_gate_zero(float _a, float _b) { return 0.0f; }
+
+float soft_gate_nor(float a, float b) { return 1.0f - (a + b - a * b); }
+
+float soft_gate_lnt(float a, float b) { return a - a * b; }
+
+float soft_gate_not_a(float a, float b) { return 1.0f - a; }
+
+float soft_gate_rnt(float a, float b) { return b - a * b; }
+
+float soft_gate_not_b(float a, float b) { return 1.0f - b; }
+
+float soft_gate_xor(float a, float b) { return a + b - 2.0f * a * b; }
+
+float soft_gate_nand(float a, float b) { return 1 - a * b; }
+
+float soft_gate_and(float a, float b) { return 1.0f - a * b; }
+
+float soft_gate_xnor(float a, float b) { return 1.0f - (a + b - 2.0f * a * b); }
+
+float soft_gate_proj_b(float _a, float b) { return b; }
+
+float soft_gate_imp(float a, float b) { return 1.0 - a + a * b; }
+
+float soft_gate_proj_a(float a, float _b) { return a; }
+
+float soft_gate_cimp(float a, float b) { return 1.0f - b + a * b; }
+
+float soft_gate_or(float a, float b) { return a + b - a * b; }
+
+float soft_gate_one(float _a, float _b) { return 1.0f; }
+
+typedef float SoftGateFunc(float, float);
+
+const SoftGateFunc *soft_gates[16] = {
+    soft_gate_zero,   soft_gate_nor,   soft_gate_lnt,    soft_gate_not_a,
+    soft_gate_rnt,    soft_gate_not_b, soft_gate_xor,    soft_gate_nand,
+    soft_gate_and,    soft_gate_xnor,  soft_gate_proj_b, soft_gate_imp,
+    soft_gate_proj_a, soft_gate_cimp,  soft_gate_or,     soft_gate_one,
+};
+
 EMSCRIPTEN_KEEPALIVE
 Circuit *create_circuit(int shape[], int shape_len) {
   clear_error();
@@ -213,6 +254,18 @@ void destroy_circuit(Circuit *circuit) {
   free(circuit->connection_probabilities);
   free(circuit);
 }
+
+EMSCRIPTEN_KEEPALIVE
+void circuit_set_input(Circuit *circuit, bool input[]) {}
+
+EMSCRIPTEN_KEEPALIVE
+void circuit_read_output(Circuit *circuit, float output[]) {}
+
+EMSCRIPTEN_KEEPALIVE
+void circuit_feed_forward(Circuit *circuit) {}
+
+EMSCRIPTEN_KEEPALIVE
+void circuit_back_propergate(Circuit *circuit, float learning_rate) {}
 
 EMSCRIPTEN_KEEPALIVE
 void func() { printf("Hello from C\n"); }
