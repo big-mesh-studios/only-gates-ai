@@ -375,6 +375,13 @@ export default function App() {
 
       installModel(restored, stored.gridSize, stored.shape);
       setStoredModelAt(stored.savedAt);
+      setLabels(
+        restored.ensembles.map((e) => ({
+          id: e.labelId,
+          name: e.labelName,
+          color: e.color,
+        })),
+      );
       showStatus(
         "info",
         `Restored the model saved in this browser (${restored.ensembles.length} label${
@@ -475,7 +482,14 @@ export default function App() {
       }
 
       installModel(restored, stored.gridSize, stored.shape);
-
+      setLabels(
+        restored.ensembles.map((e) => ({
+          id: e.labelId,
+          name: e.labelName,
+          color: e.color,
+        })),
+      );
+      setStoredModelAt(stored.savedAt);
       let saveError: string | null = null;
       try {
         const persisted: SerializedModel = { ...stored, savedAt: Date.now() };
