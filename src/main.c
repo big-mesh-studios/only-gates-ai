@@ -2,29 +2,77 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// Utility for preventing clang-format from mis-parsing a member varriable as a
-// keyword.
-#define ID(x) x
-
 typedef struct {
   union {
     float data[16];
     struct {
+      /**
+       * Probability for the zero gate: returns `false`
+       */
       float zero;
+      /**
+       * Probability for the nor gate: returns `!(a || b)`
+       */
       float nor;
+      /**
+       * Probability for the left not implication gate: returns `a && !b` (aka
+       * `!(a <- b)`)
+       */
       float lnt;
+      /**
+       * Probability for the not a gate: returns `!a`
+       */
       float not_a;
+      /**
+       * Probability for the right not implication gate: returns `!a && b` (aka
+       * `!(a -> b)`)
+       */
       float rnt;
+      /**
+       * Probability for the not b gate: returns `!b`
+       */
       float not_b;
-      float ID(xor); // <-- ID() prevents clang-format from getting confused.
+      /**
+       * Probability for the xor gate: returns `(a && !b) || (!a && b)` (aka `a
+       * xor b`)
+       */
+      float xor ;
+      /**
+       * Probability for the nand gate: returns `!(a && b)`
+       */
       float nand;
+      /**
+       * Probability for the and gate: returns `a && b`
+       */
       float and;
+      /**
+       * Probability for the xnor gate: returns `!(a xor b)`
+       */
       float xnor;
+      /**
+       * Probability for the proj b gate: returns `b`
+       */
       float proj_b;
+      /**
+       * Probability for the implies gate: returns `!a || b` (aka `a -> b`)
+       */
       float imp;
+      /**
+       * Probability for the proj a gate: returns `a`
+       */
       float proj_a;
+      /**
+       * Probability for the converse implies gate: returns `a || !b` (aka `a <-
+       * b`)
+       */
       float cimp;
-      float ID(or); // <-- ID() prevents clang-format from getting confused.
+      /**
+       * Probability for the or gate: returns `a || b`
+       */
+      float or ;
+      /**
+       * Probability for the one gate: returns `true`
+       */
       float one;
     };
   };
