@@ -319,9 +319,9 @@ button {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 16px;
-  background: #f8f5ed;
+  background: #0a0e13;
   box-shadow:
-    inset 0 0 0 1px rgba(0, 0, 0, 0.05),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
     0 18px 40px rgba(0, 0, 0, 0.24);
 }
 
@@ -343,13 +343,13 @@ button {
   justify-content: center;
   gap: 6px;
   padding: 24px;
-  color: #7b8491;
+  color: #8b98a7;
   pointer-events: none;
   text-align: center;
 }
 
 .drawing-placeholder strong {
-  color: #4d5665;
+  color: #c3ccd6;
   font-size: 1.1rem;
 }
 

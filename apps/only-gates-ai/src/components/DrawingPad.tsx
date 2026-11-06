@@ -47,11 +47,11 @@ export default function DrawingPad(props: DrawingPadProps) {
       }
 
       context.setTransform(BACKING_SCALE, 0, 0, BACKING_SCALE, 0, 0);
-      context.fillStyle = "#f8f5ed";
+      context.fillStyle = "#0a0e13";
       context.fillRect(0, 0, DRAW_SIZE, DRAW_SIZE);
 
       // A whisper of a guide, useful for scale but not distracting.
-      context.strokeStyle = "rgba(31, 41, 55, 0.055)";
+      context.strokeStyle = "rgba(255, 255, 255, 0.06)";
       context.lineWidth = 1;
       for (let index = 1; index < 4; index++) {
         const offset = (DRAW_SIZE / 4) * index;
@@ -63,8 +63,8 @@ export default function DrawingPad(props: DrawingPadProps) {
         context.stroke();
       }
 
-      context.strokeStyle = "#17212b";
-      context.fillStyle = "#17212b";
+      context.strokeStyle = "#f2f5f8";
+      context.fillStyle = "#f2f5f8";
       context.lineWidth = 5.5;
       context.lineCap = "round";
       context.lineJoin = "round";
