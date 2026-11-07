@@ -1164,12 +1164,13 @@ export default function App() {
           fallback={
             <>
               <span>
-                Word vectors: a Word2Bits subset (Apache-2.0). Training uses
-                floats; prediction uses popcount and Q15 fixed-point softmax.
+                Word vectors: a Word2Bits subset (Apache-2.0). Autocomplete
+                trains with floats and predicts with popcount and Q15
+                fixed-point softmax.
               </span>
               <span>
-                Nothing is uploaded. The text, vectors, and ternary weights stay
-                in this browser tab.
+                Q&A mode retrieves the trained answer closest to your question.
+                Nothing is uploaded; everything stays in this browser tab.
               </span>
             </>
           }

@@ -249,6 +249,15 @@ export interface CompletionResult {
   readonly items: readonly Completion[];
 }
 
+export interface CompletionOptions {
+  /**
+   * Words to skip while there are other candidates. The panel passes the
+   * recent tokens here so accepting suggestions cannot bounce between the
+   * same two words forever.
+   */
+  readonly avoid?: readonly string[];
+}
+
 interface Sample {
   readonly query: Uint32Array;
   readonly target: number;
@@ -387,7 +396,11 @@ export class MiniLanguageModel {
     return logits;
   }
 
-  complete(text: string, limit = 6): CompletionResult {
+  complete(
+    text: string,
+    limit = 6,
+    options: CompletionOptions = {},
+  ): CompletionResult {
     const allTokens = tokenize(text);
     const trailing = /([A-Za-z0-9']+)\s*$/.exec(text);
     const endsWithWord =
@@ -438,9 +451,16 @@ export class MiniLanguageModel {
       sum = 1;
     }
 
-    const ranked = Array.from({ length: logits.length }, (_, index) => index)
-      .sort((a, b) => logits[b]! - logits[a]!)
-      .slice(0, limit);
+    const ordered = Array.from({ length: logits.length }, (_, index) => index)
+      .sort((a, b) => logits[b]! - logits[a]!);
+    const avoided = new Set(
+      (options.avoid ?? []).map((word) => word.toLowerCase()),
+    );
+    const allowed =
+      avoided.size === 0
+        ? ordered
+        : ordered.filter((index) => !avoided.has(this.vocabulary[index]!));
+    const ranked = (allowed.length > 0 ? allowed : ordered).slice(0, limit);
 
     return {
       mode: "next",
@@ -813,4 +833,363 @@ export async function trainMiniLanguageModel(
 
 export function trainingParameters(): number {
   return VECTOR_BITS * VECTOR_BITS;
+}
+
+/*
+ * Question answering.
+ *
+ * A 64-bit next-word model cannot generate a reliable free-form answer, so
+ * this mode is retrieval: each training question is stored as a binary
+ * vector plus a set of content words. Asking a question scores every stored
+ * question with a bit similarity and a weighted word overlap, then returns
+ * the answer attached to the best match.
+ */
+
+const QA_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "but",
+  "by",
+  "can",
+  "could",
+  "did",
+  "do",
+  "does",
+  "for",
+  "from",
+  "had",
+  "has",
+  "have",
+  "he",
+  "her",
+  "his",
+  "how",
+  "i",
+  "if",
+  "in",
+  "into",
+  "is",
+  "it",
+  "its",
+  "me",
+  "my",
+  "of",
+  "on",
+  "or",
+  "our",
+  "she",
+  "should",
+  "so",
+  "that",
+  "the",
+  "their",
+  "them",
+  "then",
+  "there",
+  "these",
+  "they",
+  "this",
+  "those",
+  "to",
+  "was",
+  "we",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "why",
+  "will",
+  "with",
+  "would",
+  "you",
+  "your",
+]);
+
+export interface QaPair {
+  readonly question: string;
+  readonly answer: string;
+}
+
+export interface QaParseResult {
+  readonly pairs: readonly QaPair[];
+  readonly errors: readonly string[];
+}
+
+/**
+ * Parse Q&A training text. Supported shapes:
+ *
+ *   question => answer            (one line)
+ *   question                      (blank line between pairs)
+ *   answer
+ *   Q: question                   (Q/A labels also work)
+ *   A: answer
+ */
+export function parseQaPairs(text: string): QaParseResult {
+  const pairs: QaPair[] = [];
+  const errors: string[] = [];
+  const blocks = text
+    .replace(/\r\n?/g, "\n")
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter((block) => block.length > 0);
+
+  blocks.forEach((block, index) => {
+    const lines = block
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (lines.length === 0) {
+      return;
+    }
+
+    const arrowPattern = /^(.+?)\s*(?:=>|->)\s*(.+)$/;
+    const arrows = lines.map((line) => arrowPattern.exec(line));
+    if (arrows.every((match) => match !== null)) {
+      for (const arrow of arrows) {
+        const question = arrow![1]!.trim();
+        const answer = arrow![2]!.trim();
+        if (question.length === 0 || answer.length === 0) {
+          errors.push(`Pair ${index + 1} needs both a question and an answer.`);
+          return;
+        }
+        pairs.push({ question, answer });
+      }
+      return;
+    }
+
+    if (arrows[0] !== null) {
+      const question = arrows[0]![1]!.trim();
+      const answer = [arrows[0]![2]!.trim(), ...lines.slice(1)].join(" ").trim();
+      if (question.length === 0 || answer.length === 0) {
+        errors.push(`Pair ${index + 1} needs both a question and an answer.`);
+        return;
+      }
+      pairs.push({ question, answer });
+      return;
+    }
+
+    const answerIndex = lines.findIndex((line) =>
+      /^(?:a|answer)\s*[:.)-]\s*/i.test(line),
+    );
+    if (answerIndex > 0) {
+      const question = stripQaMarker("q", lines.slice(0, answerIndex).join(" "));
+      const answer = lines
+        .slice(answerIndex)
+        .map((line, position) =>
+          position === 0 ? stripQaMarker("a", line) : line,
+        )
+        .join(" ")
+        .trim();
+      if (question.length === 0 || answer.length === 0) {
+        errors.push(`Pair ${index + 1} needs both a question and an answer.`);
+        return;
+      }
+      pairs.push({ question, answer });
+      return;
+    }
+
+    if (lines.length >= 2) {
+      const question = stripQaMarker("q", lines[0]!);
+      const answer = lines.slice(1).join(" ").trim();
+      if (question.length === 0 || answer.length === 0) {
+        errors.push(`Pair ${index + 1} needs both a question and an answer.`);
+        return;
+      }
+      pairs.push({ question, answer });
+      return;
+    }
+
+    errors.push(
+      `Pair ${index + 1}: put the answer on the next line, use "question => answer", or label it with "A:".`,
+    );
+  });
+
+  return { pairs, errors };
+}
+
+function stripQaMarker(kind: "q" | "a", line: string): string {
+  const pattern =
+    kind === "q"
+      ? /^(?:q|question)\s*[:.)-]\s*/i
+      : /^(?:a|answer)\s*[:.)-]\s*/i;
+  return line.replace(pattern, "").trim();
+}
+
+function contentTokens(text: string): string[] {
+  const tokens = tokenize(text).map((token) => token.text.toLowerCase());
+  const content = tokens.filter((token) => !QA_STOP_WORDS.has(token));
+  return content.length > 0 ? content : tokens;
+}
+
+function questionVector(tokens: readonly string[]): Uint32Array {
+  return majorityVector(tokens.map((token) => getWordVector(token)));
+}
+
+interface QaEntry {
+  readonly question: string;
+  readonly answer: string;
+  readonly tokens: ReadonlySet<string>;
+  readonly vector: Uint32Array;
+}
+
+export interface QaStats {
+  readonly pairs: number;
+  readonly questionWords: number;
+  readonly vectorBits: number;
+  readonly coverage: number;
+}
+
+export interface QaMatch {
+  readonly question: string;
+  readonly confidence: number;
+}
+
+export interface QaAnswer extends QaMatch {
+  readonly answer: string;
+  readonly matched: boolean;
+  readonly candidates: readonly QaMatch[];
+}
+
+function weightedOverlap(
+  query: ReadonlySet<string>,
+  entry: ReadonlySet<string>,
+  idf: ReadonlyMap<string, number>,
+): number {
+  let shared = 0;
+  let union = 0;
+  for (const token of query) {
+    const weight = idf.get(token) ?? 1;
+    union += weight;
+    if (entry.has(token)) {
+      shared += weight;
+    }
+  }
+  for (const token of entry) {
+    if (!query.has(token)) {
+      union += idf.get(token) ?? 1;
+    }
+  }
+  return union === 0 ? 0 : shared / union;
+}
+
+export class MiniQuestionAnswerer {
+  readonly stats: QaStats;
+  readonly questions: readonly string[];
+
+  private readonly entries: readonly QaEntry[];
+  private readonly idf: ReadonlyMap<string, number>;
+
+  constructor(
+    entries: readonly QaEntry[],
+    idf: ReadonlyMap<string, number>,
+    stats: QaStats,
+  ) {
+    this.entries = entries;
+    this.idf = idf;
+    this.stats = stats;
+    this.questions = entries.map((entry) => entry.question);
+  }
+
+  ask(text: string): QaAnswer | null {
+    const tokens = contentTokens(text);
+    if (tokens.length === 0 || this.entries.length === 0) {
+      return null;
+    }
+
+    const unique = new Set(tokens);
+    const queryVector = questionVector(tokens);
+    const scored = this.entries
+      .map((entry, index) => {
+        const overlap = weightedOverlap(unique, entry.tokens, this.idf);
+        const matches = (scoreKey(queryVector, entry.vector) + VECTOR_BITS) / 2;
+        const similarity = matches / VECTOR_BITS;
+        return {
+          index,
+          question: entry.question,
+          confidence: 0.8 * overlap + 0.2 * similarity,
+        };
+      })
+      .sort((a, b) => b.confidence - a.confidence);
+
+    const best = scored[0]!;
+    const entry = this.entries[best.index]!;
+    let shared = 0;
+    for (const token of unique) {
+      if (entry.tokens.has(token)) {
+        shared++;
+      }
+    }
+    const matched =
+      best.confidence >= 0.34 && (shared > 0 || best.confidence >= 0.72);
+
+    return {
+      answer: entry.answer,
+      question: entry.question,
+      confidence: best.confidence,
+      matched,
+      candidates: scored.slice(0, 3).map((candidate) => ({
+        question: candidate.question,
+        confidence: candidate.confidence,
+      })),
+    };
+  }
+}
+
+export function trainQuestionAnswerer(text: string): MiniQuestionAnswerer {
+  const parsed = parseQaPairs(text);
+  if (parsed.errors.length > 0) {
+    throw new Error(parsed.errors[0]);
+  }
+  if (parsed.pairs.length === 0) {
+    throw new Error('Add at least one "question => answer" pair.');
+  }
+
+  const documentFrequency = new Map<string, number>();
+  const tokenSets = parsed.pairs.map((pair) => {
+    const tokens = contentTokens(pair.question);
+    const set = new Set(tokens);
+    for (const token of set) {
+      documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
+    }
+    return set;
+  });
+
+  const total = parsed.pairs.length;
+  const idf = new Map<string, number>();
+  for (const [token, count] of documentFrequency) {
+    idf.set(token, Math.log((total + 1) / (count + 1)) + 1);
+  }
+
+  let questionWords = 0;
+  let bundledWords = 0;
+  const entries = parsed.pairs.map((pair, index) => {
+    const tokens = contentTokens(pair.question);
+    questionWords += tokens.length;
+    for (const token of tokens) {
+      if (hasBundledVector(token)) {
+        bundledWords++;
+      }
+    }
+    const unique = [...new Set(tokens)];
+    return {
+      question: pair.question,
+      answer: pair.answer,
+      tokens: tokenSets[index]!,
+      vector: questionVector(unique),
+    };
+  });
+
+  return new MiniQuestionAnswerer(entries, idf, {
+    pairs: entries.length,
+    questionWords,
+    vectorBits: VECTOR_BITS,
+    coverage: questionWords === 0 ? 0 : bundledWords / questionWords,
+  });
 }
