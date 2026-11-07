@@ -493,6 +493,191 @@ button {
   line-height: 1.5;
 }
 
+.portable-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(126, 231, 135, 0.2);
+  border-radius: 16px;
+  background: linear-gradient(
+    135deg,
+    rgba(126, 231, 135, 0.08),
+    rgba(255, 255, 255, 0.02)
+  );
+}
+
+.portable-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 540px;
+}
+
+.portable-copy strong {
+  font-size: 0.9rem;
+}
+
+.portable-copy span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.portable-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.imported-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.imported-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.imported-summary div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.imported-summary strong {
+  font-size: 0.95rem;
+}
+
+.imported-summary span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.imported-badge {
+  padding: 4px 10px;
+  border: 1px solid rgba(126, 231, 135, 0.3);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.concept-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.concept-form-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.concept-form-heading strong {
+  font-size: 0.86rem;
+}
+
+.concept-form-heading span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.concept-questions,
+.concept-answer {
+  min-height: 88px;
+}
+
+.concept-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.concept-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.concept-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.concept-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.concept-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.concept-copy strong {
+  overflow: hidden;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.concept-copy span {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.concept-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.concept-actions a {
+  color: var(--accent);
+  font-size: 0.72rem;
+  text-decoration: none;
+}
+
+.concept-actions a:hover {
+  text-decoration: underline;
+}
+
+.concept-remove {
+  padding: 6px 10px;
+  font-size: 0.7rem;
+}
+
 .chat-log {
   display: flex;
   flex-direction: column;
@@ -1783,6 +1968,32 @@ input:disabled {
   .qa-preset {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .portable-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .portable-actions {
+    width: 100%;
+  }
+
+  .portable-actions .button {
+    flex: 1 1 auto;
+  }
+
+  .concept-form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .concept-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .concept-actions {
+    align-self: flex-end;
   }
 
   .app-header {

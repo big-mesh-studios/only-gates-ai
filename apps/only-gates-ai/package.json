@@ -9,7 +9,8 @@
     "dev": "pnpm run build:core && pnpm run build:compiler && vite",
     "build": "pnpm run build:core && pnpm run build:compiler && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@only-gates-ai/compiler": "workspace:*",

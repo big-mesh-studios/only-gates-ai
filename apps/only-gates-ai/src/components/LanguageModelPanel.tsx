@@ -4,6 +4,7 @@ import {
   createSignal,
   For,
   onCleanup,
+  onSettled,
   Show,
 } from "solid-js";
 
@@ -14,18 +15,31 @@ import {
   parseQaPairs,
   tokenize,
   trainMiniLanguageModel,
-  trainQuestionAnswerer,
   trainQuestionAnswererFromDocuments,
   TrainingCancelledError,
   type CompletionResult,
   type MiniLanguageModel,
   type MiniQuestionAnswerer,
+  type QaDocument,
   type TrainingProgress,
 } from "../lib/miniLanguageModel";
 import {
   SOLID2_QA_DOCUMENTS,
   SOLID2_QA_SUGGESTIONS,
 } from "../assets/solid2-qa";
+import {
+  BUNDLED_QA_LEXICON,
+  bundledQaLexiconFingerprint,
+} from "../lib/qaAssets.ts";
+import QaCompileDialog from "./QaCompileDialog";
+import {
+  parseQaModelFile,
+  serializeQaModelFile,
+} from "../lib/qaModel.ts";
+import {
+  loadQaModelFromStorage,
+  saveQaModelToStorage,
+} from "../lib/qaModelStorage.ts";
 
 const SAMPLE_TEXT = `The gate forest learns from drawings. Draw a symbol and the forest will vote. Each circuit answers a simple question, and the forest combines the answers into one prediction. The small language model reads the text you give it. It learns which word tends to follow another word. Train it on a paragraph, then type a few words to see what it suggests. Binary word vectors give every word a short code of bits. The model compares those codes with popcount and integer arithmetic. No floating point is used while it predicts. Try training on your own notes, a story, or a list of sentences. The more text you provide, the more patterns it can learn. The forest watches the drawing, and the language model watches the words. Both use small binary circuits to make a prediction.`;
 
@@ -65,7 +79,7 @@ interface ChatMessage {
   readonly tags?: readonly string[];
 }
 
-type QaPreset = "custom" | "solid2";
+type QaPreset = "custom" | "solid2" | "imported";
 
 interface AnswerSegment {
   readonly kind: "text" | "code";
@@ -141,6 +155,18 @@ export default function LanguageModelPanel() {
   const [qaModel, setQaModel] = createSignal<MiniQuestionAnswerer | null>(
     trainQuestionAnswererFromDocuments(SOLID2_QA_DOCUMENTS),
   );
+  const [qaDocuments, setQaDocuments] = createSignal<readonly QaDocument[]>(
+    SOLID2_QA_DOCUMENTS,
+  );
+  const [qaModelName, setQaModelName] = createSignal("Solid 2.0 Q&A");
+  const [qaCreatedAt, setQaCreatedAt] = createSignal<string | null>(null);
+  const [qaUpdatedAt, setQaUpdatedAt] = createSignal<string | null>(null);
+  const [qaImporting, setQaImporting] = createSignal(false);
+  const [compileOpen, setCompileOpen] = createSignal(false);
+  const [newQuestions, setNewQuestions] = createSignal("");
+  const [newAnswer, setNewAnswer] = createSignal("");
+  const [newSource, setNewSource] = createSignal("");
+  const [newTags, setNewTags] = createSignal("");
   const [training, setTraining] = createSignal(false);
   const [progress, setProgress] = createSignal<TrainingProgress | null>(null);
   const [draft, setDraft] = createSignal("the ");
@@ -163,6 +189,10 @@ export default function LanguageModelPanel() {
     if (statusTimer !== undefined) {
       clearTimeout(statusTimer);
     }
+  });
+
+  onSettled(() => {
+    void restoreQaModel();
   });
 
   const textStats = createMemo(() => {
@@ -215,6 +245,18 @@ export default function LanguageModelPanel() {
         errors: [] as string[],
         questionWords: stats.questionWords,
         coverage: stats.coverage,
+      };
+    }
+
+    if (qaPreset() === "imported") {
+      const stats = qaModel()?.stats;
+      return {
+        pairs: stats?.pairs ?? 0,
+        concepts: stats?.concepts ?? 0,
+        variants: stats?.variants ?? 0,
+        errors: [] as string[],
+        questionWords: stats?.questionWords ?? 0,
+        coverage: stats?.coverage ?? 0,
       };
     }
 
@@ -297,6 +339,10 @@ export default function LanguageModelPanel() {
         setQaPreset("custom");
         setQaText(text);
         setQaModel(null);
+        setQaDocuments([]);
+        setQaModelName("Custom Q&A");
+        setQaCreatedAt(null);
+        setQaUpdatedAt(null);
         setChat([]);
       } else {
         setTrainingText(text);
@@ -376,10 +422,345 @@ export default function LanguageModelPanel() {
     }
   }
 
-  function rememberAnswerer(trained: MiniQuestionAnswerer): void {
+  function rememberAnswerer(
+    trained: MiniQuestionAnswerer,
+    documents: readonly QaDocument[],
+    name: string,
+    preset: QaPreset,
+    createdAt: string | null = null,
+    updatedAt: string | null = null,
+  ): void {
     setQaModel(trained);
+    setQaDocuments(documents);
+    setQaModelName(name);
+    setQaPreset(preset);
+    setQaCreatedAt(createdAt);
+    setQaUpdatedAt(updatedAt);
     setChat([]);
     setQuestion("");
+  }
+
+  function slugifyName(value: string): string {
+    const slug = value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return slug.length > 0 ? slug : "qa-model";
+  }
+
+  function createQaDocumentId(): string {
+    const uuid = globalThis.crypto?.randomUUID?.();
+    if (uuid) {
+      return uuid;
+    }
+    return `concept-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+  }
+
+  function normalizeQaSource(value: string): string | undefined {
+    const text = value.trim();
+    if (text.length === 0) {
+      return undefined;
+    }
+    let url: URL;
+    try {
+      url = new URL(text);
+    } catch {
+      throw new Error("The source must be a valid URL.");
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error("The source must use http or https.");
+    }
+    return url.toString();
+  }
+
+  async function persistQaDocuments(
+    documents: readonly QaDocument[],
+    name: string,
+    trained: MiniQuestionAnswerer,
+    createdAt: string | null,
+  ): Promise<string | null> {
+    const now = new Date().toISOString();
+    const model = serializeQaModelFile(documents, {
+      name,
+      suggestions: trained.suggestions,
+      lexicon: BUNDLED_QA_LEXICON,
+      createdAt: createdAt ?? now,
+      updatedAt: now,
+      stats: trained.stats,
+    });
+    try {
+      await saveQaModelToStorage(model);
+      if (!disposed) {
+        setQaCreatedAt(createdAt ?? now);
+        setQaUpdatedAt(now);
+      }
+      return null;
+    } catch (error) {
+      return errorMessage(error);
+    }
+  }
+
+  async function restoreQaModel(): Promise<void> {
+    try {
+      const stored = await loadQaModelFromStorage();
+      if (disposed || stored === null) {
+        return;
+      }
+      if (stored.lexicon.fingerprint !== bundledQaLexiconFingerprint()) {
+        showStatus(
+          "error",
+          "The QA model saved in this browser uses a different word-vector lexicon. Import or compile it again with this app version.",
+        );
+        return;
+      }
+      const trained = trainQuestionAnswererFromDocuments(stored.documents);
+      rememberAnswerer(
+        trained,
+        stored.documents,
+        stored.name,
+        "imported",
+        stored.createdAt ?? null,
+        stored.updatedAt ?? null,
+      );
+      showStatus(
+        "info",
+        `Restored “${stored.name}” (${trained.stats.concepts} concepts) from this browser.`,
+      );
+    } catch (error) {
+      showStatus(
+        "error",
+        `Could not restore the saved QA model: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  async function handleImportQaFile(input: HTMLInputElement): Promise<void> {
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file || disposed) {
+      return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      showStatus("error", "Choose a QA model file smaller than 2 MB.");
+      return;
+    }
+
+    setQaImporting(true);
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch {
+        throw new Error("The selected file is not valid JSON.");
+      }
+      if (disposed) {
+        return;
+      }
+      const model = parseQaModelFile(parsed);
+      if (model.lexicon.fingerprint !== bundledQaLexiconFingerprint()) {
+        throw new Error(
+          "This model was built with a different word-vector lexicon. Recompile it with this app version.",
+        );
+      }
+
+      const trained = trainQuestionAnswererFromDocuments(model.documents);
+      rememberAnswerer(
+        trained,
+        model.documents,
+        model.name,
+        "imported",
+        model.createdAt ?? null,
+        model.updatedAt ?? null,
+      );
+      setFileName(file.name);
+      setStatus(null);
+
+      const saveError = await persistQaDocuments(
+        model.documents,
+        model.name,
+        trained,
+        model.createdAt ?? null,
+      );
+      const summary = `Imported “${model.name}” with ${trained.stats.concepts} concepts and ${trained.stats.variants} question variants.`;
+      showStatus(
+        saveError ? "error" : "success",
+        saveError
+          ? `${summary} Could not save it in this browser: ${saveError}`
+          : summary,
+      );
+      queueMicrotask(() => questionInput?.focus());
+    } catch (error) {
+      showStatus(
+        "error",
+        `Could not import the QA model: ${errorMessage(error)}`,
+      );
+    } finally {
+      if (!disposed) {
+        setQaImporting(false);
+      }
+    }
+  }
+
+  function handleExportQaModel(): void {
+    const trained = qaModel();
+    if (trained === null) {
+      return;
+    }
+
+    try {
+      const now = new Date().toISOString();
+      const model = serializeQaModelFile(qaDocuments(), {
+        name: qaModelName(),
+        suggestions: trained.suggestions,
+        lexicon: BUNDLED_QA_LEXICON,
+        createdAt: qaCreatedAt() ?? now,
+        updatedAt: now,
+        stats: trained.stats,
+      });
+      const blob = new Blob([JSON.stringify(model, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${slugifyName(qaModelName())}.qa.json`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      showStatus("success", `Exported “${qaModelName()}” as a QA model file.`);
+    } catch (error) {
+      showStatus(
+        "error",
+        `Could not export the QA model: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  function handleAddQaConcept(): void {
+    if (qaPreset() !== "imported") {
+      return;
+    }
+
+    const questions = newQuestions()
+      .split("\n")
+      .map((question) => question.trim())
+      .filter((question) => question.length > 0);
+    if (questions.length === 0) {
+      showStatus("error", "Add at least one question for the new concept.");
+      return;
+    }
+    const answer = newAnswer().trim();
+    if (answer.length === 0) {
+      showStatus("error", "Add an answer for the new concept.");
+      return;
+    }
+
+    let source: string | undefined;
+    try {
+      source = normalizeQaSource(newSource());
+    } catch (error) {
+      showStatus("error", errorMessage(error));
+      return;
+    }
+    const tags = newTags()
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter((tag) => tag.length > 0);
+
+    const document: QaDocument = {
+      id: createQaDocumentId(),
+      questions,
+      answer,
+      ...(source === undefined ? {} : { source }),
+      ...(tags.length === 0 ? {} : { tags }),
+    };
+    const next = [...qaDocuments(), document];
+
+    try {
+      const trained = trainQuestionAnswererFromDocuments(next);
+      setQaModel(trained);
+      setQaDocuments(next);
+      setQaUpdatedAt(new Date().toISOString());
+      setNewQuestions("");
+      setNewAnswer("");
+      setNewSource("");
+      setNewTags("");
+      showStatus(
+        "success",
+        `Added a concept. The model now has ${trained.stats.concepts} concepts.`,
+      );
+      void persistQaDocuments(
+        next,
+        qaModelName(),
+        trained,
+        qaCreatedAt(),
+      ).then((saveError) => {
+        if (!disposed && saveError !== null) {
+          showStatus(
+            "error",
+            `The concept was added, but it could not be saved in this browser: ${saveError}`,
+          );
+        }
+      });
+      queueMicrotask(() => questionInput?.focus());
+    } catch (error) {
+      showStatus("error", `Could not add the concept: ${errorMessage(error)}`);
+    }
+  }
+
+  function handleRemoveQaConcept(index: number): void {
+    if (qaPreset() !== "imported") {
+      return;
+    }
+    const current = qaDocuments();
+    if (index < 0 || index >= current.length) {
+      return;
+    }
+    if (current.length <= 1) {
+      showStatus("error", "A QA model needs at least one concept.");
+      return;
+    }
+    const document = current[index]!;
+    if (
+      !window.confirm(
+        `Remove “${document.questions[0] ?? document.id}” from this QA model?`,
+      )
+    ) {
+      return;
+    }
+
+    const next = current.filter((_, position) => position !== index);
+    try {
+      const trained = trainQuestionAnswererFromDocuments(next);
+      setQaModel(trained);
+      setQaDocuments(next);
+      setQaUpdatedAt(new Date().toISOString());
+      showStatus(
+        "info",
+        `Removed a concept. ${trained.stats.concepts} concepts remain.`,
+      );
+      void persistQaDocuments(
+        next,
+        qaModelName(),
+        trained,
+        qaCreatedAt(),
+      ).then((saveError) => {
+        if (!disposed && saveError !== null) {
+          showStatus(
+            "error",
+            `The concept was removed, but the change could not be saved in this browser: ${saveError}`,
+          );
+        }
+      });
+    } catch (error) {
+      showStatus(
+        "error",
+        `Could not remove the concept: ${errorMessage(error)}`,
+      );
+    }
   }
 
   function handleLearnAnswers(): void {
@@ -388,7 +769,12 @@ export default function LanguageModelPanel() {
         const trained = trainQuestionAnswererFromDocuments(
           SOLID2_QA_DOCUMENTS,
         );
-        rememberAnswerer(trained);
+        rememberAnswerer(
+          trained,
+          SOLID2_QA_DOCUMENTS,
+          "Solid 2.0 Q&A",
+          "solid2",
+        );
         showStatus(
           "success",
           `Indexed ${trained.stats.concepts} concepts and ${trained.stats.variants} question variants.`,
@@ -411,8 +797,13 @@ export default function LanguageModelPanel() {
     }
 
     try {
-      const trained = trainQuestionAnswerer(qaText());
-      rememberAnswerer(trained);
+      const documents = parsed.pairs.map((pair, index) => ({
+        id: `pair-${index + 1}`,
+        questions: [pair.question],
+        answer: pair.answer,
+      }));
+      const trained = trainQuestionAnswererFromDocuments(documents);
+      rememberAnswerer(trained, documents, "Custom Q&A", "custom");
       showStatus(
         "success",
         `Indexed ${trained.stats.pairs} question${
@@ -428,13 +819,22 @@ export default function LanguageModelPanel() {
   function loadSolidQa(): void {
     setQaPreset("solid2");
     setQaModel(null);
+    setQaDocuments([]);
+    setQaModelName("Solid 2.0 Q&A");
+    setQaCreatedAt(null);
+    setQaUpdatedAt(null);
     setChat([]);
     setQuestion("");
     setFileName(null);
     setStatus(null);
     try {
       const trained = trainQuestionAnswererFromDocuments(SOLID2_QA_DOCUMENTS);
-      rememberAnswerer(trained);
+      rememberAnswerer(
+        trained,
+        SOLID2_QA_DOCUMENTS,
+        "Solid 2.0 Q&A",
+        "solid2",
+      );
       showStatus(
         "success",
         `Loaded ${trained.stats.concepts} Solid 2.0 concepts (${trained.stats.variants} question variants).`,
@@ -451,6 +851,10 @@ export default function LanguageModelPanel() {
   function useCustomPairs(): void {
     setQaPreset("custom");
     setQaModel(null);
+    setQaDocuments([]);
+    setQaModelName("Custom Q&A");
+    setQaCreatedAt(null);
+    setQaUpdatedAt(null);
     setChat([]);
     setQuestion("");
     setFileName(null);
@@ -554,7 +958,9 @@ export default function LanguageModelPanel() {
           {subMode() === "qa"
             ? qaPreset() === "solid2"
               ? "Retrieval over a curated Solid 2.0 corpus"
-              : "Retrieval over the pairs you train"
+              : qaPreset() === "imported"
+                ? "Retrieval over an imported QA model"
+                : "Retrieval over the pairs you train"
             : "Next-word prediction"}
         </span>
       </div>
@@ -566,14 +972,18 @@ export default function LanguageModelPanel() {
               {subMode() === "qa"
                 ? qaPreset() === "solid2"
                   ? "Bundled dataset"
-                  : "Answer data"
+                  : qaPreset() === "imported"
+                    ? "Imported model"
+                    : "Answer data"
                 : "Training data"}
             </span>
             <h2>
               {subMode() === "qa"
                 ? qaPreset() === "solid2"
                   ? "Solid 2.0 Q&A"
-                  : "Write Q&A pairs"
+                  : qaPreset() === "imported"
+                    ? qaModelName()
+                    : "Write Q&A pairs"
                 : "Read a text"}
             </h2>
           </div>
@@ -587,7 +997,9 @@ export default function LanguageModelPanel() {
           {subMode() === "qa"
             ? qaPreset() === "solid2"
               ? "Curated from the official Solid 2.0 migration guide and reactivity RFCs. Each answer links back to the source section. Ask a question on the right, or switch to custom pairs to train on your own text."
-              : "Write question and answer pairs. Separate pairs with a blank line, or use question => answer on one line. Q: and A: labels also work."
+              : qaPreset() === "imported"
+                ? "This model lives in your browser and in the JSON file you imported. Add concepts below, then export the JSON or compile a standalone TypeScript module."
+                : "Write question and answer pairs. Separate pairs with a blank line, or use question => answer on one line. Q: and A: labels also work."
             : "Paste text or choose a file. The model learns which word tends to follow the previous few words. Everything is trained and inferred in this browser tab."}
         </p>
 
@@ -611,25 +1023,27 @@ export default function LanguageModelPanel() {
         <Show
           when={subMode() === "complete" || qaPreset() === "custom"}
           fallback={
-            <div class="qa-preset">
-              <div class="qa-preset-copy">
-                <strong>
-                  {solid2Stats().concepts} concepts ·{" "}
-                  {solid2Stats().variants} question variants
-                </strong>
-                <span>
-                  Answers are retrieval-only and written for this demo. Each
-                  one links to the official Solid 2.0 documentation.
-                </span>
+            <Show when={qaPreset() === "solid2"}>
+              <div class="qa-preset">
+                <div class="qa-preset-copy">
+                  <strong>
+                    {solid2Stats().concepts} concepts ·{" "}
+                    {solid2Stats().variants} question variants
+                  </strong>
+                  <span>
+                    Answers are retrieval-only and written for this demo. Each
+                    one links to the official Solid 2.0 documentation.
+                  </span>
+                </div>
+                <a
+                  href="https://github.com/solidjs/solid/tree/next/documentation/solid-2.0"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Browse the source docs
+                </a>
               </div>
-              <a
-                href="https://github.com/solidjs/solid/tree/next/documentation/solid-2.0"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Browse the source docs
-              </a>
-            </div>
+            </Show>
           }
         >
           <textarea
@@ -654,6 +1068,130 @@ export default function LanguageModelPanel() {
           />
         </Show>
 
+        <Show when={subMode() === "qa" && qaPreset() === "imported"}>
+          <div class="imported-block">
+            <div class="imported-summary">
+              <div>
+                <strong>{qaModelName()}</strong>
+                <span>
+                  {qaDocuments().length} concept
+                  {qaDocuments().length === 1 ? "" : "s"} ·{" "}
+                  {qaModel()?.stats.variants ?? 0} question variant
+                  {(qaModel()?.stats.variants ?? 0) === 1 ? "" : "s"}
+                  <Show when={qaUpdatedAt()}>
+                    {" "}
+                    · updated {new Date(qaUpdatedAt()!).toLocaleString()}
+                  </Show>
+                </span>
+              </div>
+              <span class="imported-badge">Saved in this browser</span>
+            </div>
+
+            <form
+              class="concept-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleAddQaConcept();
+              }}
+            >
+              <div class="concept-form-heading">
+                <strong>Add a concept</strong>
+                <span>
+                  Put one question per line. Variants help retrieval match
+                  different phrasings of the same question.
+                </span>
+              </div>
+              <textarea
+                class="text-area concept-questions"
+                aria-label="Questions for the new concept"
+                rows="3"
+                spellcheck={false}
+                placeholder={"How do split effects work?\nWhat are split effects?"}
+                value={newQuestions()}
+                onInput={(event) => setNewQuestions(event.currentTarget.value)}
+              />
+              <textarea
+                class="text-area concept-answer"
+                aria-label="Answer for the new concept"
+                rows="3"
+                spellcheck={false}
+                placeholder="The answer shown when someone asks one of these questions."
+                value={newAnswer()}
+                onInput={(event) => setNewAnswer(event.currentTarget.value)}
+              />
+              <div class="concept-form-row">
+                <input
+                  type="text"
+                  inputmode="url"
+                  aria-label="Source URL"
+                  placeholder="Source URL (optional)"
+                  value={newSource()}
+                  onInput={(event) => setNewSource(event.currentTarget.value)}
+                />
+                <input
+                  type="text"
+                  aria-label="Tags"
+                  placeholder="Tags, comma separated (optional)"
+                  value={newTags()}
+                  onInput={(event) => setNewTags(event.currentTarget.value)}
+                />
+              </div>
+              <div class="concept-form-actions">
+                <button
+                  type="submit"
+                  class="button primary"
+                  disabled={
+                    newQuestions().trim().length === 0 ||
+                    newAnswer().trim().length === 0
+                  }
+                >
+                  Add concept
+                </button>
+              </div>
+            </form>
+
+            <div class="concept-list" role="list" aria-label="Model concepts">
+              <For each={qaDocuments()}>
+                {(document, index) => (
+                  <div class="concept-item" role="listitem">
+                    <div class="concept-copy">
+                      <strong>{document.questions[0] ?? document.id}</strong>
+                      <span>
+                        {document.questions.length} question variant
+                        {document.questions.length === 1 ? "" : "s"}
+                        <Show when={document.tags && document.tags.length > 0}>
+                          {" "}
+                          · {document.tags!.join(", ")}
+                        </Show>
+                      </span>
+                    </div>
+                    <div class="concept-actions">
+                      <Show when={document.source}>
+                        {(source) => (
+                          <a
+                            href={source()}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Source
+                          </a>
+                        )}
+                      </Show>
+                      <button
+                        type="button"
+                        class="button ghost concept-remove"
+                        onClick={() => handleRemoveQaConcept(index())}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
+
         <Show
           when={subMode() === "qa"}
           fallback={
@@ -674,6 +1212,11 @@ export default function LanguageModelPanel() {
                   {qaStats().concepts} concepts · {qaStats().variants} question
                   variants
                 </>
+              ) : qaPreset() === "imported" ? (
+                <>
+                  {qaStats().concepts} concepts · {qaStats().variants} question
+                  variants
+                </>
               ) : (
                 <>
                   {qaStats().pairs} pair{qaStats().pairs === 1 ? "" : "s"}
@@ -685,7 +1228,9 @@ export default function LanguageModelPanel() {
             <span>
               {qaPreset() === "solid2"
                 ? "Official Solid 2.0 docs"
-                : "Blank line between pairs"}
+                : qaPreset() === "imported"
+                  ? qaModelName()
+                  : "Blank line between pairs"}
             </span>
           </div>
         </Show>
@@ -694,64 +1239,125 @@ export default function LanguageModelPanel() {
           {(error) => <p class="qa-error">{error()}</p>}
         </Show>
 
+        <Show when={subMode() === "qa"}>
+          <div class="portable-row">
+            <div class="portable-copy">
+              <strong>Portable QA model</strong>
+              <span>
+                Import or export the JSON model, or compile a dependency-free
+                TypeScript module you can drop into another app.
+              </span>
+            </div>
+            <div class="portable-actions">
+              <label class="button secondary file-button">
+                {qaImporting() ? "Importing…" : "Import JSON"}
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  disabled={qaImporting()}
+                  onChange={(event) =>
+                    void handleImportQaFile(event.currentTarget)
+                  }
+                />
+              </label>
+              <button
+                type="button"
+                class="button secondary"
+                disabled={qaModel() === null}
+                onClick={handleExportQaModel}
+              >
+                Export JSON
+              </button>
+              <button
+                type="button"
+                class="button primary"
+                disabled={qaModel() === null}
+                onClick={() => setCompileOpen(true)}
+              >
+                Compile TypeScript
+              </button>
+            </div>
+          </div>
+        </Show>
+
         <div class="button-row">
           <Show
             when={subMode() === "complete"}
             fallback={
               <Show
-                when={qaPreset() === "solid2"}
+                when={qaPreset() === "imported"}
                 fallback={
-                  <>
+                  <Show
+                    when={qaPreset() === "solid2"}
+                    fallback={
+                      <>
+                        <button
+                          type="button"
+                          class="button primary"
+                          disabled={
+                            qaStats().pairs === 0 || qaStats().errors.length > 0
+                          }
+                          onClick={handleLearnAnswers}
+                        >
+                          {qaStats().pairs === 1
+                            ? "Learn 1 answer"
+                            : `Learn ${qaStats().pairs} answers`}
+                        </button>
+                        <button
+                          type="button"
+                          class="button ghost"
+                          onClick={loadSolidQa}
+                        >
+                          Use Solid 2.0 Q&A
+                        </button>
+                        <button
+                          type="button"
+                          class="button ghost"
+                          onClick={() => {
+                            setQaPreset("custom");
+                            setQaText(SAMPLE_QA);
+                            setQaModel(null);
+                            setChat([]);
+                            setQuestion("");
+                            setFileName(null);
+                            setStatus(null);
+                          }}
+                        >
+                          Use sample
+                        </button>
+                      </>
+                    }
+                  >
                     <button
                       type="button"
                       class="button primary"
-                      disabled={
-                        qaStats().pairs === 0 || qaStats().errors.length > 0
-                      }
                       onClick={handleLearnAnswers}
                     >
-                      {qaStats().pairs === 1
-                        ? "Learn 1 answer"
-                        : `Learn ${qaStats().pairs} answers`}
+                      Reindex {qaStats().concepts} concepts
                     </button>
                     <button
                       type="button"
                       class="button ghost"
-                      onClick={loadSolidQa}
+                      onClick={useCustomPairs}
                     >
-                      Use Solid 2.0 Q&A
+                      Use custom pairs
                     </button>
-                    <button
-                      type="button"
-                      class="button ghost"
-                      onClick={() => {
-                        setQaPreset("custom");
-                        setQaText(SAMPLE_QA);
-                        setQaModel(null);
-                        setChat([]);
-                        setQuestion("");
-                        setFileName(null);
-                        setStatus(null);
-                      }}
-                    >
-                      Use sample
-                    </button>
-                  </>
+                  </Show>
                 }
               >
-                <button
-                  type="button"
-                  class="button primary"
-                  onClick={handleLearnAnswers}
-                >
-                  Reindex {qaStats().concepts} concepts
-                </button>
                 <button
                   type="button"
                   class="button ghost"
                   onClick={useCustomPairs}
                 >
                   Use custom pairs
+                </button>
+                <button
+                  type="button"
+                  class="button ghost"
+                  onClick={loadSolidQa}
+                >
+                  Use Solid 2.0 Q&A
                 </button>
               </Show>
             }
@@ -858,7 +1464,9 @@ export default function LanguageModelPanel() {
               <p class="hint">
                 {qaPreset() === "solid2"
                   ? "Ask about Solid 2.0. Answers are retrieved from a curated set of concepts and link back to the official docs."
-                  : "Ask with words from the pairs. Your message appears in the chat and the closest trained answer appears underneath it."}
+                  : qaPreset() === "imported"
+                    ? "Ask with words from the imported concepts. The closest indexed question supplies the answer; matches below the threshold are labeled as closest."
+                    : "Ask with words from the pairs. Your message appears in the chat and the closest trained answer appears underneath it."}
               </p>
 
               <div
@@ -891,9 +1499,11 @@ export default function LanguageModelPanel() {
                           <strong>
                             {qaPreset() === "solid2"
                               ? `${active().stats.concepts} Solid 2.0 concepts · ${active().stats.variants} question variants`
-                              : `${active().stats.pairs} question${
-                                  active().stats.pairs === 1 ? "" : "s"
-                                } indexed`}
+                              : qaPreset() === "imported"
+                                ? `${active().stats.concepts} concepts · ${active().stats.variants} question variants`
+                                : `${active().stats.pairs} question${
+                                    active().stats.pairs === 1 ? "" : "s"
+                                  } indexed`}
                           </strong>
                           <span>
                             Ask below, or start with a trained question:
@@ -1288,10 +1898,22 @@ export default function LanguageModelPanel() {
           >
             {qaPreset() === "solid2"
               ? "Answers are curated from the official Solid 2.0 migration guide and RFCs, then retrieved by shared words and binary question vectors. No answer text is generated."
-              : "Answers are retrieved from the pairs you wrote by comparing shared words and binary question vectors; no answer text is generated."}
+              : qaPreset() === "imported"
+                ? "Answers come from the imported concepts and are retrieved by shared words and binary question vectors. No answer text is generated."
+                : "Answers are retrieved from the pairs you wrote by comparing shared words and binary question vectors; no answer text is generated."}
           </Show>
         </p>
       </section>
+
+      <QaCompileDialog
+        open={compileOpen()}
+        documents={qaDocuments()}
+        suggestions={qaModel()?.suggestions}
+        name={qaModelName()}
+        createdAt={qaCreatedAt() ?? undefined}
+        updatedAt={qaUpdatedAt() ?? undefined}
+        onClose={() => setCompileOpen(false)}
+      />
     </main>
   );
 }

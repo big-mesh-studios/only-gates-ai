@@ -1,4 +1,4 @@
-import type { QaDocument } from "../lib/miniLanguageModel";
+import type { QaDocument } from "../lib/qaRuntime.ts";
 
 /*
  * A curated Solid 2.0 Q&A corpus.

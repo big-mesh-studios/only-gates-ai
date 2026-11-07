@@ -196,7 +196,7 @@ export function quantizeByColumns(
   for (let col = 0; col < cols; col++) {
     let maxAbs = 0;
     for (let row = 0; row < rows; row++) {
-      const magnitude = Math.abs(values[row * cols + col]);
+      const magnitude = Math.abs(values[row * cols + col]!);
       if (magnitude > maxAbs) maxAbs = magnitude;
     }
     const scale = maxAbs > 0 ? maxAbs / 127 : 1;
@@ -206,7 +206,7 @@ export function quantizeByColumns(
       const index = row * cols + col;
       quantized[index] = Math.max(
         -127,
-        Math.min(127, Math.round(values[index] * inverse)),
+        Math.min(127, Math.round(values[index]! * inverse)),
       );
     }
   }
@@ -227,7 +227,7 @@ export function quantizeByRows(
     const offset = row * cols;
     let maxAbs = 0;
     for (let col = 0; col < cols; col++) {
-      const magnitude = Math.abs(values[offset + col]);
+      const magnitude = Math.abs(values[offset + col]!);
       if (magnitude > maxAbs) maxAbs = magnitude;
     }
     const scale = maxAbs > 0 ? maxAbs / 127 : 1;
@@ -236,7 +236,7 @@ export function quantizeByRows(
     for (let col = 0; col < cols; col++) {
       quantized[offset + col] = Math.max(
         -127,
-        Math.min(127, Math.round(values[offset + col] * inverse)),
+        Math.min(127, Math.round(values[offset + col]! * inverse)),
       );
     }
   }
@@ -252,7 +252,7 @@ function dequantizeRow(
   const src = index * row.cols;
   const scale = row.scales[index];
   for (let i = 0; i < row.cols; i++) {
-    out[offset + i] = row.values[src + i] * scale;
+    out[offset + i] = row.values[src + i]! * scale!;
   }
 }
 
@@ -265,7 +265,7 @@ function transposedMatrix(
   const transposed = new Float32Array(cols * rows);
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      transposed[col * rows + row] = values[row * cols + col];
+      transposed[col * rows + row] = values[row * cols + col]!;
     }
   }
   return quantizeByColumns(transposed, cols, rows);
