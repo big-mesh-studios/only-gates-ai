@@ -1,4 +1,5 @@
 import {
+  createEffect,
   createMemo,
   createSignal,
   For,
@@ -18,7 +19,6 @@ import {
   type CompletionResult,
   type MiniLanguageModel,
   type MiniQuestionAnswerer,
-  type QaAnswer,
   type TrainingProgress,
 } from "../lib/miniLanguageModel";
 
@@ -49,6 +49,15 @@ interface LocalStatus {
   readonly text: string;
 }
 
+interface ChatMessage {
+  readonly id: number;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly matched?: boolean;
+  readonly match?: string;
+  readonly confidence?: number;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -65,12 +74,15 @@ export default function LanguageModelPanel() {
   const [progress, setProgress] = createSignal<TrainingProgress | null>(null);
   const [draft, setDraft] = createSignal("the ");
   const [question, setQuestion] = createSignal("");
-  const [qaAnswer, setQaAnswer] = createSignal<QaAnswer | null>(null);
+  const [chat, setChat] = createSignal<readonly ChatMessage[]>([]);
   const [status, setStatus] = createSignal<LocalStatus | null>(null);
 
   let disposed = false;
   let trainingToken: { cancelled: boolean } | null = null;
   let statusTimer: ReturnType<typeof setTimeout> | undefined;
+  let nextMessageId = 1;
+  let chatLog: HTMLDivElement | undefined;
+  let questionInput: HTMLTextAreaElement | undefined;
 
   onCleanup(() => {
     disposed = true;
@@ -135,6 +147,15 @@ export default function LanguageModelPanel() {
     }
   });
 
+  createEffect(
+    () => chat(),
+    () => {
+      if (chatLog !== undefined) {
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+    },
+  );
+
   function showStatus(kind: LocalStatus["kind"], text: string): void {
     if (statusTimer !== undefined) {
       clearTimeout(statusTimer);
@@ -166,7 +187,7 @@ export default function LanguageModelPanel() {
       if (subMode() === "qa") {
         setQaText(text);
         setQaModel(null);
-        setQaAnswer(null);
+        setChat([]);
       } else {
         setTrainingText(text);
       }
@@ -259,15 +280,15 @@ export default function LanguageModelPanel() {
     try {
       const trained = trainQuestionAnswerer(qaText());
       setQaModel(trained);
-      const first = trained.questions[0] ?? "";
-      setQuestion(first);
-      setQaAnswer(first.length > 0 ? trained.ask(first) : null);
+      setChat([]);
+      setQuestion("");
       showStatus(
         "success",
         `Indexed ${trained.stats.pairs} question${
           trained.stats.pairs === 1 ? "" : "s"
         }. Ask one on the right.`,
       );
+      queueMicrotask(() => questionInput?.focus());
     } catch (error) {
       showStatus("error", `Could not learn answers: ${errorMessage(error)}`);
     }
@@ -280,21 +301,40 @@ export default function LanguageModelPanel() {
     }
     const next = (preset ?? question()).trim();
     if (next.length === 0) {
-      showStatus("error", "Type a question first.");
       return;
     }
-    if (preset !== undefined) {
-      setQuestion(preset);
-    }
+
     const result = active.ask(next);
-    setQaAnswer(result);
-    if (result === null) {
-      showStatus("error", "Add some answer pairs first.");
-    }
+    const reply: ChatMessage =
+      result === null
+        ? {
+            id: nextMessageId++,
+            role: "assistant",
+            text: "I need some words to match. Try asking with a few words from a trained question.",
+            matched: false,
+          }
+        : {
+            id: nextMessageId++,
+            role: "assistant",
+            text: result.matched
+              ? result.answer
+              : `I couldn't find a trained question close enough to that. Closest: “${result.question}”.`,
+            matched: result.matched,
+            match: result.question,
+            confidence: result.confidence,
+          };
+
+    setChat((current) => [
+      ...current,
+      { id: nextMessageId++, role: "user", text: next },
+      reply,
+    ]);
+    setQuestion("");
+    questionInput?.focus();
   }
 
   function handleQuestionKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       askQuestion();
     }
@@ -398,7 +438,7 @@ export default function LanguageModelPanel() {
             if (subMode() === "qa") {
               setQaText(event.currentTarget.value);
               setQaModel(null);
-              setQaAnswer(null);
+              setChat([]);
             } else {
               setTrainingText(event.currentTarget.value);
             }
@@ -456,7 +496,8 @@ export default function LanguageModelPanel() {
                   onClick={() => {
                     setQaText(SAMPLE_QA);
                     setQaModel(null);
-                    setQaAnswer(null);
+                    setChat([]);
+                    setQuestion("");
                     setFileName(null);
                     setStatus(null);
                   }}
@@ -541,15 +582,23 @@ export default function LanguageModelPanel() {
         <div class="card-heading compact">
           <div>
             <span class="eyebrow">
-              {subMode() === "qa" ? "Ask" : "Autocomplete"}
+              {subMode() === "qa" ? "Chat" : "Autocomplete"}
             </span>
             <h2>
               {subMode() === "qa" ? "Ask a question" : "Continue a sentence"}
             </h2>
           </div>
-          <div class="runtime-pill ready">
+          <div
+            class={`runtime-pill${
+              subMode() !== "qa" || qaModel() !== null ? " ready" : ""
+            }`}
+          >
             <span class="runtime-dot" />
-            {subMode() === "qa" ? "Answer index" : "Integer inference"}
+            {subMode() === "qa"
+              ? qaModel() !== null
+                ? "Answer index ready"
+                : "Not learned yet"
+              : "Integer inference"}
           </div>
         </div>
 
@@ -558,123 +607,133 @@ export default function LanguageModelPanel() {
           fallback={
             <>
               <p class="hint">
-                Type a question using words from the pairs. The model finds the
-                closest trained question and returns its answer. This is
-                retrieval, not free-form generation.
+                Ask with words from the pairs. Your message appears in the chat
+                and the closest trained answer appears underneath it.
               </p>
 
-              <textarea
-                class="text-area question-text"
-                rows="3"
-                spellcheck={false}
-                placeholder="For example: How does autocomplete work?"
-                value={question()}
-                onInput={(event) => {
-                  setQuestion(event.currentTarget.value);
-                  setQaAnswer(null);
+              <div
+                class="chat-log"
+                role="log"
+                aria-live="polite"
+                aria-label="Question and answer chat"
+                ref={(element) => {
+                  chatLog = element;
+                  element.scrollTop = element.scrollHeight;
                 }}
-                onKeyDown={handleQuestionKeyDown}
-              />
+              >
+                <Show
+                  when={chat().length > 0}
+                  fallback={
+                    <Show
+                      when={qaModel()}
+                      fallback={
+                        <div class="chat-empty">
+                          <strong>No answers learned yet</strong>
+                          <span>
+                            Write question and answer pairs on the left, then
+                            click “Learn answers”.
+                          </span>
+                        </div>
+                      }
+                    >
+                      {(active) => (
+                        <div class="chat-empty">
+                          <strong>
+                            {active().stats.pairs} question
+                            {active().stats.pairs === 1 ? "" : "s"} indexed
+                          </strong>
+                          <span>
+                            Ask below, or start with a trained question:
+                          </span>
+                          <div class="completion-list">
+                            <For each={active().questions.slice(0, 4)}>
+                              {(trained) => (
+                                <button
+                                  type="button"
+                                  class="completion-chip"
+                                  onClick={() => askQuestion(trained)}
+                                >
+                                  <span class="completion-word">
+                                    {trained}
+                                  </span>
+                                </button>
+                              )}
+                            </For>
+                          </div>
+                        </div>
+                      )}
+                    </Show>
+                  }
+                >
+                  <For each={chat()}>
+                    {(message) => (
+                      <div class={`chat-message ${message.role}`}>
+                        <div
+                          class={`chat-bubble${
+                            message.matched === false ? " low" : ""
+                          }`}
+                        >
+                          <span class="chat-role">
+                            {message.role === "user" ? "You" : "Model"}
+                          </span>
+                          <p>{message.text}</p>
+                          <Show
+                            when={
+                              message.role === "assistant" &&
+                              message.confidence !== undefined
+                            }
+                          >
+                            <div class="chat-meta">
+                              <span>
+                                {message.matched ? "Matched" : "Closest"} “
+                                {message.match}”
+                              </span>
+                              <span>
+                                {Math.round((message.confidence ?? 0) * 100)}%
+                                match
+                              </span>
+                            </div>
+                          </Show>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+              </div>
 
-              <div class="button-row">
+              <div class="chat-composer">
+                <textarea
+                  ref={(element) => {
+                    questionInput = element;
+                  }}
+                  class="text-area chat-input"
+                  aria-label="Ask a question"
+                  rows="2"
+                  spellcheck={false}
+                  disabled={qaModel() === null}
+                  placeholder={
+                    qaModel() === null
+                      ? "Learn answers first…"
+                      : "Ask a question…"
+                  }
+                  value={question()}
+                  onInput={(event) => setQuestion(event.currentTarget.value)}
+                  onKeyDown={handleQuestionKeyDown}
+                />
                 <button
                   type="button"
-                  class="button primary"
+                  class="button primary chat-send"
                   disabled={
                     qaModel() === null || question().trim().length === 0
                   }
                   onClick={() => askQuestion()}
                 >
-                  Ask
-                </button>
-                <button
-                  type="button"
-                  class="button ghost"
-                  onClick={() => {
-                    setQuestion("");
-                    setQaAnswer(null);
-                  }}
-                >
-                  Clear
+                  Send
                 </button>
               </div>
-
-              <Show
-                when={qaModel()}
-                fallback={
-                  <p class="empty-state">
-                    Learn the answers on the left first. Each pair becomes a
-                    binary question vector plus its answer.
-                  </p>
-                }
-              >
-                {(active) => (
-                  <>
-                    <div class="sample-questions">
-                      <div class="section-heading">
-                        <span>Try a trained question</span>
-                        <span class="muted">
-                          {active().stats.pairs} indexed
-                        </span>
-                      </div>
-                      <div class="completion-list">
-                        <For each={active().questions.slice(0, 4)}>
-                          {(trained) => (
-                            <button
-                              type="button"
-                              class="completion-chip"
-                              onClick={() => askQuestion(trained)}
-                            >
-                              <span class="completion-word">{trained}</span>
-                            </button>
-                          )}
-                        </For>
-                      </div>
-                    </div>
-
-                    <Show
-                      when={qaAnswer()}
-                      fallback={
-                        <p class="empty-state">
-                          Ask a question to see the closest trained answer.
-                        </p>
-                      }
-                    >
-                      {(result) => (
-                        <Show
-                          when={result().matched}
-                          fallback={
-                            <div class="answer-block low">
-                              <div class="answer-label">No close match</div>
-                              <p class="answer-text">
-                                I could not find a trained question close enough
-                                to that. Closest: “{result().question}”.
-                              </p>
-                              <div class="answer-meta">
-                                <span>
-                                  {Math.round(result().confidence * 100)}% match
-                                </span>
-                                <span>Try words from a trained question</span>
-                              </div>
-                            </div>
-                          }
-                        >
-                          <div class="answer-block">
-                            <div class="answer-label">Answer</div>
-                            <p class="answer-text">{result().answer}</p>
-                            <div class="answer-meta">
-                              <span>Matched “{result().question}”</span>
-                              <span>
-                                {Math.round(result().confidence * 100)}% match
-                              </span>
-                            </div>
-                          </div>
-                        </Show>
-                      )}
-                    </Show>
-                  </>
-                )}
-              </Show>
+              <p class="chat-hint">
+                Enter to send · Shift+Enter for a new line
+              </p>
             </>
           }
         >
