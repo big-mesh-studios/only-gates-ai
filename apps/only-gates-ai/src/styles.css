@@ -441,6 +441,51 @@ button {
   min-height: 250px;
 }
 
+.qa-preset {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 250px;
+  padding: 24px;
+  border: 1px solid rgba(126, 231, 135, 0.2);
+  border-radius: 16px;
+  background: linear-gradient(
+    135deg,
+    rgba(126, 231, 135, 0.09),
+    rgba(255, 255, 255, 0.025)
+  );
+}
+
+.qa-preset-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 560px;
+}
+
+.qa-preset-copy strong {
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.qa-preset-copy span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.qa-preset a {
+  flex: none;
+  color: var(--accent);
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.qa-preset a:hover {
+  text-decoration: underline;
+}
+
 .qa-error {
   margin: -4px 0 0;
   color: var(--warning);
@@ -513,6 +558,37 @@ button {
   white-space: pre-wrap;
 }
 
+.chat-bubble p + p,
+.chat-bubble p + .chat-code,
+.chat-bubble .chat-code + p {
+  margin-top: 10px;
+}
+
+.chat-code {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.32);
+  font-size: 0.76rem;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.chat-code code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.chat-inline-code {
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.82em;
+}
+
 .chat-meta {
   display: flex;
   flex-wrap: wrap;
@@ -523,6 +599,18 @@ button {
   border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: 0.68rem;
+}
+
+.chat-source {
+  display: inline-block;
+  margin-top: 9px;
+  color: var(--accent);
+  font-size: 0.72rem;
+  text-decoration: none;
+}
+
+.chat-source:hover {
+  text-decoration: underline;
 }
 
 .chat-empty {
@@ -1690,6 +1778,11 @@ input:disabled {
 
   .chat-bubble {
     max-width: 92%;
+  }
+
+  .qa-preset {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .app-header {

@@ -910,11 +910,100 @@ const QA_STOP_WORDS = new Set([
   "would",
   "you",
   "your",
+  // Solid 2 questions often include these, but they do not help distinguish
+  // one concept from another.
+  "about",
+  "after",
+  "available",
+  "before",
+  "between",
+  "change",
+  "changed",
+  "changes",
+  "difference",
+  "different",
+  "example",
+  "examples",
+  "explain",
+  "happen",
+  "happened",
+  "happens",
+  "mean",
+  "meaning",
+  "means",
+  "need",
+  "needs",
+  "new",
+  "old",
+  "replace",
+  "replaced",
+  "replacement",
+  "show",
+  "solid",
+  "still",
+  "tell",
+  "use",
+  "used",
+  "uses",
+  "using",
+  "version",
+  "want",
+  "wants",
+  "way",
+  "ways",
+  "work",
+  "working",
+  "works",
+  "2",
+  "0",
+  "rc",
+]);
+
+/*
+ * A few 1.x -> 2.0 renames are useful as query expansions. Adding the
+ * counterpart to both the query and the indexed question lets "onMount"
+ * find "onSettled" without making the whole index fuzzy.
+ */
+const QA_ALIASES: ReadonlyMap<string, readonly string[]> = new Map([
+  ["onmount", ["onsettled"]],
+  ["onsettled", ["onmount"]],
+  ["createcomputed", ["createeffect", "creatememo"]],
+  ["creatememo", ["createcomputed"]],
+  ["batch", ["flush"]],
+  ["flush", ["batch"]],
+  ["unwrap", ["snapshot"]],
+  ["snapshot", ["unwrap"]],
+  ["mergeprops", ["merge"]],
+  ["merge", ["mergeprops"]],
+  ["splitprops", ["omit"]],
+  ["omit", ["splitprops"]],
+  ["suspense", ["loading"]],
+  ["loading", ["suspense"]],
+  ["errorboundary", ["errored"]],
+  ["errored", ["errorboundary"]],
+  ["suspenselist", ["reveal"]],
+  ["reveal", ["suspenselist"]],
+  ["initialvalue", ["prev"]],
+  ["prev", ["initialvalue"]],
+  ["once", ["untrack"]],
+  ["untrack", ["once"]],
+  ["createresource", ["creatememo", "fetch"]],
+  ["createmutable", ["createstore"]],
+  ["produce", ["draft"]],
 ]);
 
 export interface QaPair {
   readonly question: string;
   readonly answer: string;
+}
+
+export interface QaDocument {
+  readonly id: string;
+  readonly questions: readonly string[];
+  readonly answer: string;
+  readonly source?: string;
+  readonly tags?: readonly string[];
+  readonly keywords?: readonly string[];
 }
 
 export interface QaParseResult {
@@ -1022,10 +1111,65 @@ function stripQaMarker(kind: "q" | "a", line: string): string {
   return line.replace(pattern, "").trim();
 }
 
+function singularize(token: string): string {
+  if (token.length <= 3) {
+    return token;
+  }
+  if (token.endsWith("ies") && token.length > 4) {
+    return `${token.slice(0, -3)}y`;
+  }
+  if (/(?:ses|xes|zes|ches|shes)$/.test(token)) {
+    return token.slice(0, -2);
+  }
+  if (token.endsWith("s") && !token.endsWith("ss")) {
+    return token.slice(0, -1);
+  }
+  return token;
+}
+
 function contentTokens(text: string): string[] {
-  const tokens = tokenize(text).map((token) => token.text.toLowerCase());
-  const content = tokens.filter((token) => !QA_STOP_WORDS.has(token));
-  return content.length > 0 ? content : tokens;
+  const rawTokens = tokenize(text).map((token) => token.text);
+  const expanded: string[] = [];
+
+  for (const raw of rawTokens) {
+    const lower = raw.toLowerCase().replace(/^'+|'+$/g, "");
+    if (lower.length === 0) {
+      continue;
+    }
+
+    const candidates = new Set<string>([lower, singularize(lower)]);
+    if (/[a-z][A-Z]/.test(raw)) {
+      for (const part of raw.split(/(?=[A-Z])/)) {
+        const normalized = part.toLowerCase();
+        if (normalized.length > 0) {
+          candidates.add(normalized);
+        }
+      }
+    }
+    if (raw.includes("_")) {
+      for (const part of raw.split("_")) {
+        const normalized = part.toLowerCase();
+        if (normalized.length > 0) {
+          candidates.add(normalized);
+        }
+      }
+    }
+
+    for (const candidate of candidates) {
+      if (QA_STOP_WORDS.has(candidate)) {
+        continue;
+      }
+      expanded.push(candidate);
+      for (const alias of QA_ALIASES.get(candidate) ?? []) {
+        expanded.push(alias);
+      }
+    }
+  }
+
+  if (expanded.length > 0) {
+    return expanded;
+  }
+  return rawTokens.map((token) => token.toLowerCase()).filter(Boolean);
 }
 
 function questionVector(tokens: readonly string[]): Uint32Array {
@@ -1037,10 +1181,15 @@ interface QaEntry {
   readonly answer: string;
   readonly tokens: ReadonlySet<string>;
   readonly vector: Uint32Array;
+  readonly documentId: string;
+  readonly source?: string;
+  readonly tags: readonly string[];
 }
 
 export interface QaStats {
   readonly pairs: number;
+  readonly concepts: number;
+  readonly variants: number;
   readonly questionWords: number;
   readonly vectorBits: number;
   readonly coverage: number;
@@ -1055,6 +1204,9 @@ export interface QaAnswer extends QaMatch {
   readonly answer: string;
   readonly matched: boolean;
   readonly candidates: readonly QaMatch[];
+  readonly documentId: string;
+  readonly source?: string;
+  readonly tags: readonly string[];
 }
 
 function weightedOverlap(
@@ -1082,6 +1234,7 @@ function weightedOverlap(
 export class MiniQuestionAnswerer {
   readonly stats: QaStats;
   readonly questions: readonly string[];
+  readonly suggestions: readonly string[];
 
   private readonly entries: readonly QaEntry[];
   private readonly idf: ReadonlyMap<string, number>;
@@ -1090,11 +1243,13 @@ export class MiniQuestionAnswerer {
     entries: readonly QaEntry[],
     idf: ReadonlyMap<string, number>,
     stats: QaStats,
+    suggestions: readonly string[],
   ) {
     this.entries = entries;
     this.idf = idf;
     this.stats = stats;
     this.questions = entries.map((entry) => entry.question);
+    this.suggestions = suggestions;
   }
 
   ask(text: string): QaAnswer | null {
@@ -1104,7 +1259,7 @@ export class MiniQuestionAnswerer {
     }
 
     const unique = new Set(tokens);
-    const queryVector = questionVector(tokens);
+    const queryVector = questionVector([...unique]);
     const scored = this.entries
       .map((entry, index) => {
         const overlap = weightedOverlap(unique, entry.tokens, this.idf);
@@ -1138,8 +1293,107 @@ export class MiniQuestionAnswerer {
         question: candidate.question,
         confidence: candidate.confidence,
       })),
+      documentId: entry.documentId,
+      source: entry.source,
+      tags: entry.tags,
     };
   }
+}
+
+export function trainQuestionAnswererFromDocuments(
+  documents: readonly QaDocument[],
+): MiniQuestionAnswerer {
+  if (documents.length === 0) {
+    throw new Error("Add at least one question and answer pair.");
+  }
+
+  const prepared = documents.map((document) => {
+    if (document.questions.length === 0) {
+      throw new Error(`"${document.id}" needs at least one question.`);
+    }
+    const variantTokens = document.questions.map((question) =>
+      contentTokens(question),
+    );
+    const keywordTokens = (document.keywords ?? []).flatMap((keyword) =>
+      contentTokens(keyword),
+    );
+    const union = new Set<string>();
+    for (const tokens of variantTokens) {
+      for (const token of tokens) {
+        union.add(token);
+      }
+    }
+    for (const token of keywordTokens) {
+      union.add(token);
+    }
+    return { document, variantTokens, union };
+  });
+
+  const documentFrequency = new Map<string, number>();
+  for (const { union } of prepared) {
+    for (const token of union) {
+      documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
+    }
+  }
+
+  const total = prepared.length;
+  const idf = new Map<string, number>();
+  for (const [token, count] of documentFrequency) {
+    idf.set(token, Math.log((total + 1) / (count + 1)) + 1);
+  }
+
+  let questionWords = 0;
+  let bundledWords = 0;
+  const entries: QaEntry[] = [];
+
+  for (const { document, variantTokens } of prepared) {
+    document.questions.forEach((question, index) => {
+      const tokens = variantTokens[index] ?? [];
+      if (tokens.length === 0) {
+        return;
+      }
+      questionWords += tokens.length;
+      for (const token of tokens) {
+        if (hasBundledVector(token)) {
+          bundledWords++;
+        }
+      }
+      entries.push({
+        question,
+        answer: document.answer,
+        tokens: new Set(tokens),
+        vector: questionVector([...new Set(tokens)]),
+        documentId: document.id,
+        source: document.source,
+        tags: document.tags ?? [],
+      });
+    });
+  }
+
+  if (entries.length === 0) {
+    throw new Error("Add at least one question and answer pair.");
+  }
+
+  const suggestions = documents
+    .map((document) => document.questions[0])
+    .filter(
+      (question): question is string =>
+        question !== undefined && question.length > 0,
+    );
+
+  return new MiniQuestionAnswerer(
+    entries,
+    idf,
+    {
+      pairs: entries.length,
+      concepts: documents.length,
+      variants: entries.length,
+      questionWords,
+      vectorBits: VECTOR_BITS,
+      coverage: questionWords === 0 ? 0 : bundledWords / questionWords,
+    },
+    suggestions,
+  );
 }
 
 export function trainQuestionAnswerer(text: string): MiniQuestionAnswerer {
@@ -1151,45 +1405,11 @@ export function trainQuestionAnswerer(text: string): MiniQuestionAnswerer {
     throw new Error('Add at least one "question => answer" pair.');
   }
 
-  const documentFrequency = new Map<string, number>();
-  const tokenSets = parsed.pairs.map((pair) => {
-    const tokens = contentTokens(pair.question);
-    const set = new Set(tokens);
-    for (const token of set) {
-      documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
-    }
-    return set;
-  });
-
-  const total = parsed.pairs.length;
-  const idf = new Map<string, number>();
-  for (const [token, count] of documentFrequency) {
-    idf.set(token, Math.log((total + 1) / (count + 1)) + 1);
-  }
-
-  let questionWords = 0;
-  let bundledWords = 0;
-  const entries = parsed.pairs.map((pair, index) => {
-    const tokens = contentTokens(pair.question);
-    questionWords += tokens.length;
-    for (const token of tokens) {
-      if (hasBundledVector(token)) {
-        bundledWords++;
-      }
-    }
-    const unique = [...new Set(tokens)];
-    return {
-      question: pair.question,
+  return trainQuestionAnswererFromDocuments(
+    parsed.pairs.map((pair, index) => ({
+      id: `pair-${index + 1}`,
+      questions: [pair.question],
       answer: pair.answer,
-      tokens: tokenSets[index]!,
-      vector: questionVector(unique),
-    };
-  });
-
-  return new MiniQuestionAnswerer(entries, idf, {
-    pairs: entries.length,
-    questionWords,
-    vectorBits: VECTOR_BITS,
-    coverage: questionWords === 0 ? 0 : bundledWords / questionWords,
-  });
+    })),
+  );
 }

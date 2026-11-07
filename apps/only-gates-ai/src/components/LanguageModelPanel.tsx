@@ -15,12 +15,17 @@ import {
   tokenize,
   trainMiniLanguageModel,
   trainQuestionAnswerer,
+  trainQuestionAnswererFromDocuments,
   TrainingCancelledError,
   type CompletionResult,
   type MiniLanguageModel,
   type MiniQuestionAnswerer,
   type TrainingProgress,
 } from "../lib/miniLanguageModel";
+import {
+  SOLID2_QA_DOCUMENTS,
+  SOLID2_QA_SUGGESTIONS,
+} from "../assets/solid2-qa";
 
 const SAMPLE_TEXT = `The gate forest learns from drawings. Draw a symbol and the forest will vote. Each circuit answers a simple question, and the forest combines the answers into one prediction. The small language model reads the text you give it. It learns which word tends to follow another word. Train it on a paragraph, then type a few words to see what it suggests. Binary word vectors give every word a short code of bits. The model compares those codes with popcount and integer arithmetic. No floating point is used while it predicts. Try training on your own notes, a story, or a list of sentences. The more text you provide, the more patterns it can learn. The forest watches the drawing, and the language model watches the words. Both use small binary circuits to make a prediction.`;
 
@@ -56,6 +61,69 @@ interface ChatMessage {
   readonly matched?: boolean;
   readonly match?: string;
   readonly confidence?: number;
+  readonly source?: string;
+  readonly tags?: readonly string[];
+}
+
+type QaPreset = "custom" | "solid2";
+
+interface AnswerSegment {
+  readonly kind: "text" | "code";
+  readonly text: string;
+  readonly language?: string;
+}
+
+/*
+ * The answers are written with small fenced code blocks. Rendering them as
+ * plain text would show the backticks, so split the answer into prose and code
+ * segments. This is deliberately not a full Markdown parser.
+ */
+function splitAnswer(text: string): AnswerSegment[] {
+  const segments: AnswerSegment[] = [];
+  const fence = /```([^\n`]*)\n([\s\S]*?)```/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = fence.exec(text)) !== null) {
+    const prose = text.slice(cursor, match.index).trim();
+    if (prose.length > 0) {
+      segments.push({ kind: "text", text: prose });
+    }
+    const language = (match[1] ?? "").trim();
+    segments.push({
+      kind: "code",
+      text: (match[2] ?? "").replace(/\n$/, ""),
+      language,
+    });
+    cursor = match.index + match[0].length;
+  }
+
+  const tail = text.slice(cursor).trim();
+  if (tail.length > 0) {
+    segments.push({ kind: "text", text: tail });
+  }
+
+  return segments.length > 0 ? segments : [{ kind: "text", text }];
+}
+
+function splitInlineCode(text: string): AnswerSegment[] {
+  const parts: AnswerSegment[] = [];
+  const code = /`([^`\n]+)`/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = code.exec(text)) !== null) {
+    if (match.index > cursor) {
+      parts.push({ kind: "text", text: text.slice(cursor, match.index) });
+    }
+    parts.push({ kind: "code", text: match[1] ?? "" });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) {
+    parts.push({ kind: "text", text: text.slice(cursor) });
+  }
+
+  return parts.length > 0 ? parts : [{ kind: "text", text }];
 }
 
 function errorMessage(error: unknown): string {
@@ -66,10 +134,13 @@ export default function LanguageModelPanel() {
   const [subMode, setSubMode] = createSignal<"complete" | "qa">("complete");
   const [trainingText, setTrainingText] = createSignal(SAMPLE_TEXT);
   const [qaText, setQaText] = createSignal(SAMPLE_QA);
+  const [qaPreset, setQaPreset] = createSignal<QaPreset>("solid2");
   const [fileName, setFileName] = createSignal<string | null>(null);
   const [model, setModel] = createSignal<MiniLanguageModel | null>(null);
   const [modelVersion, setModelVersion] = createSignal(0);
-  const [qaModel, setQaModel] = createSignal<MiniQuestionAnswerer | null>(null);
+  const [qaModel, setQaModel] = createSignal<MiniQuestionAnswerer | null>(
+    trainQuestionAnswererFromDocuments(SOLID2_QA_DOCUMENTS),
+  );
   const [training, setTraining] = createSignal(false);
   const [progress, setProgress] = createSignal<TrainingProgress | null>(null);
   const [draft, setDraft] = createSignal("the ");
@@ -110,7 +181,43 @@ export default function LanguageModelPanel() {
     };
   });
 
+  const solid2Stats = createMemo(() => {
+    let questionWords = 0;
+    let bundled = 0;
+    let variants = 0;
+    for (const document of SOLID2_QA_DOCUMENTS) {
+      for (const question of document.questions) {
+        variants++;
+        const tokens = tokenize(question);
+        questionWords += tokens.length;
+        for (const token of tokens) {
+          if (hasBundledVector(token.text)) {
+            bundled++;
+          }
+        }
+      }
+    }
+    return {
+      concepts: SOLID2_QA_DOCUMENTS.length,
+      variants,
+      questionWords,
+      coverage: questionWords === 0 ? 0 : bundled / questionWords,
+    };
+  });
+
   const qaStats = createMemo(() => {
+    if (qaPreset() === "solid2") {
+      const stats = solid2Stats();
+      return {
+        pairs: stats.variants,
+        concepts: stats.concepts,
+        variants: stats.variants,
+        errors: [] as string[],
+        questionWords: stats.questionWords,
+        coverage: stats.coverage,
+      };
+    }
+
     const parsed = parseQaPairs(qaText());
     let questionWords = 0;
     let bundled = 0;
@@ -125,6 +232,8 @@ export default function LanguageModelPanel() {
     }
     return {
       pairs: parsed.pairs.length,
+      concepts: parsed.pairs.length,
+      variants: parsed.pairs.length,
       errors: parsed.errors,
       questionWords,
       coverage: questionWords === 0 ? 0 : bundled / questionWords,
@@ -185,6 +294,7 @@ export default function LanguageModelPanel() {
         return;
       }
       if (subMode() === "qa") {
+        setQaPreset("custom");
         setQaText(text);
         setQaModel(null);
         setChat([]);
@@ -266,7 +376,30 @@ export default function LanguageModelPanel() {
     }
   }
 
+  function rememberAnswerer(trained: MiniQuestionAnswerer): void {
+    setQaModel(trained);
+    setChat([]);
+    setQuestion("");
+  }
+
   function handleLearnAnswers(): void {
+    if (qaPreset() === "solid2") {
+      try {
+        const trained = trainQuestionAnswererFromDocuments(
+          SOLID2_QA_DOCUMENTS,
+        );
+        rememberAnswerer(trained);
+        showStatus(
+          "success",
+          `Indexed ${trained.stats.concepts} concepts and ${trained.stats.variants} question variants.`,
+        );
+        queueMicrotask(() => questionInput?.focus());
+      } catch (error) {
+        showStatus("error", `Could not index the docs: ${errorMessage(error)}`);
+      }
+      return;
+    }
+
     const parsed = parseQaPairs(qaText());
     if (parsed.errors.length > 0) {
       showStatus("error", parsed.errors[0]!);
@@ -279,9 +412,7 @@ export default function LanguageModelPanel() {
 
     try {
       const trained = trainQuestionAnswerer(qaText());
-      setQaModel(trained);
-      setChat([]);
-      setQuestion("");
+      rememberAnswerer(trained);
       showStatus(
         "success",
         `Indexed ${trained.stats.pairs} question${
@@ -292,6 +423,38 @@ export default function LanguageModelPanel() {
     } catch (error) {
       showStatus("error", `Could not learn answers: ${errorMessage(error)}`);
     }
+  }
+
+  function loadSolidQa(): void {
+    setQaPreset("solid2");
+    setQaModel(null);
+    setChat([]);
+    setQuestion("");
+    setFileName(null);
+    setStatus(null);
+    try {
+      const trained = trainQuestionAnswererFromDocuments(SOLID2_QA_DOCUMENTS);
+      rememberAnswerer(trained);
+      showStatus(
+        "success",
+        `Loaded ${trained.stats.concepts} Solid 2.0 concepts (${trained.stats.variants} question variants).`,
+      );
+      queueMicrotask(() => questionInput?.focus());
+    } catch (error) {
+      showStatus(
+        "error",
+        `Could not load Solid 2.0 Q&A: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  function useCustomPairs(): void {
+    setQaPreset("custom");
+    setQaModel(null);
+    setChat([]);
+    setQuestion("");
+    setFileName(null);
+    setStatus(null);
   }
 
   function askQuestion(preset?: string): void {
@@ -322,6 +485,9 @@ export default function LanguageModelPanel() {
             matched: result.matched,
             match: result.question,
             confidence: result.confidence,
+            // A rejected match has no trustworthy source, so do not offer one.
+            source: result.matched ? result.source : undefined,
+            tags: result.matched ? result.tags : undefined,
           };
 
     setChat((current) => [
@@ -386,7 +552,9 @@ export default function LanguageModelPanel() {
         </div>
         <span class="muted">
           {subMode() === "qa"
-            ? "Retrieval over the pairs you train"
+            ? qaPreset() === "solid2"
+              ? "Retrieval over a curated Solid 2.0 corpus"
+              : "Retrieval over the pairs you train"
             : "Next-word prediction"}
         </span>
       </div>
@@ -395,9 +563,19 @@ export default function LanguageModelPanel() {
         <div class="card-heading compact">
           <div>
             <span class="eyebrow">
-              {subMode() === "qa" ? "Answer data" : "Training data"}
+              {subMode() === "qa"
+                ? qaPreset() === "solid2"
+                  ? "Bundled dataset"
+                  : "Answer data"
+                : "Training data"}
             </span>
-            <h2>{subMode() === "qa" ? "Write Q&A pairs" : "Read a text"}</h2>
+            <h2>
+              {subMode() === "qa"
+                ? qaPreset() === "solid2"
+                  ? "Solid 2.0 Q&A"
+                  : "Write Q&A pairs"
+                : "Read a text"}
+            </h2>
           </div>
           <div class="runtime-pill ready">
             <span class="runtime-dot" />
@@ -407,44 +585,74 @@ export default function LanguageModelPanel() {
 
         <p class="hint">
           {subMode() === "qa"
-            ? "Write question and answer pairs. Separate pairs with a blank line, or use question => answer on one line. Q: and A: labels also work."
+            ? qaPreset() === "solid2"
+              ? "Curated from the official Solid 2.0 migration guide and reactivity RFCs. Each answer links back to the source section. Ask a question on the right, or switch to custom pairs to train on your own text."
+              : "Write question and answer pairs. Separate pairs with a blank line, or use question => answer on one line. Q: and A: labels also work."
             : "Paste text or choose a file. The model learns which word tends to follow the previous few words. Everything is trained and inferred in this browser tab."}
         </p>
 
-        <div class="file-row">
-          <label class="button secondary file-button">
-            Choose text file
-            <input
-              type="file"
-              accept=".txt,.md,.markdown,text/plain,text/markdown"
-              disabled={subMode() === "complete" && training()}
-              onChange={(event) => void handleFile(event.currentTarget)}
-            />
-          </label>
-          <Show when={fileName()}>
-            {(name) => <span class="file-name">{name()}</span>}
-          </Show>
-        </div>
+        <Show when={subMode() === "complete" || qaPreset() === "custom"}>
+          <div class="file-row">
+            <label class="button secondary file-button">
+              Choose text file
+              <input
+                type="file"
+                accept=".txt,.md,.markdown,text/plain,text/markdown"
+                disabled={subMode() === "complete" && training()}
+                onChange={(event) => void handleFile(event.currentTarget)}
+              />
+            </label>
+            <Show when={fileName()}>
+              {(name) => <span class="file-name">{name()}</span>}
+            </Show>
+          </div>
+        </Show>
 
-        <textarea
-          class={`text-area ${
-            subMode() === "qa" ? "qa-text" : "training-text"
-          }`}
-          rows={subMode() === "qa" ? 13 : 11}
-          spellcheck={false}
-          disabled={subMode() === "complete" && training()}
-          value={subMode() === "qa" ? qaText() : trainingText()}
-          onInput={(event) => {
-            if (subMode() === "qa") {
-              setQaText(event.currentTarget.value);
-              setQaModel(null);
-              setChat([]);
-            } else {
-              setTrainingText(event.currentTarget.value);
-            }
-            setFileName(null);
-          }}
-        />
+        <Show
+          when={subMode() === "complete" || qaPreset() === "custom"}
+          fallback={
+            <div class="qa-preset">
+              <div class="qa-preset-copy">
+                <strong>
+                  {solid2Stats().concepts} concepts ·{" "}
+                  {solid2Stats().variants} question variants
+                </strong>
+                <span>
+                  Answers are retrieval-only and written for this demo. Each
+                  one links to the official Solid 2.0 documentation.
+                </span>
+              </div>
+              <a
+                href="https://github.com/solidjs/solid/tree/next/documentation/solid-2.0"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Browse the source docs
+              </a>
+            </div>
+          }
+        >
+          <textarea
+            class={`text-area ${
+              subMode() === "qa" ? "qa-text" : "training-text"
+            }`}
+            rows={subMode() === "qa" ? 13 : 11}
+            spellcheck={false}
+            disabled={subMode() === "complete" && training()}
+            value={subMode() === "qa" ? qaText() : trainingText()}
+            onInput={(event) => {
+              if (subMode() === "qa") {
+                setQaPreset("custom");
+                setQaText(event.currentTarget.value);
+                setQaModel(null);
+                setChat([]);
+              } else {
+                setTrainingText(event.currentTarget.value);
+              }
+              setFileName(null);
+            }}
+          />
+        </Show>
 
         <Show
           when={subMode() === "qa"}
@@ -461,11 +669,24 @@ export default function LanguageModelPanel() {
         >
           <div class="text-meta">
             <span>
-              {qaStats().pairs} pair{qaStats().pairs === 1 ? "" : "s"} ·{" "}
-              {qaStats().questionWords} question words ·{" "}
+              {qaPreset() === "solid2" ? (
+                <>
+                  {qaStats().concepts} concepts · {qaStats().variants} question
+                  variants
+                </>
+              ) : (
+                <>
+                  {qaStats().pairs} pair{qaStats().pairs === 1 ? "" : "s"}
+                </>
+              )}{" "}
+              · {qaStats().questionWords} question words ·{" "}
               {Math.round(qaStats().coverage * 100)}% bundled vectors
             </span>
-            <span>Blank line between pairs</span>
+            <span>
+              {qaPreset() === "solid2"
+                ? "Official Solid 2.0 docs"
+                : "Blank line between pairs"}
+            </span>
           </div>
         </Show>
 
@@ -477,34 +698,62 @@ export default function LanguageModelPanel() {
           <Show
             when={subMode() === "complete"}
             fallback={
-              <>
+              <Show
+                when={qaPreset() === "solid2"}
+                fallback={
+                  <>
+                    <button
+                      type="button"
+                      class="button primary"
+                      disabled={
+                        qaStats().pairs === 0 || qaStats().errors.length > 0
+                      }
+                      onClick={handleLearnAnswers}
+                    >
+                      {qaStats().pairs === 1
+                        ? "Learn 1 answer"
+                        : `Learn ${qaStats().pairs} answers`}
+                    </button>
+                    <button
+                      type="button"
+                      class="button ghost"
+                      onClick={loadSolidQa}
+                    >
+                      Use Solid 2.0 Q&A
+                    </button>
+                    <button
+                      type="button"
+                      class="button ghost"
+                      onClick={() => {
+                        setQaPreset("custom");
+                        setQaText(SAMPLE_QA);
+                        setQaModel(null);
+                        setChat([]);
+                        setQuestion("");
+                        setFileName(null);
+                        setStatus(null);
+                      }}
+                    >
+                      Use sample
+                    </button>
+                  </>
+                }
+              >
                 <button
                   type="button"
                   class="button primary"
-                  disabled={
-                    qaStats().pairs === 0 || qaStats().errors.length > 0
-                  }
                   onClick={handleLearnAnswers}
                 >
-                  {qaStats().pairs === 1
-                    ? "Learn 1 answer"
-                    : `Learn ${qaStats().pairs} answers`}
+                  Reindex {qaStats().concepts} concepts
                 </button>
                 <button
                   type="button"
                   class="button ghost"
-                  onClick={() => {
-                    setQaText(SAMPLE_QA);
-                    setQaModel(null);
-                    setChat([]);
-                    setQuestion("");
-                    setFileName(null);
-                    setStatus(null);
-                  }}
+                  onClick={useCustomPairs}
                 >
-                  Use sample
+                  Use custom pairs
                 </button>
-              </>
+              </Show>
             }
           >
             <button
@@ -607,8 +856,9 @@ export default function LanguageModelPanel() {
           fallback={
             <>
               <p class="hint">
-                Ask with words from the pairs. Your message appears in the chat
-                and the closest trained answer appears underneath it.
+                {qaPreset() === "solid2"
+                  ? "Ask about Solid 2.0. Answers are retrieved from a curated set of concepts and link back to the official docs."
+                  : "Ask with words from the pairs. Your message appears in the chat and the closest trained answer appears underneath it."}
               </p>
 
               <div
@@ -639,14 +889,23 @@ export default function LanguageModelPanel() {
                       {(active) => (
                         <div class="chat-empty">
                           <strong>
-                            {active().stats.pairs} question
-                            {active().stats.pairs === 1 ? "" : "s"} indexed
+                            {qaPreset() === "solid2"
+                              ? `${active().stats.concepts} Solid 2.0 concepts · ${active().stats.variants} question variants`
+                              : `${active().stats.pairs} question${
+                                  active().stats.pairs === 1 ? "" : "s"
+                                } indexed`}
                           </strong>
                           <span>
                             Ask below, or start with a trained question:
                           </span>
                           <div class="completion-list">
-                            <For each={active().questions.slice(0, 4)}>
+                            <For
+                              each={
+                                qaPreset() === "solid2"
+                                  ? SOLID2_QA_SUGGESTIONS.slice(0, 6)
+                                  : active().suggestions.slice(0, 4)
+                              }
+                            >
                               {(trained) => (
                                 <button
                                   type="button"
@@ -676,7 +935,29 @@ export default function LanguageModelPanel() {
                           <span class="chat-role">
                             {message.role === "user" ? "You" : "Model"}
                           </span>
-                          <p>{message.text}</p>
+                          <For each={splitAnswer(message.text)}>
+                            {(segment) =>
+                              segment.kind === "code" ? (
+                                <pre class="chat-code">
+                                  <code>{segment.text}</code>
+                                </pre>
+                              ) : (
+                                <p>
+                                  <For each={splitInlineCode(segment.text)}>
+                                    {(part) =>
+                                      part.kind === "code" ? (
+                                        <code class="chat-inline-code">
+                                          {part.text}
+                                        </code>
+                                      ) : (
+                                        part.text
+                                      )
+                                    }
+                                  </For>
+                                </p>
+                              )
+                            }
+                          </For>
                           <Show
                             when={
                               message.role === "assistant" &&
@@ -693,6 +974,18 @@ export default function LanguageModelPanel() {
                                 match
                               </span>
                             </div>
+                          </Show>
+                          <Show
+                            when={message.role === "assistant" && message.source}
+                          >
+                            <a
+                              class="chat-source"
+                              href={message.source}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Read the source docs
+                            </a>
                           </Show>
                         </div>
                       </div>
@@ -925,8 +1218,12 @@ export default function LanguageModelPanel() {
               <>
                 <div class="stat-row">
                   <div class="stat">
-                    <span>Indexed pairs</span>
-                    <strong>{active().stats.pairs}</strong>
+                    <span>Concepts</span>
+                    <strong>{active().stats.concepts}</strong>
+                  </div>
+                  <div class="stat">
+                    <span>Question variants</span>
+                    <strong>{active().stats.variants}</strong>
                   </div>
                   <div class="stat">
                     <span>Question words</span>
@@ -950,11 +1247,16 @@ export default function LanguageModelPanel() {
                     </span>
                   </div>
                   <div class="vocab-list">
-                    <For each={active().questions}>
+                    <For each={active().questions.slice(0, 28)}>
                       {(trained) => (
                         <span class="vocab-chip">{trained}</span>
                       )}
                     </For>
+                    <Show when={active().questions.length > 28}>
+                      <span class="vocab-chip">
+                        +{active().questions.length - 28} more
+                      </span>
+                    </Show>
                   </div>
                 </div>
               </>
@@ -984,8 +1286,9 @@ export default function LanguageModelPanel() {
               </>
             }
           >
-            Answers are retrieved from the pairs you wrote by comparing shared
-            words and binary question vectors; no answer text is generated.
+            {qaPreset() === "solid2"
+              ? "Answers are curated from the official Solid 2.0 migration guide and RFCs, then retrieved by shared words and binary question vectors. No answer text is generated."
+              : "Answers are retrieved from the pairs you wrote by comparing shared words and binary question vectors; no answer text is generated."}
           </Show>
         </p>
       </section>
