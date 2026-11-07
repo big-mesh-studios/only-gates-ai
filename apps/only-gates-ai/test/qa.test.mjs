@@ -136,7 +136,7 @@ test("the generated module typechecks under strict settings", async () => {
   }
 });
 
-test("model JSON round-trips through validation and rebuilds the model", () => {
+test("model JSON export, import, and concept additions work end to end", async () => {
   const answerer = appAnswerer();
   const model = serializeQaModelFile(SOLID2_QA_DOCUMENTS, {
     name: "Solid 2.0 Q&A",
@@ -150,14 +150,57 @@ test("model JSON round-trips through validation and rebuilds the model", () => {
   assert.match(model.lexicon.fingerprint, /^fnv1a-[0-9a-f]{8}$/);
   assert.equal(model.lexicon.words, BUNDLED_QA_LEXICON.words.length);
 
-  const parsed = parseQaModelFile(JSON.parse(JSON.stringify(model)));
+  // The UI exports a Blob downloaded as JSON. Exercise that exact data path.
+  const exported = JSON.stringify(model, null, 2);
+  assert.equal(exported.includes('"vectors"'), false);
+  const blob = new Blob([exported], { type: "application/json" });
+  const parsed = parseQaModelFile(JSON.parse(await blob.text()));
   assert.deepEqual(parsed.documents, SOLID2_QA_DOCUMENTS);
   assert.equal(parsed.name, "Solid 2.0 Q&A");
   assert.equal(parsed.createdAt, "2026-01-01T00:00:00.000Z");
 
   const rebuilt = createAnswererFromModelWithLexicon(parsed, BUNDLED_QA_LEXICON);
   assert.deepEqual(rebuilt.stats, answerer.stats);
-  assert.deepEqual(rebuilt.ask("How do split effects work?"), answerer.ask("How do split effects work?"));
+  assert.deepEqual(
+    rebuilt.ask("How do split effects work?"),
+    answerer.ask("How do split effects work?"),
+  );
+
+  // Add a concept the way the imported-model form does, then export it again.
+  const added = {
+    id: "custom-concept",
+    questions: [
+      "What is the zygomorphic flux capacitor?",
+      "How does the zygomorphic flux capacitor work?",
+    ],
+    answer: "It stores a made-up answer for the export round-trip test.",
+    source: "https://example.com/zygomorphic",
+    tags: ["custom", "test"],
+  };
+  const edited = serializeQaModelFile([...parsed.documents, added], {
+    name: parsed.name,
+    suggestions: rebuilt.suggestions,
+    lexicon: BUNDLED_QA_LEXICON,
+    createdAt: parsed.createdAt,
+    updatedAt: "2026-02-01T00:00:00.000Z",
+  });
+  const reimported = parseQaModelFile(
+    JSON.parse(JSON.stringify(edited, null, 2)),
+  );
+  assert.deepEqual(reimported.documents.at(-1), {
+    ...added,
+    keywords: undefined,
+  });
+  assert.equal(reimported.documents.length, parsed.documents.length + 1);
+
+  const extended = createAnswererFromModelWithLexicon(
+    reimported,
+    BUNDLED_QA_LEXICON,
+  );
+  const answer = extended.ask("zygomorphic flux capacitor");
+  assert.equal(answer?.answer, added.answer);
+  assert.equal(answer?.documentId, "custom-concept");
+  assert.deepEqual(answer?.tags, added.tags);
 });
 
 test("a model with a different lexicon fingerprint is rejected by default", () => {
