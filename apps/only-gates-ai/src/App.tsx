@@ -11,6 +11,7 @@ import type { ForestLabelSource } from "@only-gates-ai/compiler";
 
 import CompileDialog from "./components/CompileDialog";
 import DrawingPad from "./components/DrawingPad";
+import IntegerGptPanel from "./components/IntegerGptPanel";
 import LanguageModelPanel from "./components/LanguageModelPanel";
 import LivePrediction from "./components/LivePrediction";
 import ModelStoragePanel from "./components/ModelStoragePanel";
@@ -100,7 +101,7 @@ export default function App() {
   const [runtimeError, setRuntimeError] = createSignal("");
   const [instance, setInstance] = createSignal<OnlyGatesAI | null>(null);
 
-  const [activeTab, setActiveTab] = createSignal<"symbols" | "language">("symbols");
+  const [activeTab, setActiveTab] = createSignal<"symbols" | "language" | "integer">("symbols");
   const [mode, setMode] = createSignal<"train" | "test">("train");
   const [inferenceMode, setInferenceMode] = createSignal<InferenceMode>("hard");
 
@@ -987,6 +988,15 @@ export default function App() {
         >
           Mini language model
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab() === "integer" ? "true" : "false"}
+          class={{ active: activeTab() === "integer" }}
+          onClick={() => setActiveTab("integer")}
+        >
+          Integer GPT
+        </button>
       </nav>
 
       <div class="tab-panel" hidden={activeTab() !== "symbols"}>
@@ -1156,6 +1166,10 @@ export default function App() {
 
       <div class="tab-panel" hidden={activeTab() !== "language"}>
         <LanguageModelPanel />
+      </div>
+
+      <div class="tab-panel" hidden={activeTab() !== "integer"}>
+        <IntegerGptPanel />
       </div>
 
       <footer class="app-footer">
