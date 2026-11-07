@@ -11,6 +11,7 @@ import type { ForestLabelSource } from "@only-gates-ai/compiler";
 
 import CompileDialog from "./components/CompileDialog";
 import DrawingPad from "./components/DrawingPad";
+import LanguageModelPanel from "./components/LanguageModelPanel";
 import LivePrediction from "./components/LivePrediction";
 import ModelStoragePanel from "./components/ModelStoragePanel";
 import SettingsPanel from "./components/SettingsPanel";
@@ -99,6 +100,7 @@ export default function App() {
   const [runtimeError, setRuntimeError] = createSignal("");
   const [instance, setInstance] = createSignal<OnlyGatesAI | null>(null);
 
+  const [activeTab, setActiveTab] = createSignal<"symbols" | "language">("symbols");
   const [mode, setMode] = createSignal<"train" | "test">("train");
   const [inferenceMode, setInferenceMode] = createSignal<InferenceMode>("hard");
 
@@ -932,207 +934,255 @@ export default function App() {
             <span class="eyebrow">Differentiable logic circuits</span>
             <h1>Gate Forest</h1>
             <p>
-              Draw a symbol. Grow a forest of boolean circuits. Let them vote.
+              Draw a symbol and grow a forest of boolean circuits, or train a
+              tiny binary language model on your own text.
             </p>
           </div>
         </div>
         <div class="header-actions">
-          <button
-            type="button"
-            class="button secondary"
-            disabled={busy() || modelInfo() === null}
-            title={
-              modelInfo() === null
-                ? "Train a forest before compiling it."
-                : "Compile the hard-mode forest into standalone JavaScript."
-            }
-            onClick={() => setCompileOpen(true)}
-          >
-            Compile
-          </button>
-          <div class={["runtime-pill", runtime()]}>
-            <span class="runtime-dot" />
-            {runtime() === "ready"
-              ? "Runtime ready"
-              : runtime() === "loading"
-                ? "Loading runtime"
-                : "Runtime error"}
-          </div>
+          <Show when={activeTab() === "symbols"}>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy() || modelInfo() === null}
+              title={
+                modelInfo() === null
+                  ? "Train a forest before compiling it."
+                  : "Compile the hard-mode forest into standalone JavaScript."
+              }
+              onClick={() => setCompileOpen(true)}
+            >
+              Compile
+            </button>
+          </Show>
+          <Show when={activeTab() === "symbols"}>
+            <div class={["runtime-pill", runtime()]}>
+              <span class="runtime-dot" />
+              {runtime() === "ready"
+                ? "Runtime ready"
+                : runtime() === "loading"
+                  ? "Loading runtime"
+                  : "Runtime error"}
+            </div>
+          </Show>
         </div>
       </header>
 
-      <Show when={status()}>
-        {(message) => (
-          <div class={["banner", message().kind]}>
-            <span>{message().text}</span>
+      <nav class="app-tabs" role="tablist" aria-label="Workspace">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab() === "symbols" ? "true" : "false"}
+          class={{ active: activeTab() === "symbols" }}
+          onClick={() => setActiveTab("symbols")}
+        >
+          Symbol classifier
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab() === "language" ? "true" : "false"}
+          class={{ active: activeTab() === "language" }}
+          onClick={() => setActiveTab("language")}
+        >
+          Mini language model
+        </button>
+      </nav>
+
+      <div class="tab-panel" hidden={activeTab() !== "symbols"}>
+        <Show when={status()}>
+          {(message) => (
+            <div class={["banner", message().kind]}>
+              <span>{message().text}</span>
+              <button
+                type="button"
+                class="banner-close"
+                aria-label="Dismiss message"
+                onClick={() => setStatus(null)}
+              >
+                ×
+              </button>
+            </div>
+          )}
+        </Show>
+
+        <Show when={runtime() === "error"}>
+          <div class="banner error runtime-error">
+            <div>
+              <strong>Could not load the WebAssembly runtime.</strong>
+              <p>{runtimeError()}</p>
+            </div>
             <button
               type="button"
-              class="banner-close"
-              aria-label="Dismiss message"
-              onClick={() => setStatus(null)}
+              class="button secondary"
+              onClick={() => void loadRuntime()}
             >
-              ×
+              Retry
             </button>
           </div>
-        )}
-      </Show>
+        </Show>
 
-      <Show when={runtime() === "error"}>
-        <div class="banner error runtime-error">
-          <div>
-            <strong>Could not load the WebAssembly runtime.</strong>
-            <p>{runtimeError()}</p>
-          </div>
-          <button
-            type="button"
-            class="button secondary"
-            onClick={() => void loadRuntime()}
-          >
-            Retry
-          </button>
-        </div>
-      </Show>
-
-      <main class="workspace">
-        <section class="card draw-card">
-          <div class="card-heading">
-            <div>
-              <span class="eyebrow">Canvas</span>
-              <h2>
-                {mode() === "train"
-                  ? "Draw a training example"
-                  : "Draw a symbol to identify"}
-              </h2>
+        <main class="workspace">
+          <section class="card draw-card">
+            <div class="card-heading">
+              <div>
+                <span class="eyebrow">Canvas</span>
+                <h2>
+                  {mode() === "train"
+                    ? "Draw a training example"
+                    : "Draw a symbol to identify"}
+                </h2>
+              </div>
+              <div class="mode-switch" role="group" aria-label="Mode">
+                <button
+                  type="button"
+                  class={{ active: mode() === "train" }}
+                  onClick={() => handleModeChange("train")}
+                >
+                  Training
+                </button>
+                <button
+                  type="button"
+                  class={{ active: mode() === "test" }}
+                  onClick={() => handleModeChange("test")}
+                >
+                  Testing
+                </button>
+              </div>
             </div>
-            <div class="mode-switch" role="group" aria-label="Mode">
-              <button
-                type="button"
-                class={{ active: mode() === "train" }}
-                onClick={() => handleModeChange("train")}
-              >
-                Training
-              </button>
-              <button
-                type="button"
-                class={{ active: mode() === "test" }}
-                onClick={() => handleModeChange("test")}
-              >
-                Testing
-              </button>
-            </div>
-          </div>
 
-          <DrawingPad
-            strokes={strokes()}
-            input={currentInput()}
-            gridSize={gridSize()}
-            color={selectedLabel()?.color}
-            disabled={runtime() !== "ready" || busy()}
-            onStrokeStart={handleStrokeStart}
-            onStrokeMove={handleStrokeMove}
-            onStrokeEnd={handleStrokeEnd}
-            onUndo={handleUndo}
-            onClear={handleClear}
-          />
-
-          <Show when={mode() === "test"}>
-            <LivePrediction
-              predictions={predictions()}
-              hasDrawing={hasDrawing()}
-              hasModel={modelInfo() !== null}
-              modelStale={modelStale()}
-              inferenceMode={inferenceMode()}
+            <DrawingPad
+              strokes={strokes()}
+              input={currentInput()}
+              gridSize={gridSize()}
+              color={selectedLabel()?.color}
+              disabled={runtime() !== "ready" || busy()}
+              onStrokeStart={handleStrokeStart}
+              onStrokeMove={handleStrokeMove}
+              onStrokeEnd={handleStrokeEnd}
+              onUndo={handleUndo}
+              onClear={handleClear}
             />
-          </Show>
 
-          <p class="hint">
-            Saved drawings remember their strokes. The input is rebuilt by
-            replaying those strokes onto a {gridSize()} × {gridSize()} grid after
-            scaling and centring, with a constant stroke thickness.
-          </p>
-        </section>
-
-        <div class="side-stack">
-          <section class="card mode-card">
-            <Show
-              when={mode() === "train"}
-              fallback={
-                <TestingPanel
-                  predictions={predictions()}
-                  modelInfo={modelInfo()}
-                  modelStale={modelStale()}
-                  inferenceMode={inferenceMode()}
-                  busy={busy()}
-                  hasDrawing={hasDrawing()}
-                  predictHint={predictHint()}
-                  onInferenceModeChange={handleInferenceModeChange}
-                />
-              }
-            >
-              <TrainingPanel
-                labels={labels()}
-                samples={samples()}
-                selectedLabelId={selectedLabelId()}
-                busy={busy()}
-                progress={progress()}
-                modelInfo={modelInfo()}
-                modelStale={modelStale()}
+            <Show when={mode() === "test"}>
+              <LivePrediction
+                predictions={predictions()}
                 hasDrawing={hasDrawing()}
-                canTrain={canTrain()}
-                trainHint={trainHint()}
-                onSelectLabel={setSelectedLabelId}
-                onAddLabel={handleAddLabel}
-                onRemoveLabel={handleRemoveLabel}
-                onSaveSample={handleSaveSample}
-                onLoadSample={handleLoadSample}
-                onDeleteSample={handleDeleteSample}
-                onTrain={() => void handleTrain()}
-                onCancel={handleCancelTrain}
+                hasModel={modelInfo() !== null}
+                modelStale={modelStale()}
+                inferenceMode={inferenceMode()}
               />
             </Show>
+
+            <p class="hint">
+              Saved drawings remember their strokes. The input is rebuilt by
+              replaying those strokes onto a {gridSize()} × {gridSize()} grid after
+              scaling and centring, with a constant stroke thickness.
+            </p>
           </section>
 
-          <SettingsPanel
-            gridSize={gridSize()}
-            gridDraft={gridDraft()}
-            shapeText={shapeText()}
-            shapeError={parsedShape().error}
-            parameterCount={parsedShape().parameterCount}
-            inputSize={inputSize()}
-            disabled={busy() || storageBusy()}
-            onGridDraftChange={setGridDraft}
-            onGridCommit={handleGridCommit}
-            onShapeTextChange={handleShapeTextChange}
-          />
+          <div class="side-stack">
+            <section class="card mode-card">
+              <Show
+                when={mode() === "train"}
+                fallback={
+                  <TestingPanel
+                    predictions={predictions()}
+                    modelInfo={modelInfo()}
+                    modelStale={modelStale()}
+                    inferenceMode={inferenceMode()}
+                    busy={busy()}
+                    hasDrawing={hasDrawing()}
+                    predictHint={predictHint()}
+                    onInferenceModeChange={handleInferenceModeChange}
+                  />
+                }
+              >
+                <TrainingPanel
+                  labels={labels()}
+                  samples={samples()}
+                  selectedLabelId={selectedLabelId()}
+                  busy={busy()}
+                  progress={progress()}
+                  modelInfo={modelInfo()}
+                  modelStale={modelStale()}
+                  hasDrawing={hasDrawing()}
+                  canTrain={canTrain()}
+                  trainHint={trainHint()}
+                  onSelectLabel={setSelectedLabelId}
+                  onAddLabel={handleAddLabel}
+                  onRemoveLabel={handleRemoveLabel}
+                  onSaveSample={handleSaveSample}
+                  onLoadSample={handleLoadSample}
+                  onDeleteSample={handleDeleteSample}
+                  onTrain={() => void handleTrain()}
+                  onCancel={handleCancelTrain}
+                />
+              </Show>
+            </section>
 
-          <ModelStoragePanel
-            hasModel={modelInfo() !== null}
-            busy={busy() || storageBusy()}
-            storageAvailable={storageAvailable()}
-            storageError={storageError()}
-            storedAt={storedModelAt()}
-            onSave={handleSaveModelFile}
-            onLoad={(file) => void handleLoadModelFile(file)}
-            onClear={() => void handleClearModel()}
-          />
-        </div>
-      </main>
+            <SettingsPanel
+              gridSize={gridSize()}
+              gridDraft={gridDraft()}
+              shapeText={shapeText()}
+              shapeError={parsedShape().error}
+              parameterCount={parsedShape().parameterCount}
+              inputSize={inputSize()}
+              disabled={busy() || storageBusy()}
+              onGridDraftChange={setGridDraft}
+              onGridCommit={handleGridCommit}
+              onShapeTextChange={handleShapeTextChange}
+            />
 
-      <CompileDialog
-        open={compileOpen()}
-        labels={compileLabels()}
-        onClose={() => setCompileOpen(false)}
-      />
+            <ModelStoragePanel
+              hasModel={modelInfo() !== null}
+              busy={busy() || storageBusy()}
+              storageAvailable={storageAvailable()}
+              storageError={storageError()}
+              storedAt={storedModelAt()}
+              onSave={handleSaveModelFile}
+              onLoad={(file) => void handleLoadModelFile(file)}
+              onClear={() => void handleClearModel()}
+            />
+          </div>
+        </main>
+
+        <CompileDialog
+          open={compileOpen()}
+          labels={compileLabels()}
+          onClose={() => setCompileOpen(false)}
+        />
+      </div>
+
+      <div class="tab-panel" hidden={activeTab() !== "language"}>
+        <LanguageModelPanel />
+      </div>
 
       <footer class="app-footer">
-        <span>
-          {CIRCUITS_PER_LABEL} circuits per label · saved strokes are replayed,
-          never re-rasterised from the display canvas.
-        </span>
-        <span>
-          Soft circuits weigh every gate; hard circuits lock each wire and gate
-          to its most likely choice.
-        </span>
+        <Show
+          when={activeTab() === "symbols"}
+          fallback={
+            <>
+              <span>
+                Word vectors: a Word2Bits subset (Apache-2.0). Training uses
+                floats; prediction uses popcount and Q15 fixed-point softmax.
+              </span>
+              <span>
+                Nothing is uploaded. The text, vectors, and ternary weights stay
+                in this browser tab.
+              </span>
+            </>
+          }
+        >
+          <span>
+            {CIRCUITS_PER_LABEL} circuits per label · saved strokes are replayed,
+            never re-rasterised from the display canvas.
+          </span>
+          <span>
+            Soft circuits weigh every gate; hard circuits lock each wire and gate
+            to its most likely choice.
+          </span>
+        </Show>
       </footer>
     </div>
   );
