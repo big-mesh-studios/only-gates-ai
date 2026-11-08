@@ -5,6 +5,7 @@ set(TEST_NAMES
     test_trainer
     test_attention
     test_attention_vectors
+    test_tiny_gpt
 )
 
 foreach(test_name IN LISTS TEST_NAMES)

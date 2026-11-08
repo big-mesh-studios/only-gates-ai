@@ -737,12 +737,8 @@ function attentionInt8(
         let sum = 0;
         for (let j = 0; j <= t; j++) {
           sum +=
-            dotUint8Int8(
-              quantizedProbabilities,
-              values,
-              j * headDim,
-              headDim,
-            ) *
+            quantizedProbabilities[j]! *
+            values[j * headDim + d]! *
             (1 / 255) *
             valueScales[j]!;
         }

@@ -67,4 +67,35 @@ export interface OnlyGatesWasmModule {
   _trainer_reset(trainer: number): void;
   _trainer_set_learning_rate(trainer: number, learningRate: number): void;
   _trainer_step(trainer: number): number;
+
+  /* ------------------------------------------------------------------ */
+  /* Tiny GPT integer inference                                           */
+  /* ------------------------------------------------------------------ */
+  _tiny_gpt_create(
+    vocabSize: number,
+    context: number,
+    dim: number,
+    layers: number,
+    heads: number,
+    mlp: number,
+    packedWeightsPointer: number,
+  ): number;
+  _tiny_gpt_destroy(model: number): void;
+  _tiny_gpt_forward(model: number, tokensPointer: number): void;
+  _tiny_gpt_logits(model: number): number;
+  _tiny_gpt_buffer(model: number, which: number): number;
+  _tiny_gpt_probabilities(
+    model: number,
+    temperatureQ16: number,
+    outPointer: number,
+  ): void;
+  _tiny_gpt_sample(
+    model: number,
+    temperatureQ16: number,
+    topK: number,
+  ): number;
+  _tiny_gpt_set_seed(model: number, seed: number): void;
+  _tiny_gpt_vocab_size(model: number): number;
+  _tiny_gpt_context(model: number): number;
+  _tiny_gpt_last_error(): number;
 }

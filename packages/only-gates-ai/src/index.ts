@@ -9,4 +9,14 @@ export type {
   OnlyGatesWasmModule,
 } from "./wasm.js";
 
+export { loadOnlyGatesModule } from "./wasm.js";
+
+export {
+  TinyGpt,
+  TinyGptBuffer,
+  createTinyGpt,
+  type TinyGptConfig,
+  type CreateTinyGptOptions,
+} from "./tiny-gpt.js";
+
 export { createOnlyGatesAI as default } from "./only-gates-ai.js";
