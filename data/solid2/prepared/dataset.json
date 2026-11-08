@@ -1,0 +1,10 @@
+{
+  "context": 256,
+  "vocabSize": 4096,
+  "stage0Tokens": 281363,
+  "stage1Tokens": 145923,
+  "qaTrainExamples": 290,
+  "qaValExamples": 72,
+  "qaTrainConcepts": 20,
+  "qaValConcepts": 5
+}

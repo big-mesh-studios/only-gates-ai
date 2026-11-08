@@ -1,0 +1,72 @@
+{
+  "createdAt": "2026-11-08T05:45:28.050Z",
+  "docsCommit": "8138dabec4fc6514a44e540f2dacf630d51a9a67",
+  "docs": [
+    {
+      "name": "01-reactivity-batching-effects.md",
+      "sha": "8fa6483be18380a959daad26df11337d5e6b9201"
+    },
+    {
+      "name": "02-signals-derived-ownership.md",
+      "sha": "f2865cfae544e3d8d0729dfe1b439b0f6590aebc"
+    },
+    {
+      "name": "03-control-flow.md",
+      "sha": "38c0ec42a98ca3802ba00ba7ebaabdda9d713074"
+    },
+    {
+      "name": "04-stores.md",
+      "sha": "09effefcecae24948a61c01b963413918d26e896"
+    },
+    {
+      "name": "05-async-data.md",
+      "sha": "2a83aa834e675e28c4b12b2296841d76faf02787"
+    },
+    {
+      "name": "06-actions-optimistic.md",
+      "sha": "3d15321ed570b38da5d65a2b8daa2f5219d9ed25"
+    },
+    {
+      "name": "07-dom.md",
+      "sha": "bdd88a7c66a11e4731da7204a2d72c3ff607dcbb"
+    },
+    {
+      "name": "08-dev-diagnostics.md",
+      "sha": "9f24bce00336f4586649679881467e9fd489cc6d"
+    },
+    {
+      "name": "09-typescript-jsx.md",
+      "sha": "cc580c4edadd2aa4b83c61ee07f0b5a86b09cd9b"
+    },
+    {
+      "name": "10-server-functions.md",
+      "sha": "c101c0b862686b1977b7925f600453d7647140ba"
+    },
+    {
+      "name": "11-server-components.md",
+      "sha": "3d1104c5ea9c097bdeb63997b54b0cdf8530c91d"
+    },
+    {
+      "name": "12-ssr-http.md",
+      "sha": "0b829db0ca3d87843f24091f71a3bcb197d395b2"
+    },
+    {
+      "name": "MIGRATION.md",
+      "sha": "7a943c8d423cb33e9b3d8c2feb59f37cb318137d"
+    },
+    {
+      "name": "README.md",
+      "sha": "d36e8ded6a6f341a7c168e9613fd02ee4429255c"
+    }
+  ],
+  "stories": 1000,
+  "tokenizerStories": 250,
+  "qaConcepts": 25,
+  "qaRows": 181,
+  "validationConcepts": 5,
+  "bytes": {
+    "docs": 557565,
+    "stories": 943638,
+    "tokenizerCorpus": 2202101
+  }
+}

@@ -19,4 +19,15 @@ export {
   type CreateTinyGptOptions,
 } from "./tiny-gpt.js";
 
+export {
+  BPE_SPECIAL_TOKENS,
+  ByteLevelBpe,
+  createBpeTokenizer,
+  parseBpeModel,
+  trainByteLevelBpe,
+  type BpeModel,
+  type BpeSpecialToken,
+  type BpeTrainOptions,
+} from "./tokenizer.js";
+
 export { createOnlyGatesAI as default } from "./only-gates-ai.js";
