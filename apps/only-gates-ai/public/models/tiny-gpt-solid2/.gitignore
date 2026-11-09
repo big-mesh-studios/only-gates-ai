@@ -3,3 +3,8 @@ weights.bin
 tokenizer.json
 final-state.pt
 best-qa.pt
+latest.pt
+lm_ids.npy
+metrics.jsonl
+run.json
+checkpoints/

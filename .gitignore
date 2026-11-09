@@ -10,6 +10,7 @@
 /packages/*/wasm/
 /apps/*/dist/
 /apps/*/.vite/
+/apps/*/.ssr/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
@@ -17,6 +18,10 @@ Makefile
 *.o
 *.a
 *.wasm
+
+# Resumable Integer GPT training output
+/tiny-gpt-solid2-out/
+__pycache__/
 
 # Dependency and editor files
 node_modules/

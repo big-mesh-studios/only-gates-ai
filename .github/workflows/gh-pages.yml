@@ -42,9 +42,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # The app build also rebuilds @only-gates-ai/core, including its Wasm
-      # module, so Emscripten must be on PATH before this runs.
-      - name: Build the app
-        run: pnpm build:app
+      # module, so Emscripten must be on PATH before this runs. build:site
+      # then prerenders /learn/ into the app's dist directory.
+      - name: Build the app and the learn site
+        run: pnpm build:site
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4

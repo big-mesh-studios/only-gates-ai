@@ -13,6 +13,9 @@ instead of starting over.
 ## 2. Route and architecture
 
 - Route: `/learn/` served as `apps/only-gates-ai/dist/learn/index.html`.
+- GitHub Pages hosts static files, so section navigation uses hash fragments
+  (`/learn/#integers`) and there is no path-based client router. A real
+  `learn/index.html` means no rewrite rule and no 404 on deep links.
 - Separate workspace app: `apps/only-gates-ai-learn` (`@only-gates-ai/learn`).
 - Solid 2 static pattern copied from `big-mesh-studios/apps/place-docs` and
   `apps/homepage`:

@@ -1,0 +1,73 @@
+name: Compute pledge
+description: Offer a free Colab, Kaggle, local GPU, or CPU run for Integer GPT training or evaluation
+title: "[compute] "
+labels: ["compute"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for offering compute. A free Colab T4 session is useful because
+        training checkpoints and resumes. You do not need a GPU for evaluation
+        or code work.
+  - type: input
+    id: handle
+    attributes:
+      label: GitHub handle
+      placeholder: "@your-handle"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What can you offer?
+      multiple: true
+      options:
+        - Free Google Colab T4
+        - Kaggle GPU
+        - Local NVIDIA GPU
+        - Local AMD/Intel GPU
+        - CPU hours
+        - FPGA board or synthesis time
+    validations:
+      required: true
+  - type: input
+    id: budget
+    attributes:
+      label: Rough budget
+      description: Sessions or hours you can contribute, and any per-session limit.
+      placeholder: "e.g. 3 × 2-hour T4 sessions this month"
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware and software
+      placeholder: "e.g. Colab T4, PyTorch 2.x, CUDA 12.x"
+  - type: dropdown
+    id: mission
+    attributes:
+      label: Preferred mission
+      options:
+        - Reproduce the current Solid 2 checkpoint
+        - Three-seed stability run
+        - Docs-only vs docs + stories ablation
+        - Float vs integer evaluation
+        - Gate lowering / RTL
+        - FPGA bring-up
+        - Any open mission
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Constraints or questions
+      description: Time zone, availability, data limits, or anything that would make a run hard.
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Terms
+      options:
+        - label: I will follow the compute provider's terms of service and will not work around usage limits.
+          required: true
+        - label: I am willing to publish the run configuration, seed, hardware, and metrics.
+          required: true

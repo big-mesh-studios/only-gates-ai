@@ -941,6 +941,12 @@ export default function App() {
           </div>
         </div>
         <div class="header-actions">
+          <a
+            class="button secondary"
+            href={import.meta.env.DEV ? "http://localhost:5175/" : "learn/"}
+          >
+            How it works
+          </a>
           <Show when={activeTab() === "symbols"}>
             <button
               type="button"

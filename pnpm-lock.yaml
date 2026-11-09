@@ -37,6 +37,25 @@ importers:
         specifier: ^8.3.6
         version: 8.3.6
 
+  apps/only-gates-ai-learn:
+    dependencies:
+      '@solidjs/web':
+        specifier: 2.0.0-rc.21
+        version: 2.0.0-rc.21(solid-js@2.0.0-rc.21)
+      solid-js:
+        specifier: 2.0.0-rc.21
+        version: 2.0.0-rc.21
+    devDependencies:
+      '@solidjs/vite-plugin':
+        specifier: 3.0.0-next.56
+        version: 3.0.0-next.56(@solidjs/web@2.0.0-rc.21(solid-js@2.0.0-rc.21))(solid-js@2.0.0-rc.21)(vite@8.3.6)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^8.3.6
+        version: 8.3.6
+
   packages/only-gates-ai:
     devDependencies:
       typescript:

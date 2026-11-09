@@ -1,0 +1,98 @@
+name: Training result
+description: Report a completed or partially completed Integer GPT training run
+title: "[training] "
+labels: ["training"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report the configuration, hashes, and metrics, not just a loss number.
+        Large checkpoint files should be linked, not pasted.
+  - type: input
+    id: run_name
+    attributes:
+      label: Run name
+      placeholder: "e.g. solid2-seed1337-2026-11"
+    validations:
+      required: true
+  - type: input
+    id: checkpoint_sha
+    attributes:
+      label: latest.pt SHA-256
+      description: Output of `sha256sum latest.pt`.
+      placeholder: "64 hex characters"
+    validations:
+      required: true
+  - type: input
+    id: artifacts
+    attributes:
+      label: Artifact link
+      description: Release asset, Hugging Face, or accessible Drive folder containing latest.pt, run.json, metrics.jsonl, and exported files.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command line
+      description: The exact invocation, including resume flags.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: config
+    attributes:
+      label: Configuration
+      placeholder: "vocab=4096 ctx=256 dim=48 layers=3 heads=4 mlp=96 seed=1337"
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware and versions
+      placeholder: "Tesla T4, PyTorch 2.x, CUDA 12.x, Python 3.12"
+    validations:
+      required: true
+  - type: input
+    id: walltime
+    attributes:
+      label: Wall time and sessions
+      placeholder: "e.g. 2 sessions, 41 minutes total"
+    validations:
+      required: true
+  - type: dropdown
+    id: resumed
+    attributes:
+      label: Did the run resume?
+      options:
+        - "No, it completed in one session"
+        - "Yes, it resumed from a checkpoint"
+        - "No, it stopped early and did not resume"
+    validations:
+      required: true
+  - type: textarea
+    id: metrics
+    attributes:
+      label: Metrics
+      description: LM mean loss, QA best validation loss and epoch, and any evaluation numbers.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: samples
+    attributes:
+      label: Sample outputs
+      description: A few prompts and generated answers. Note the sampling parameters.
+      render: text
+  - type: textarea
+    id: notes
+    attributes:
+      label: What changed, what broke, what should be tried next
+  - type: checkboxes
+    id: credit
+    attributes:
+      label: Credit and sharing
+      options:
+        - label: I am willing to be credited by GitHub handle in the release notes.
+          required: true
+        - label: The shared artifacts do not contain data I am not allowed to redistribute.
+          required: true

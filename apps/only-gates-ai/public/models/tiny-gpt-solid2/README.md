@@ -32,6 +32,25 @@ colab run --gpu T4 --timeout 7200 scripts/train_tiny_gpt_solid2_colab.py -- \
 Optional: place `data/solid2/tinystories.txt` (or pass `--stories /content/tinystories.txt`
 on Colab) to add general-language stories; pass `--stories-url <url>` to fetch them.
 
-Then copy/replace the three files in this folder and reload the web app.
+## Resume a run
+
+The trainer checkpoints the model, AdamW optimizer, scheduler, RNG, and QA
+cursor to `<out>/latest.pt`. If a free Colab session ends, run the same command
+with `--resume`; it continues from the saved optimizer step instead of
+restarting. A time budget stops cleanly before the session limit:
+
+```sh
+python scripts/train_tiny_gpt_solid2_colab.py \
+  --out /content/drive/MyDrive/tiny-gpt-solid2 \
+  --lm-steps 5000 --qa-epochs 100 \
+  --save-every 100 --max-minutes 300 --resume
+```
+
+The trainer verifies the model config, seed, tokenizer, and data fingerprint and
+refuses to resume if they changed. Use `--fresh` to start a new run. See
+`docs/COMPUTE.md` for the checkpoint fields, reporting protocol, and troubleshooting.
+
+Then copy/replace the three exported files in this folder and reload the web app.
+`latest.pt` and `best-qa.pt` are training state and do not need to be copied.
 
 Default config (sized to the small corpus): `vocab=4096, ctx=256, dim=48, layers=3, heads=4, mlp=96` (264,528 params). The integer-only WASM engine loads any config packed in this format.

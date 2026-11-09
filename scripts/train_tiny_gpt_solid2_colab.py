@@ -7,6 +7,13 @@ Designed to run on a fresh Colab VM via the Termux/Colab CLI:
   colab run --gpu T4 --timeout 7200 scripts/train_tiny_gpt_solid2_colab.py -- \\
     --out /content/tiny-gpt-solid2
 
+Free sessions are short, so the trainer checkpoints full model, optimizer,
+scheduler, RNG and data-position state to <out>/latest.pt. Rerun the same
+command with --resume to continue; add --max-minutes to stop gracefully before
+the session ends:
+  python scripts/train_tiny_gpt_solid2_colab.py --out DIR --max-minutes 300
+  python scripts/train_tiny_gpt_solid2_colab.py --out DIR --max-minutes 300 --resume
+
 It is also runnable locally (needs: torch, numpy; optional: regex for best BPE).
 
 What it does:
@@ -31,6 +38,7 @@ import json
 import math
 import os
 import random
+import signal
 import sys
 import time
 import urllib.request
@@ -617,26 +625,141 @@ def lr_lambda(step, total, warmup):
     prog = (step - warmup) / max(1, total - warmup)
     return 0.5 * (1.0 + math.cos(math.pi * min(1.0, prog)))
 
-def train_lm(model, tokens, steps, ctx, batch, lr, warmup, wd, clip, device, label):
-    if steps <= 0 or tokens is None or len(tokens) < ctx + 2: return float("nan")
+# ---------------------------------------------------------------------------
+# Checkpointing
+# ---------------------------------------------------------------------------
+
+CHECKPOINT_FORMAT = "only-gates-train-state"
+CHECKPOINT_VERSION = 1
+STOP_REQUESTED = False
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def sha256_json(value) -> str:
+    return sha256_text(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+
+
+def sha256_ids(ids: Sequence[int]) -> str:
+    digest = hashlib.sha256()
+    digest.update(np.asarray(ids, dtype=np.int32).tobytes())
+    return digest.hexdigest()
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def atomic_torch_save(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    torch.save(payload, tmp)
+    os.replace(tmp, path)
+
+
+def prune_snapshots(directory: Path, keep: int) -> None:
+    if keep <= 0:
+        return
+    files = sorted(directory.glob("*.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in files[keep:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
+def capture_rng() -> Dict:
+    rng = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        rng["cuda"] = torch.cuda.get_rng_state_all()
+    return rng
+
+
+def restore_rng(rng: Optional[Dict]) -> None:
+    if not rng:
+        return
+    try:
+        random.setstate(rng["python"])
+        np.random.set_state(rng["numpy"])
+        torch.set_rng_state(rng["torch"])
+        if torch.cuda.is_available() and rng.get("cuda"):
+            if len(rng["cuda"]) == torch.cuda.device_count():
+                torch.cuda.set_rng_state_all(rng["cuda"])
+            else:
+                print("WARNING: CUDA device count changed; skipping CUDA RNG restore", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: could not restore RNG state: {exc}", flush=True)
+
+
+def request_stop(signum, _frame) -> None:
+    global STOP_REQUESTED
+    STOP_REQUESTED = True
+    print(f"\nsignal {signum}: finishing the current step, then saving", flush=True)
+
+
+def finite_or_none(value: float):
+    return float(value) if math.isfinite(value) else None
+
+
+def make_config(args) -> Dict:
+    return {
+        "vocabSize": args.vocab,
+        "context": args.context,
+        "dim": args.dim,
+        "layers": args.layers,
+        "heads": args.heads,
+        "mlp": args.mlp,
+        "dropout": args.dropout,
+        "qaOversample": args.qa_oversample,
+    }
+
+
+def config_diff(old: Dict, new: Dict) -> List[str]:
+    keys = sorted(set(old) | set(new))
+    return [f"{k}: checkpoint={old.get(k)!r} current={new.get(k)!r}"
+            for k in keys if old.get(k) != new.get(k)]
+
+
+def train_lm(model, tokens, steps, ctx, batch, lr, warmup, wd, clip, device, label,
+             opt, sch, start_step=0, loss_sum=0.0, loss_count=0,
+             save_every=0, on_save=None, should_stop=None):
+    if steps <= 0 or tokens is None or len(tokens) < ctx + 2:
+        return float("nan"), True, loss_sum, loss_count, start_step
     model.train()
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9,0.95), weight_decay=wd)
-    sch = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: lr_lambda(s, steps, warmup))
     arr = torch.tensor(tokens, dtype=torch.long)
     windows = arr.unfold(0, ctx + 1, 1)
     n = windows.size(0)
-    run = 0.0; t0 = time.time()
-    for step in range(steps):
+    t0 = time.time()
+    finished = True
+    last_step = start_step
+    for step in range(start_step, steps):
         b = windows[torch.randint(0, n, (batch,))].to(device)
         opt.zero_grad(set_to_none=True)
         _, loss = model(b[:, :-1], b[:, 1:])
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
         opt.step(); sch.step()
-        run += float(loss.detach())
+        loss_sum += float(loss.detach()); loss_count += 1
+        last_step = step + 1
         if step % 50 == 0 or step == steps - 1:
-            print(f"{label} {step}/{steps} loss {float(loss):.4f} lr {sch.get_last_lr()[0]:.2e} {time.time()-t0:.1f}s", flush=True)
-    return run / max(1, steps)
+            print(f"{label} {step}/{steps} loss {float(loss.detach()):.4f} lr {sch.get_last_lr()[0]:.2e} {time.time()-t0:.1f}s", flush=True)
+        if on_save and save_every > 0 and last_step % save_every == 0 and last_step < steps:
+            on_save(last_step, loss_sum, loss_count)
+        if should_stop and should_stop():
+            if on_save:
+                on_save(last_step, loss_sum, loss_count)
+            finished = False
+            break
+    return loss_sum / max(1, loss_count), finished, loss_sum, loss_count, last_step
 
 @torch.no_grad()
 def eval_qa(model, data, batch, device):
@@ -650,16 +773,23 @@ def eval_qa(model, data, batch, device):
         total += float(loss) * len(chunk); n += len(chunk)
     return total / max(1,n)
 
-def train_qa(model, train_data, val_data, epochs, batch, lr, warmup, wd, clip, device, out_dir):
-    if not train_data or epochs <= 0: return float("nan"), 0
-    total_steps = max(1, epochs * ((len(train_data)+batch-1)//batch))
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9,0.95), weight_decay=wd)
-    sch = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: lr_lambda(s, total_steps, warmup))
-    best=float("inf"); best_ep=0; step=0
-    for ep in range(epochs):
-        model.train(); perm = list(range(len(train_data))); random.shuffle(perm)
-        run=n=0
-        for i in range(0, len(perm), batch):
+def train_qa(model, train_data, val_data, epochs, batch, lr, warmup, wd, clip, device, out_dir,
+             opt, sch, start_epoch=0, start_cursor=0, start_perm=None,
+             best=float("inf"), best_ep=0, step=0,
+             save_every=0, on_save=None, should_stop=None):
+    if not train_data or epochs <= 0:
+        return best, best_ep, True, step
+    finished = True
+    for ep in range(start_epoch, epochs):
+        model.train()
+        if ep == start_epoch and start_perm:
+            perm = list(start_perm)
+        else:
+            perm = list(range(len(train_data)))
+            random.shuffle(perm)
+        begin = start_cursor if ep == start_epoch else 0
+        run = n = 0
+        for i in range(begin, len(perm), batch):
             idx = perm[i:i+batch]
             x = torch.tensor([train_data[j][0] for j in idx], dtype=torch.long, device=device)
             y = torch.tensor([train_data[j][1] for j in idx], dtype=torch.long, device=device)
@@ -667,15 +797,29 @@ def train_qa(model, train_data, val_data, epochs, batch, lr, warmup, wd, clip, d
             _, loss = model(x,y); loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
             opt.step(); sch.step()
-            run += float(loss)*len(idx); n+=len(idx); step+=1
+            run += float(loss.detach())*len(idx); n+=len(idx); step+=1
+            cursor = i + len(idx)
+            if on_save and save_every > 0 and step % save_every == 0:
+                on_save(ep, cursor, perm, best, best_ep, step)
+            if should_stop and should_stop():
+                if on_save:
+                    on_save(ep, cursor, perm, best, best_ep, step)
+                finished = False
+                break
+        if not finished:
+            break
         v = eval_qa(model, val_data, batch, device)
         print(f"qa epoch {ep+1}/{epochs} train {run/max(1,n):.4f} val {v:.4f}", flush=True)
         if math.isfinite(v) and v < best:
             best=v; best_ep=ep+1
             torch.save(model.state_dict(), out_dir/"best-qa.pt")
+        if on_save:
+            on_save(ep + 1, 0, None, best, best_ep, step)
+        start_perm = None
+        start_cursor = 0
     if math.isfinite(best) and (out_dir/"best-qa.pt").exists():
         model.load_state_dict(torch.load(out_dir/"best-qa.pt", map_location=device))
-    return best, best_ep
+    return best, best_ep, finished, step
 
 def generate_samples(model, tokenizer: BpeTokenizer, prompts, device, max_new=120):
     model.eval(); out=[]
@@ -728,87 +872,366 @@ def main():
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--target-params", type=int, default=1_000_000)
     ap.add_argument("--smoke", action="store_true", help="Tiny fast run for pipeline verification")
+    ap.add_argument("--resume", action="store_true", help="Continue from <out>/latest.pt when it exists")
+    ap.add_argument("--resume-from", type=Path, default=None, help="Explicit training-state checkpoint to continue")
+    ap.add_argument("--fresh", action="store_true", help="Ignore existing checkpoints and start over")
+    ap.add_argument("--save-every", type=int, default=100, help="Save a checkpoint every N optimizer steps (0 disables step saves)")
+    ap.add_argument("--max-minutes", type=float, default=0.0, help="Stop gracefully after this many minutes (0 = no limit)")
+    ap.add_argument("--max-hours", type=float, default=0.0, help="Stop gracefully after this many hours (0 = no limit)")
+    ap.add_argument("--keep-checkpoints", type=int, default=3, help="Rolling checkpoint snapshots to keep (0 disables)")
+    ap.add_argument("--stage", choices=["all", "lm", "qa"], default="all", help="Run both stages, only LM pretraining, or only QA finetuning")
+    ap.add_argument("--data-cache", action="store_true", help="Reuse <out>/lm_ids.npy when present")
+    ap.add_argument("--export-only", action="store_true", help="Rebuild exported artifacts from latest.pt without training")
     args = ap.parse_args()
     if args.smoke:
         args.vocab, args.context, args.dim, args.layers, args.heads, args.mlp = 512, 64, 32, 1, 2, 64
         args.lm_steps, args.qa_epochs, args.batch = 2, 1, 2
         print("SMOKE mode: tiny config/steps", flush=True)
+    if args.max_minutes < 0 or args.max_hours < 0:
+        raise SystemExit("--max-minutes and --max-hours must be non-negative")
 
-    random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
-    if torch.cuda.is_available(): torch.cuda.manual_seed_all(args.seed)
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
+
+    budget_seconds = args.max_minutes * 60 + args.max_hours * 3600
+    session_start = time.monotonic()
+    deadline = session_start + budget_seconds if budget_seconds > 0 else None
+
+    def should_stop() -> bool:
+        return STOP_REQUESTED or (deadline is not None and time.monotonic() >= deadline)
+
     device = torch.device(args.device)
-
+    cfg = make_config(args)
     params = parameter_count(args.vocab, args.context, args.dim, args.layers, args.mlp)
     print(f"config vocab={args.vocab} ctx={args.context} dim={args.dim} layers={args.layers} heads={args.heads} mlp={args.mlp}")
     print(f"parameters {params:,} (target ~{args.target_params:,}, delta {params-args.target_params:+,}) device={device}")
-    if args.dim % args.heads != 0: raise SystemExit("dim must be divisible by heads")
+    if args.dim % args.heads != 0:
+        raise SystemExit("dim must be divisible by heads")
 
-    # 1) corpus
-    docs = load_docs(args.docs_dir)
-    qa = load_qa(args.qa_json)
-    stories = "" if args.no_stories else load_stories(args.stories, args.stories_chars, args.stories_url)
-    print(f"docs {len(docs)} qa concepts {len(qa)} stories chars {len(stories)}", flush=True)
-    tok_corpus, lm_text = build_corpus(docs, qa, stories)
+    # 1) training state. Resuming is opt-in so a stale directory cannot surprise a run.
+    ckpt = None
+    checkpoint_path = args.resume_from or (args.out / "latest.pt")
+    if not args.fresh and (args.resume or args.resume_from is not None or args.export_only):
+        if checkpoint_path.exists():
+            print(f"resuming from {checkpoint_path}", flush=True)
+            ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        elif args.resume_from is not None:
+            raise SystemExit(f"checkpoint not found: {checkpoint_path}")
+        else:
+            print(f"no checkpoint at {checkpoint_path}; starting fresh", flush=True)
 
-    # 2) tokenizer
-    print("training BPE tokenizer...", flush=True)
-    tok_model = train_bpe(tok_corpus, vocab_size=args.vocab, min_frequency=2)
-    tokenizer = BpeTokenizer(tok_model)
-    print(f"tokenizer vocab {len(tok_model['vocab'])} merges {len(tok_model['merges'])}", flush=True)
-    # round-trip sanity
-    rt = "createEffect(() => name(), (v) => { el.title = v; });"
-    dec = "".join(tokenizer.vocab[i] if i < len(tokenizer.vocab) else "" for i in tokenizer.encode_ordinary(rt))
-    bs = bytearray(); [bs.append(BYTE_DECODER[c]) for c in dec if c in BYTE_DECODER]
-    if bs.decode("utf-8", errors="ignore") != rt:
-        print("WARNING: tokenizer round-trip mismatch for sample", flush=True)
+    if args.export_only and ckpt is None:
+        raise SystemExit("--export-only needs an existing checkpoint; run training first")
 
-    # 3) data - LM stream includes chat-formatted QA (matches inference) + docs/stories
-    lm_ids = tokenize_lm(tokenizer, lm_text)
-    # also append raw chat QA id sequences (oversampled) so the model strongly learns the chat format
-    qa_train, qa_val, n_val, n_train = make_qa_examples(tokenizer, qa, args.context)
-    chat_ids = []
-    qa_rep = max(0, args.qa_oversample)
-    for _ in range(qa_rep):
-        for seq, _lab in qa_train:
-            # include non-pad tokens of each example
-            chat_ids.extend([t for t in seq if t != PAD_ID])
-    lm_ids = lm_ids + chat_ids
-    print(f"lm tokens {len(lm_ids)} (incl chat QA x{qa_rep}) qa train {len(qa_train)} val {len(qa_val)} (concepts train={n_train} val={n_val})", flush=True)
+    if ckpt is not None:
+        if ckpt.get("format") != CHECKPOINT_FORMAT:
+            raise SystemExit(f"{checkpoint_path}: not a {CHECKPOINT_FORMAT} checkpoint")
+        if int(ckpt.get("version", -1)) != CHECKPOINT_VERSION:
+            raise SystemExit(f"{checkpoint_path}: unsupported checkpoint version {ckpt.get('version')}")
+        diffs = config_diff(ckpt.get("config", {}), cfg)
+        if diffs:
+            raise SystemExit("checkpoint config differs from this run:\n  " + "\n  ".join(diffs) + "\nUse --fresh to start over.")
+        if int(ckpt.get("seed", args.seed)) != args.seed:
+            raise SystemExit(f"checkpoint seed {ckpt.get('seed')} != --seed {args.seed}; use --fresh to change it")
 
-    # 4) model
-    model = TinyGPT(args.vocab, args.context, args.dim, args.layers, args.heads, args.mlp, args.dropout).to(device)
-
+    random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
+    if torch.cuda.is_available(): torch.cuda.manual_seed_all(args.seed)
     args.out.mkdir(parents=True, exist_ok=True)
-    # LM stage
-    if args.lm_steps > 0 and len(lm_ids) > args.context + 2:
-        print(f"LM pretrain {args.lm_steps} steps...", flush=True)
-        lm_loss = train_lm(model, lm_ids, args.lm_steps, args.context, args.batch, args.lr, 100, 0.01, 1.0, device, "lm")
-        print(f"lm mean loss {lm_loss:.4f}", flush=True)
-    else:
-        lm_loss = float("nan")
-    # QA stage
-    best_val, best_ep = train_qa(model, qa_train, qa_val, args.qa_epochs, args.batch, args.qa_lr, 20, 0.01, 1.0, device, args.out)
-    print(f"qa best val {best_val:.4f} @ epoch {best_ep}", flush=True)
 
-    # 5) samples
+    # 2) corpus + tokenizer. A resumed run reuses the tokenizer stored in the
+    # checkpoint; retraining BPE could renumber every token and corrupt the run.
+    qa = load_qa(args.qa_json)
+    qa_hash = sha256_json(qa)
+    docs = None
+    stories = None
+    lm_text = None
+    if ckpt is not None:
+        tok_model = ckpt.get("tokenizer_model")
+        if not tok_model:
+            raise SystemExit("checkpoint has no tokenizer_model; cannot resume")
+        print("loaded tokenizer from checkpoint", flush=True)
+    else:
+        docs = load_docs(args.docs_dir)
+        stories = "" if args.no_stories else load_stories(args.stories, args.stories_chars, args.stories_url)
+        print(f"docs {len(docs)} qa concepts {len(qa)} stories chars {len(stories)}", flush=True)
+        tok_corpus, lm_text = build_corpus(docs, qa, stories)
+        print("training BPE tokenizer...", flush=True)
+        tok_model = train_bpe(tok_corpus, vocab_size=args.vocab, min_frequency=2)
+        atomic_write_text(args.out / "tokenizer.json", json.dumps(tok_model, ensure_ascii=False) + "\n")
+        print(f"tokenizer vocab {len(tok_model['vocab'])} merges {len(tok_model['merges'])}", flush=True)
+        tokenizer = BpeTokenizer(tok_model)
+        rt = "createEffect(() => name(), (v) => { el.title = v; });"
+        dec = "".join(tokenizer.vocab[i] if i < len(tokenizer.vocab) else "" for i in tokenizer.encode_ordinary(rt))
+        bs = bytearray(); [bs.append(BYTE_DECODER[c]) for c in dec if c in BYTE_DECODER]
+        if bs.decode("utf-8", errors="ignore") != rt:
+            print("WARNING: tokenizer round-trip mismatch for sample", flush=True)
+    tokenizer = BpeTokenizer(tok_model)
+
+    # 3) data. LM ids are cached so a resumed Colab session does not need to
+    # rebuild the corpus, but the cached stream is checked against the fingerprint.
+    qa_train, qa_val, n_val, n_train = make_qa_examples(tokenizer, qa, args.context)
+    cache_path = args.out / "lm_ids.npy"
+    lm_ids = None
+    if ckpt is not None and (args.data_cache or cache_path.exists()):
+        try:
+            lm_ids = np.load(cache_path).astype(np.int64).tolist()
+            print(f"loaded cached lm ids {len(lm_ids)}", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"WARNING: could not read {cache_path}: {exc}", flush=True)
+    if lm_ids is None and lm_text is None:
+        print("rebuilding the token stream to verify the checkpoint fingerprint...", flush=True)
+        docs = load_docs(args.docs_dir)
+        stories = "" if args.no_stories else load_stories(args.stories, args.stories_chars, args.stories_url)
+        print(f"docs {len(docs)} qa concepts {len(qa)} stories chars {len(stories)}", flush=True)
+        _, lm_text = build_corpus(docs, qa, stories)
+    if lm_ids is None:
+        lm_ids = tokenize_lm(tokenizer, lm_text)
+        chat_ids = []
+        qa_rep = max(0, args.qa_oversample)
+        for _ in range(qa_rep):
+            for seq, _lab in qa_train:
+                chat_ids.extend([t for t in seq if t != PAD_ID])
+        lm_ids = lm_ids + chat_ids
+        np.save(cache_path, np.asarray(lm_ids, dtype=np.int32))
+        print(f"wrote token-stream cache {cache_path}", flush=True)
+    print(f"lm tokens {len(lm_ids)} qa train {len(qa_train)} val {len(qa_val)} (concepts train={n_train} val={n_val})", flush=True)
+
+    fingerprint = {
+        "qa": qa_hash,
+        "tokenizer": sha256_json(tok_model),
+        "lm_ids": sha256_ids(lm_ids),
+        "seed": args.seed,
+    }
+    if docs is not None:
+        fingerprint["docs"] = sha256_text("\n\0".join(f"{name}\n{text}" for name, text in docs))
+    if stories is not None:
+        fingerprint["stories"] = sha256_text(stories)
+
+    if ckpt is not None:
+        old = ckpt.get("fingerprint", {})
+        # When the cached token stream let us skip docs and stories, carry the
+        # original hashes forward so run.json still describes the whole run.
+        for key in ("docs", "stories"):
+            if key not in fingerprint and key in old:
+                fingerprint[key] = old[key]
+        required = {"qa", "tokenizer", "lm_ids", "seed"}
+        missing = sorted(required - set(old))
+        mismatches = [f"{k}: checkpoint={old[k]} current={fingerprint[k]}"
+                      for k in old if k in fingerprint and old[k] != fingerprint[k]]
+        if missing or mismatches:
+            detail = mismatches or [f"missing fingerprint field: {k}" for k in missing]
+            raise SystemExit("checkpoint data mismatch:\n  " + "\n  ".join(detail) + "\nUse --fresh to start a new run.")
+
+    # 4) model + checkpoint writer
+    model = TinyGPT(args.vocab, args.context, args.dim, args.layers, args.heads, args.mlp, args.dropout).to(device)
+    if ckpt is not None:
+        model.load_state_dict(ckpt["model"])
+
+    snap_dir = args.out / "checkpoints"
+    wall_base = float(ckpt.get("wall_seconds", 0.0)) if ckpt else 0.0
+    snap_index = int(ckpt.get("snapshot_index", 0)) if ckpt else 0
+    resume_count = (int(ckpt.get("resume_count", 0)) + 1) if ckpt else 0
+    stories_chars = len(stories) if stories is not None else int(ckpt.get("stories_chars", 0) if ckpt else 0)
+    env = {
+        "python": sys.version.split()[0],
+        "torch": torch.__version__,
+        "numpy": np.__version__,
+        "device": str(device),
+    }
+    if torch.cuda.is_available():
+        env["gpu"] = torch.cuda.get_device_name(0)
+
+    def write_state(stage_name: str, optimizer=None, scheduler=None, model_state=None, **extra) -> None:
+        nonlocal snap_index
+        payload = {
+            "format": CHECKPOINT_FORMAT,
+            "version": CHECKPOINT_VERSION,
+            "stage": stage_name,
+            "config": cfg,
+            "fingerprint": fingerprint,
+            "tokenizer_model": tok_model,
+            "seed": args.seed,
+            "resume_count": resume_count,
+            "environment": env,
+            "stories_chars": stories_chars,
+            "wall_seconds": wall_base + (time.monotonic() - session_start),
+            "model": model_state if model_state is not None else model.state_dict(),
+            "rng": capture_rng(),
+        }
+        if optimizer is not None:
+            payload["optimizer"] = optimizer.state_dict()
+        if scheduler is not None:
+            payload["scheduler"] = scheduler.state_dict()
+        payload.update(extra)
+        atomic_torch_save(args.out / "latest.pt", payload)
+        if args.keep_checkpoints > 0:
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            snap_index += 1
+            atomic_torch_save(snap_dir / f"{stage_name}-{snap_index:07d}.pt", payload)
+            prune_snapshots(snap_dir, args.keep_checkpoints)
+        manifest = {
+            "format": payload["format"],
+            "version": payload["version"],
+            "stage": stage_name,
+            "config": cfg,
+            "fingerprint": fingerprint,
+            "seed": args.seed,
+            "resumeCount": resume_count,
+            "environment": env,
+            "wallSeconds": round(payload["wall_seconds"], 1),
+            "lm": {"step": payload.get("lm_step"), "steps": payload.get("lm_steps"), "loss": payload.get("lm_loss")},
+            "qa": {"epoch": payload.get("qa_epoch"), "cursor": payload.get("qa_cursor"),
+                   "bestVal": payload.get("qa_best"), "bestEpoch": payload.get("qa_best_epoch"),
+                   "step": payload.get("qa_step")},
+        }
+        atomic_write_text(args.out / "run.json", json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+
+    def log_metric(record: Dict) -> None:
+        item = dict(record)
+        item["time"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        item["wallSeconds"] = round(wall_base + (time.monotonic() - session_start), 1)
+        with open(args.out / "metrics.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+    stage = ckpt.get("stage", "lm") if ckpt is not None else ("lm" if args.stage != "qa" else "qa")
+    if args.export_only:
+        stage = "done"
+    if stage == "lm" and args.stage == "qa":
+        raise SystemExit("cannot start QA: LM pretraining in the checkpoint is not complete. Use --stage all.")
+
+    lm_step = int(ckpt.get("lm_step", 0)) if ckpt else 0
+    lm_loss_sum = float(ckpt.get("lm_loss_sum", 0.0)) if ckpt else 0.0
+    lm_loss_count = int(ckpt.get("lm_loss_count", 0)) if ckpt else 0
+    lm_loss = (float(ckpt["lm_loss"]) if ckpt and ckpt.get("lm_loss") is not None else float("nan"))
+    qa_epoch = int(ckpt.get("qa_epoch", 0)) if ckpt else 0
+    qa_cursor = int(ckpt.get("qa_cursor", 0)) if ckpt else 0
+    qa_perm = ckpt.get("qa_perm") if ckpt else None
+    qa_best = (float(ckpt["qa_best"]) if ckpt and ckpt.get("qa_best") is not None else float("inf"))
+    qa_best_epoch = int(ckpt.get("qa_best_epoch", 0)) if ckpt else 0
+    qa_step = int(ckpt.get("qa_step", 0)) if ckpt else 0
+
+    # 5) LM stage
+    if stage == "lm":
+        if args.lm_steps <= 0 or len(lm_ids) <= args.context + 2:
+            lm_loss = float("nan")
+            stage = "lm-done" if args.stage == "lm" else "qa"
+            write_state(stage, lm_step=lm_step, lm_steps=args.lm_steps,
+                        lm_loss=None, lm_loss_sum=lm_loss_sum, lm_loss_count=lm_loss_count,
+                        qa_epoch=0, qa_cursor=0, qa_perm=None,
+                        qa_best=None, qa_best_epoch=0, qa_step=0)
+            if args.stage == "lm":
+                print("LM stage skipped (no steps or data).", flush=True)
+                return
+        else:
+            print(f"LM pretrain {args.lm_steps} steps (starting at {lm_step})...", flush=True)
+            lm_opt = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.01)
+            lm_sch = torch.optim.lr_scheduler.LambdaLR(lm_opt, lambda s: lr_lambda(s, args.lm_steps, 100))
+            if ckpt is not None and ckpt.get("stage") == "lm":
+                if ckpt.get("optimizer") and ckpt.get("scheduler"):
+                    lm_opt.load_state_dict(ckpt["optimizer"])
+                    lm_sch.load_state_dict(ckpt["scheduler"])
+                restore_rng(ckpt.get("rng"))
+
+            def save_lm(done, loss_sum, loss_count):
+                mean = loss_sum / max(1, loss_count)
+                write_state("lm", optimizer=lm_opt, scheduler=lm_sch,
+                            lm_step=done, lm_steps=args.lm_steps,
+                            lm_loss=finite_or_none(mean),
+                            lm_loss_sum=loss_sum, lm_loss_count=loss_count,
+                            qa_epoch=0, qa_cursor=0, qa_perm=None,
+                            qa_best=None, qa_best_epoch=0, qa_step=0)
+                log_metric({"stage": "lm", "step": done, "steps": args.lm_steps,
+                            "loss": finite_or_none(mean), "lr": lm_sch.get_last_lr()[0]})
+
+            lm_loss, finished, lm_loss_sum, lm_loss_count, lm_step = train_lm(
+                model, lm_ids, args.lm_steps, args.context, args.batch,
+                args.lr, 100, 0.01, 1.0, device, "lm",
+                lm_opt, lm_sch, start_step=lm_step,
+                loss_sum=lm_loss_sum, loss_count=lm_loss_count,
+                save_every=args.save_every, on_save=save_lm, should_stop=should_stop)
+            print(f"lm mean loss {lm_loss:.4f}", flush=True)
+            if not finished:
+                print(f"stopped at LM step {lm_step}/{args.lm_steps}. Resume with --resume.", flush=True)
+                return
+            stage = "lm-done" if args.stage == "lm" else "qa"
+            write_state(stage, lm_step=lm_step, lm_steps=args.lm_steps,
+                        lm_loss=finite_or_none(lm_loss),
+                        lm_loss_sum=lm_loss_sum, lm_loss_count=lm_loss_count,
+                        qa_epoch=0, qa_cursor=0, qa_perm=None,
+                        qa_best=None, qa_best_epoch=0, qa_step=0)
+            if args.stage == "lm":
+                print("LM stage complete. Rerun with --stage all to finetune QA.", flush=True)
+                return
+
+    # 6) QA stage
+    if stage in ("lm-done", "qa") and args.stage != "lm":
+        if args.qa_epochs <= 0 or not qa_train:
+            stage = "done"
+        else:
+            total_steps = max(1, args.qa_epochs * ((len(qa_train) + args.batch - 1) // args.batch))
+            qa_opt = torch.optim.AdamW(model.parameters(), lr=args.qa_lr, betas=(0.9, 0.95), weight_decay=0.01)
+            qa_sch = torch.optim.lr_scheduler.LambdaLR(qa_opt, lambda s: lr_lambda(s, total_steps, 20))
+            if ckpt is not None and ckpt.get("stage") == "qa":
+                if ckpt.get("optimizer") and ckpt.get("scheduler"):
+                    qa_opt.load_state_dict(ckpt["optimizer"])
+                    qa_sch.load_state_dict(ckpt["scheduler"])
+                restore_rng(ckpt.get("rng"))
+            elif ckpt is not None and ckpt.get("stage") == "lm-done":
+                # Continue the RNG stream from the end of LM when a run was split
+                # into separate --stage lm and --stage all invocations.
+                restore_rng(ckpt.get("rng"))
+            print(f"QA finetune {args.qa_epochs} epochs (starting at epoch {qa_epoch}, cursor {qa_cursor})...", flush=True)
+
+            def save_qa(ep, cursor, perm, best, best_ep, step):
+                write_state("qa", optimizer=qa_opt, scheduler=qa_sch,
+                            lm_step=lm_step, lm_steps=args.lm_steps,
+                            lm_loss=finite_or_none(lm_loss),
+                            lm_loss_sum=lm_loss_sum, lm_loss_count=lm_loss_count,
+                            qa_epoch=ep, qa_cursor=cursor, qa_perm=perm,
+                            qa_best=finite_or_none(best), qa_best_epoch=best_ep, qa_step=step)
+                log_metric({"stage": "qa", "epoch": ep, "cursor": cursor,
+                            "best_val": finite_or_none(best), "best_epoch": best_ep,
+                            "step": step, "lr": qa_sch.get_last_lr()[0]})
+
+            qa_best, qa_best_epoch, finished, qa_step = train_qa(
+                model, qa_train, qa_val, args.qa_epochs, args.batch,
+                args.qa_lr, 20, 0.01, 1.0, device, args.out,
+                qa_opt, qa_sch, start_epoch=qa_epoch, start_cursor=qa_cursor,
+                start_perm=qa_perm, best=qa_best, best_ep=qa_best_epoch, step=qa_step,
+                save_every=args.save_every, on_save=save_qa, should_stop=should_stop)
+            print(f"qa best val {qa_best:.4f} @ epoch {qa_best_epoch}", flush=True)
+            if not finished:
+                print(f"stopped during QA epoch {qa_epoch}/{args.qa_epochs}. Resume with --resume.", flush=True)
+                return
+            stage = "done"
+            write_state("done", lm_step=lm_step, lm_steps=args.lm_steps,
+                        lm_loss=finite_or_none(lm_loss), lm_loss_sum=lm_loss_sum,
+                        lm_loss_count=lm_loss_count, qa_epoch=args.qa_epochs,
+                        qa_cursor=0, qa_perm=None, qa_best=finite_or_none(qa_best),
+                        qa_best_epoch=qa_best_epoch, qa_step=qa_step)
+
+    if stage != "done":
+        print("training stopped before export; rerun with --resume", flush=True)
+        return
+
+    # 7) samples + export
     prompts = ["What are split effects?", "How do I migrate createEffect from Solid 1?",
                "What replaced createResource?", "Why does my signal not update immediately in Solid 2?"]
     samples = generate_samples(model, tokenizer, prompts, device)
 
-    # 6) export
     torch.save(model.state_dict(), args.out / "final-state.pt")
     packed = pack_weights(model)
-    cfg = {"vocabSize": args.vocab, "context": args.context, "dim": args.dim, "layers": args.layers, "heads": args.heads, "mlp": args.mlp}
-    verify_packed(model, packed, cfg)
+    export_cfg = {k: cfg[k] for k in ("vocabSize", "context", "dim", "layers", "heads", "mlp")}
+    verify_packed(model, packed, export_cfg)
     (args.out / "weights.bin").write_bytes(packed.numpy().astype("<f4", copy=False).tobytes())
     (args.out / "tokenizer.json").write_text(json.dumps(tok_model, ensure_ascii=False) + "\n", encoding="utf-8")
     source_parts = ["Pinned Solid 2.0 documentation (MIT, solidjs/solid@next)", "supplemental Solid 2 HackMD notes (proposal/pattern context)", "curated Solid 2 Q&A in this repository"]
-    if stories:
+    if stories_chars:
         source_parts.append("general-language short stories (coherence)")
     checkpoint = {
         "format": "only-gates-tiny-gpt",
         "version": 1,
-        "config": cfg,
+        "config": export_cfg,
         "parameterCount": int(params),
         "tokenizer": "tokenizer.json",
         "meta": {
@@ -817,10 +1240,11 @@ def main():
             "license": "Model weights generated by this repository; upstream sources retain their own licenses/attribution.",
             "training": {
                 "lmSteps": args.lm_steps, "qaEpochs": args.qa_epochs,
-                "qaBestVal": best_val, "qaBestEpoch": best_ep, "lmMeanLoss": lm_loss,
+                "qaBestVal": finite_or_none(qa_best), "qaBestEpoch": qa_best_epoch,
+                "lmMeanLoss": finite_or_none(lm_loss),
                 "context": args.context, "dim": args.dim, "layers": args.layers,
                 "heads": args.heads, "mlp": args.mlp, "vocabSize": args.vocab,
-                "storiesChars": len(stories),
+                "storiesChars": stories_chars,
             },
         },
         "samples": samples,
