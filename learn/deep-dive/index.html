@@ -1,0 +1,3373 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Build Integer GPT from scratch — only-gates-ai</title>
+    <meta name="description" content="A low-level tutorial: int8 quantization, Q16 activations, integer matmul, RMSNorm, a GELU lookup table, causal attention, DI-Exp softmax, sampling, and the float-to-integer export contract." />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Build Integer GPT from scratch — only-gates-ai" />
+    <meta property="og:description" content="A low-level tutorial: int8 quantization, Q16 activations, integer matmul, RMSNorm, a GELU lookup table, causal attention, DI-Exp softmax, sampling, and the float-to-integer export contract." />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%237ee787'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='%2306210d' font-family='monospace'>⌁</text></svg>" />
+    <style>
+:root {
+  color-scheme: dark;
+  --bg: #0b0e13;
+  --bg-soft: #10151c;
+  --panel: rgba(18, 24, 31, 0.9);
+  --panel-strong: #141b23;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --text: #e7edf3;
+  --muted: #94a2b2;
+  --accent: #7ee787;
+  --accent-strong: #4dd46b;
+  --blue: #79c0ff;
+  --warning: #f2cc60;
+  --danger: #ff7b72;
+  --radius: 18px;
+  --radius-small: 10px;
+  --max: 1120px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 88px;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  color: var(--text);
+  background:
+    radial-gradient(circle at 12% -4%, rgba(126, 231, 135, 0.13), transparent 34rem),
+    radial-gradient(circle at 92% 4%, rgba(121, 192, 255, 0.11), transparent 30rem),
+    linear-gradient(180deg, #0b0e13 0%, #0b0e13 60%, #090c11 100%);
+  background-attachment: fixed;
+  line-height: 1.65;
+  text-rendering: optimizeLegibility;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: radial-gradient(circle at 50% 0%, black, transparent 72%);
+  z-index: 0;
+}
+
+a {
+  color: var(--blue);
+  text-decoration-color: rgba(121, 192, 255, 0.42);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  color: #a8d8ff;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.08em 0.34em;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.18;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+p {
+  margin: 0 0 1rem;
+}
+
+ul,
+ol {
+  margin: 0 0 1rem;
+  padding-left: 1.25rem;
+}
+
+li {
+  margin: 0.35rem 0;
+}
+
+main,
+.masthead,
+.footer {
+  position: relative;
+  z-index: 1;
+}
+
+/* Masthead --------------------------------------------------------------- */
+
+.masthead {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 1.4rem;
+  padding: 0.85rem clamp(1rem, 3vw, 2rem);
+  border-bottom: 1px solid var(--border);
+  background: rgba(11, 14, 19, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--text);
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 8px;
+  color: #06210d;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  font-size: 1.05rem;
+}
+
+.masthead nav {
+  display: flex;
+  gap: 1rem;
+  margin-left: auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.masthead nav::-webkit-scrollbar {
+  display: none;
+}
+
+.masthead nav a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
+.masthead nav a:hover {
+  color: var(--text);
+}
+
+.nav-cta {
+  padding: 0.45rem 0.85rem;
+  border: 1px solid rgba(126, 231, 135, 0.36);
+  border-radius: 999px;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.nav-cta:hover {
+  background: rgba(126, 231, 135, 0.09);
+  color: var(--accent);
+}
+
+/* Layout ----------------------------------------------------------------- */
+
+main {
+  width: min(var(--max), calc(100% - 2rem));
+  margin: 0 auto;
+}
+
+.section {
+  padding: clamp(2.8rem, 6vw, 5.5rem) 0;
+  border-top: 1px solid var(--border);
+}
+
+.section-head {
+  max-width: 760px;
+  margin-bottom: 1.8rem;
+}
+
+.kicker,
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.section h2 {
+  font-size: clamp(1.6rem, 3.2vw, 2.45rem);
+  margin-bottom: 0.5rem;
+}
+
+.section p,
+.section li {
+  color: #c9d4df;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.subhead {
+  margin-top: 2.2rem;
+  margin-bottom: 0.75rem;
+  font-size: 1.15rem;
+}
+
+/* Hero ------------------------------------------------------------------- */
+
+.hero {
+  padding: clamp(3.2rem, 9vw, 7rem) 0 clamp(2rem, 4vw, 3rem);
+}
+
+.hero h1 {
+  max-width: 900px;
+  font-size: clamp(2.3rem, 6.4vw, 4.6rem);
+  letter-spacing: -0.045em;
+}
+
+.hero h1 .accent {
+  color: var(--accent);
+}
+
+.lede {
+  max-width: 760px;
+  margin-top: 1.2rem;
+  color: #cbd6e1;
+  font-size: clamp(1rem, 1.5vw, 1.18rem);
+}
+
+.lede.small {
+  max-width: 720px;
+  font-size: 1rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin: 1.6rem 0;
+}
+
+.button {
+  display: inline-block;
+  padding: 0.72rem 1.1rem;
+  border: 1px solid rgba(126, 231, 135, 0.42);
+  border-radius: 999px;
+  color: #06210d;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  font-weight: 700;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.button:hover {
+  color: #06210d;
+  filter: brightness(1.06);
+}
+
+.button.ghost {
+  color: var(--text);
+  background: transparent;
+  border-color: var(--border-strong);
+}
+
+.button.ghost:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0;
+  margin: 1.6rem 0 0;
+  list-style: none;
+}
+
+.chip {
+  padding: 0.32rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.78rem;
+}
+
+.chip.ready {
+  color: var(--accent);
+  border-color: rgba(126, 231, 135, 0.34);
+  background: rgba(126, 231, 135, 0.07);
+}
+
+.chip.prototype {
+  color: var(--warning);
+  border-color: rgba(242, 204, 96, 0.34);
+  background: rgba(242, 204, 96, 0.06);
+}
+
+.chip.roadmap {
+  color: var(--blue);
+  border-color: rgba(121, 192, 255, 0.32);
+  background: rgba(121, 192, 255, 0.06);
+}
+
+.honesty,
+.callout {
+  margin: 1.4rem 0;
+  padding: 1rem 1.15rem;
+  border-left: 3px solid var(--warning);
+  border-radius: 0 var(--radius-small) var(--radius-small) 0;
+  background: rgba(242, 204, 96, 0.055);
+  color: #e8dfc2;
+  font-size: 0.93rem;
+}
+
+.callout {
+  border-left-color: var(--accent);
+  background: rgba(126, 231, 135, 0.05);
+  color: #d7e8dc;
+}
+
+/* Cards ------------------------------------------------------------------ */
+
+.cards {
+  display: grid;
+  gap: 1rem;
+  margin: 1.4rem 0;
+}
+
+.cards.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cards.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.card {
+  padding: 1.2rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(22, 29, 38, 0.9), rgba(15, 20, 27, 0.9));
+}
+
+.card h3 {
+  margin-bottom: 0.55rem;
+  font-size: 1.02rem;
+}
+
+.card p:last-child,
+.card ul:last-child {
+  margin-bottom: 0;
+}
+
+.card-index {
+  display: block;
+  margin-bottom: 0.55rem;
+  color: var(--blue);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.ticks,
+.crosses {
+  list-style: none;
+  padding-left: 0;
+}
+
+.ticks li::before {
+  content: "✓";
+  color: var(--accent);
+  margin-right: 0.5rem;
+}
+
+.crosses li::before {
+  content: "–";
+  color: var(--warning);
+  margin-right: 0.5rem;
+}
+
+.code-card pre {
+  margin: 0.6rem 0 0;
+}
+
+/* Tables ----------------------------------------------------------------- */
+
+.table-wrap {
+  margin: 1.4rem 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+caption {
+  padding: 0.7rem 0.9rem;
+  color: var(--muted);
+  text-align: left;
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--border);
+}
+
+th,
+td {
+  padding: 0.62rem 0.8rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+thead th {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+tbody tr:last-child th,
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tbody th {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tag {
+  display: inline-block;
+  padding: 0.14rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  border: 1px solid var(--border-strong);
+  color: var(--muted);
+}
+
+.tag.compute {
+  color: var(--accent);
+  border-color: rgba(126, 231, 135, 0.3);
+}
+
+.tag.code {
+  color: var(--blue);
+  border-color: rgba(121, 192, 255, 0.3);
+}
+
+.tag.hardware {
+  color: var(--warning);
+  border-color: rgba(242, 204, 96, 0.3);
+}
+
+/* Figures and diagrams --------------------------------------------------- */
+
+.figure {
+  margin: 1.7rem 0;
+}
+
+.diagram {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(121, 192, 255, 0.06), transparent 22rem),
+    rgba(10, 14, 19, 0.75);
+}
+
+figcaption {
+  margin-top: 0.55rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.d-panel {
+  fill: rgba(255, 255, 255, 0.025);
+  stroke: rgba(255, 255, 255, 0.1);
+}
+
+.d-box {
+  fill: rgba(255, 255, 255, 0.045);
+  stroke: rgba(255, 255, 255, 0.16);
+}
+
+.d-accent-box {
+  fill: rgba(126, 231, 135, 0.09);
+  stroke: rgba(126, 231, 135, 0.36);
+}
+
+.d-blue-box {
+  fill: rgba(121, 192, 255, 0.08);
+  stroke: rgba(121, 192, 255, 0.32);
+}
+
+.d-title {
+  fill: #e7edf3;
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.d-text {
+  fill: #d7e1eb;
+  font-family: var(--sans);
+  font-size: 13px;
+}
+
+.d-muted {
+  fill: #8b98a7;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.d-line {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.26);
+  stroke-width: 1.6;
+}
+
+.d-line-wide {
+  stroke-width: 2.4;
+}
+
+.d-arrow {
+  fill: rgba(255, 255, 255, 0.42);
+}
+
+.d-dot {
+  fill: #0b0e13;
+  stroke: var(--accent);
+  stroke-width: 2.2;
+}
+
+/* Steps ------------------------------------------------------------------ */
+
+.steps {
+  counter-reset: step;
+  list-style: none;
+  padding-left: 0;
+  margin: 1.4rem 0;
+}
+
+.steps li {
+  counter-increment: step;
+  position: relative;
+  padding: 0.65rem 0 0.65rem 3rem;
+  border-left: 1px solid var(--border);
+  margin-left: 0.9rem;
+}
+
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: -0.9rem;
+  top: 0.68rem;
+  display: grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 50%;
+  border: 1px solid rgba(126, 231, 135, 0.4);
+  background: #0d1419;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.76rem;
+}
+
+.steps.compact li {
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+
+/* Code ------------------------------------------------------------------- */
+
+pre {
+  overflow-x: auto;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: #080b0f;
+  color: #cfe0d4;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: inherit;
+}
+
+.code-block {
+  margin: 1rem 0;
+}
+
+/* Roadmap ---------------------------------------------------------------- */
+
+.roadmap {
+  list-style: none;
+  padding: 0;
+  margin: 1.4rem 0;
+}
+
+.milestone {
+  display: grid;
+  grid-template-columns: 3.4rem minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: start;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.milestone:last-child {
+  border-bottom: 0;
+}
+
+.milestone-tag {
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.milestone.done .milestone-tag {
+  color: var(--accent);
+  border-color: rgba(126, 231, 135, 0.4);
+  background: rgba(126, 231, 135, 0.07);
+}
+
+.milestone.now .milestone-tag {
+  color: var(--blue);
+  border-color: rgba(121, 192, 255, 0.4);
+  background: rgba(121, 192, 255, 0.07);
+}
+
+.milestone.next .milestone-tag {
+  color: var(--warning);
+  border-color: rgba(242, 204, 96, 0.4);
+  background: rgba(242, 204, 96, 0.06);
+}
+
+.milestone h3 {
+  font-size: 1rem;
+  margin-bottom: 0.2rem;
+}
+
+.milestone p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.milestone-status {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* FAQ -------------------------------------------------------------------- */
+
+.faq {
+  border-top: 1px solid var(--border);
+}
+
+.faq details {
+  border-bottom: 1px solid var(--border);
+}
+
+.faq summary {
+  padding: 1rem 0;
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.faq summary::after {
+  content: "+";
+  float: right;
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+.faq details[open] summary::after {
+  content: "−";
+}
+
+.faq details p {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.93rem;
+}
+
+/* Footer ----------------------------------------------------------------- */
+
+.footer {
+  width: min(var(--max), calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 2rem 0 3rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.footer a {
+  color: var(--muted);
+}
+
+.footer a:hover {
+  color: var(--accent);
+}
+
+.dot {
+  margin: 0 0.45rem;
+  opacity: 0.5;
+}
+
+.text-link {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+/* Responsive ------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .cards.three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .masthead {
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  .masthead nav {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+    padding-bottom: 0.15rem;
+  }
+
+  .nav-cta {
+    margin-left: auto;
+  }
+
+  .cards.two,
+  .cards.three {
+    grid-template-columns: 1fr;
+  }
+
+  .milestone {
+    grid-template-columns: 2.6rem minmax(0, 1fr);
+  }
+
+  .milestone-status {
+    grid-column: 2;
+  }
+
+  .hero h1 {
+    letter-spacing: -0.035em;
+  }
+}
+
+@media (max-width: 440px) {
+  html {
+    scroll-padding-top: 120px;
+  }
+
+  main,
+  .footer {
+    width: min(var(--max), calc(100% - 1.25rem));
+  }
+
+  .brand span:last-child {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+@media print {
+  body {
+    background: #fff;
+    color: #111;
+  }
+
+  body::before,
+  .masthead,
+  .actions,
+  .footer .dot {
+    display: none;
+  }
+
+  main,
+  .footer {
+    width: 100%;
+  }
+
+  .section {
+    break-inside: avoid;
+    border-top-color: #ccc;
+  }
+
+  a {
+    color: #0b5cad;
+  }
+
+  .diagram {
+    background: #fff;
+    border-color: #bbb;
+  }
+
+  .d-title,
+  .d-text {
+    fill: #111;
+  }
+
+  .d-muted {
+    fill: #444;
+  }
+
+  .d-box,
+  .d-panel {
+    fill: #f5f5f5;
+    stroke: #999;
+  }
+
+  pre {
+    background: #f5f5f5;
+    color: #111;
+    border-color: #bbb;
+  }
+}
+
+/* Deep-dive layout ------------------------------------------------------- */
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0.5rem;
+  z-index: 100;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #06210d;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  left: 1rem;
+}
+
+.deep-hero {
+  width: min(1180px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: clamp(3rem, 8vw, 6rem) 0 clamp(2rem, 4vw, 3rem);
+}
+
+.deep-hero h1 {
+  max-width: 940px;
+  font-size: clamp(2.2rem, 5.8vw, 4.2rem);
+  letter-spacing: -0.045em;
+}
+
+.deep-hero h1 .accent {
+  color: var(--accent);
+}
+
+.deep-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  align-items: start;
+  width: min(1280px, calc(100% - 2rem));
+  margin: 0 auto;
+}
+
+.deep-article {
+  width: auto;
+  margin: 0;
+  min-width: 0;
+}
+
+.deep-sidebar {
+  position: sticky;
+  top: 5.2rem;
+  padding: 1rem 0 2rem;
+  border-right: 1px solid var(--border);
+}
+
+.toc-title {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.deep-sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.deep-sidebar nav a {
+  display: flex;
+  gap: 0.65rem;
+  align-items: baseline;
+  padding: 0.34rem 1rem 0.34rem 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  text-decoration: none;
+  border-right: 2px solid transparent;
+}
+
+.deep-sidebar nav a:hover {
+  color: var(--text);
+  border-right-color: rgba(126, 231, 135, 0.35);
+}
+
+.toc-number {
+  color: rgba(126, 231, 135, 0.7);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+}
+
+.toc-note {
+  margin-top: 1.4rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.toc-note a {
+  color: var(--blue);
+}
+
+/* Chapters --------------------------------------------------------------- */
+
+.chapter {
+  padding: clamp(2.4rem, 5vw, 4rem) 0;
+  border-top: 1px solid var(--border);
+  scroll-margin-top: 5rem;
+}
+
+.chapter:first-child {
+  border-top: 0;
+  padding-top: 1rem;
+}
+
+.chapter-head {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+}
+
+.chapter-number {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-top: 0.15rem;
+  border: 1px solid rgba(126, 231, 135, 0.34);
+  border-radius: 9px;
+  background: rgba(126, 231, 135, 0.06);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.chapter h2 {
+  font-size: clamp(1.55rem, 3vw, 2.3rem);
+}
+
+.chapter p,
+.chapter li {
+  color: #c9d4df;
+}
+
+.chapter h3.subhead {
+  margin-top: 2.1rem;
+  margin-bottom: 0.7rem;
+  font-size: 1.12rem;
+}
+
+.chapter code {
+  overflow-wrap: anywhere;
+}
+
+.contract-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.8rem;
+  align-items: stretch;
+  margin: 1.6rem 0;
+}
+
+.contract-card {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.contract-card h3 {
+  margin: 0.45rem 0 0.4rem;
+  font-size: 0.98rem;
+}
+
+.contract-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.contract-tag {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.contract-arrow {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 1.4rem;
+}
+
+/* Callouts --------------------------------------------------------------- */
+
+.checkpoint,
+.bug,
+.note-box {
+  margin: 1.5rem 0;
+  padding: 0.9rem 1.1rem;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-small) var(--radius-small) 0;
+  background: rgba(126, 231, 135, 0.05);
+  font-size: 0.9rem;
+}
+
+.checkpoint strong,
+.bug strong {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.checkpoint strong {
+  color: var(--accent);
+}
+
+.checkpoint p:last-child,
+.bug p:last-child,
+.note-box p:last-child {
+  margin-bottom: 0;
+}
+
+.bug {
+  border-left-color: var(--danger);
+  background: rgba(255, 123, 114, 0.06);
+}
+
+.bug strong {
+  color: var(--danger);
+}
+
+.note-box {
+  border-left-color: var(--blue);
+  background: rgba(121, 192, 255, 0.06);
+  color: #d3e4f5;
+}
+
+/* Code ------------------------------------------------------------------- */
+
+.snippet {
+  margin: 1.2rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: #080b0f;
+  overflow: hidden;
+}
+
+.snippet-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: baseline;
+  margin: 0;
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.code-meta {
+  color: rgba(148, 162, 178, 0.8);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.snippet-code {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  max-height: none;
+}
+
+.snippet-code:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.code-details {
+  margin: 1.2rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: #080b0f;
+  overflow: hidden;
+}
+
+.code-details summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: baseline;
+  padding: 0.65rem 0.85rem;
+  cursor: pointer;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  list-style: none;
+}
+
+.code-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.code-details summary::after {
+  content: "+";
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+
+.code-details[open] summary::after {
+  content: "−";
+}
+
+.code-details summary span:first-child {
+  color: var(--text);
+}
+
+.code-details .snippet-code {
+  max-height: 72vh;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+}
+
+.math-block {
+  margin: 1rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-left: 2px solid rgba(121, 192, 255, 0.5);
+  border-radius: 0 var(--radius-small) var(--radius-small) 0;
+  background: rgba(121, 192, 255, 0.04);
+  color: #d7e4f2;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+
+.source-line {
+  margin-top: 1.4rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.source-link,
+.source-line a {
+  font-weight: 600;
+}
+
+.steps.compact {
+  margin-top: 0.8rem;
+}
+
+/* Responsive ------------------------------------------------------------- */
+
+@media (max-width: 1000px) {
+  .deep-layout {
+    grid-template-columns: 215px minmax(0, 1fr);
+    gap: 1.6rem;
+  }
+
+  .deep-sidebar nav a {
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 860px) {
+  .deep-layout {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .deep-sidebar {
+    position: static;
+    padding: 0.8rem 0 1.4rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .deep-sidebar nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.15rem 1rem;
+  }
+
+  .toc-note {
+    display: none;
+  }
+
+  .chapter:first-child {
+    padding-top: 2rem;
+  }
+}
+
+@media (max-width: 700px) {
+  .contract-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .contract-arrow {
+    transform: rotate(90deg);
+  }
+
+  .chapter-head {
+    gap: 0.75rem;
+  }
+
+  .chapter-number {
+    width: 2.1rem;
+    height: 2.1rem;
+  }
+
+  .deep-sidebar nav {
+    grid-template-columns: 1fr;
+  }
+
+  .deep-hero {
+    padding-top: 2.4rem;
+  }
+}
+
+@media (max-width: 440px) {
+  .deep-hero,
+  .deep-layout {
+    width: min(1280px, calc(100% - 1.25rem));
+  }
+
+  .snippet-code {
+    font-size: 0.74rem;
+  }
+}
+
+@media print {
+  .masthead,
+  .deep-sidebar,
+  .footer,
+  .skip-link {
+    display: none;
+  }
+
+  .deep-layout {
+    display: block;
+    width: 100%;
+  }
+
+  .deep-article {
+    width: 100%;
+  }
+
+  .chapter {
+    break-inside: avoid-page;
+  }
+
+  .snippet-code,
+  .code-details .snippet-code {
+    max-height: none;
+    overflow: visible;
+    white-space: pre-wrap;
+  }
+
+  .code-details {
+    break-inside: avoid;
+  }
+}
+    </style>
+  </head>
+  <body>
+<a class="skip-link" href="#main">Skip to the tutorial</a><header class="masthead"><a class="brand" href="#top" aria-label="Integer GPT deep dive, back to top"><span class="brand-mark" aria-hidden="true">&#8961;</span><span>only-gates-ai</span></a><nav aria-label="Page links"><a href="../">Field notes</a><a href="https://github.com/clinuxrulz/only-gates-ai/tree/main/src">Source</a><a href="https://github.com/clinuxrulz/only-gates-ai/tree/main/examples/integer-gpt">Example</a></nav><a class="nav-cta" href="../../">Open the demo</a></header><section class="deep-hero" id="top"><p class="eyebrow">Integer GPT · build it from scratch</p><h1>A GPT that does arithmetic<span class="accent"> with integers only.</span></h1><p class="lede">This is the long version. It starts with the float checkpoint and ends with an integer-only forward pass you can rebuild from the listings on this page: int8 weights, Q16 activations, int32 accumulation, integer RMSNorm, a GELU table, DI-Exp softmax, and deterministic sampling.</p><div class="actions"><a class="button" href="#contract">Start reading</a><a class="button ghost" href="#appendix">Jump to the full source</a><a class="button ghost" href="../../">Try the demo</a></div><ul class="chips" aria-label="What this page covers"><li class="chip ready">Integer inference · working</li><li class="chip prototype">Full source · on this page</li><li class="chip roadmap">Runnable C example</li></ul></section><div class="deep-layout"><aside class="deep-sidebar" aria-label="Chapter contents"><p class="toc-title">Contents</p><nav><a href="#contract"><span class="toc-number">00</span><span>Read this first</span></a><a href="#model"><span class="toc-number">01</span><span>The model</span></a><a href="#float"><span class="toc-number">02</span><span>Float reference</span></a><a href="#fixed"><span class="toc-number">03</span><span>Fixed point</span></a><a href="#quantize"><span class="toc-number">04</span><span>Quantize at load</span></a><a href="#matmul"><span class="toc-number">05</span><span>Integer matmul</span></a><a href="#norm"><span class="toc-number">06</span><span>RMSNorm</span></a><a href="#gelu"><span class="toc-number">07</span><span>GELU table</span></a><a href="#attention"><span class="toc-number">08</span><span>Attention</span></a><a href="#forward"><span class="toc-number">09</span><span>Forward pass</span></a><a href="#sampling"><span class="toc-number">10</span><span>Sampling</span></a><a href="#generation"><span class="toc-number">11</span><span>Generation</span></a><a href="#training"><span class="toc-number">12</span><span>Train and export</span></a><a href="#verify"><span class="toc-number">13</span><span>Verify and debug</span></a><a href="#beyond"><span class="toc-number">14</span><span>Performance and gates</span></a><a href="#appendix"><span class="toc-number">15</span><span>Appendix</span></a></nav><div class="toc-note"><p>The page reads top to bottom. Each chapter ends with a test you can run and the exact production function it explains.</p><p><a href="../">Read the shorter field notes &#8594;</a></p></div></aside><main class="deep-article" id="main"><section class="chapter" id="contract"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">00</span><div><p class="kicker">Read this first</p><h2>One float boundary, then integers all the way</h2></div></div><p>Integer GPT is not a new architecture. It is the same decoder-only transformer with a different arithmetic contract. Training still needs floating point and gradients. Inference does not: once the weights stop changing, every operation is a fixed sequence of adds, multiplies, shifts, comparisons, and table lookups. This page teaches that sequence from the checkpoint down to the sampled token.</p><figure class="figure"><svg class="diagram" viewBox="0 0 920 330" role="img" aria-labelledby="dd1t dd1d"><title id="dd1t">The integer inference pipeline</title><desc id="dd1d">A float32 checkpoint is quantized once at load into int8 weights and Q16 scales. The integer forward pass keeps activations in Q16, accumulates dot products in int32, requantizes in int64, produces Q16 logits, and normalizes them to Q15 probabilities before sampling.</desc><rect class="d-panel" x="16" y="30" width="164" height="86" rx="12"></rect><text class="d-title" x="98" y="62" text-anchor="middle">checkpoint</text><text class="d-muted" x="98" y="84" text-anchor="middle">float32 weights</text><text class="d-muted" x="98" y="102" text-anchor="middle">tokenizer.json</text><rect class="d-box d-blue-box" x="208" y="30" width="164" height="86" rx="12"></rect><text class="d-title" x="290" y="62" text-anchor="middle">quantize</text><text class="d-muted" x="290" y="84" text-anchor="middle">float allowed here</text><text class="d-muted" x="290" y="102" text-anchor="middle">once, at load</text><rect class="d-box" x="400" y="30" width="164" height="86" rx="12"></rect><text class="d-title" x="482" y="62" text-anchor="middle">int8 + Q16</text><text class="d-muted" x="482" y="84" text-anchor="middle">weights · scales</text><text class="d-muted" x="482" y="102" text-anchor="middle">gains · GELU LUT</text><rect class="d-box d-accent-box" x="592" y="30" width="150" height="86" rx="12"></rect><text class="d-title" x="667" y="62" text-anchor="middle">forward</text><text class="d-muted" x="667" y="84" text-anchor="middle">int8 · Q16</text><text class="d-muted" x="667" y="102" text-anchor="middle">int32 · int64</text><rect class="d-box" x="770" y="30" width="134" height="86" rx="12"></rect><text class="d-title" x="837" y="62" text-anchor="middle">Q16 logits</text><text class="d-muted" x="837" y="84" text-anchor="middle">one row per</text><text class="d-muted" x="837" y="102" text-anchor="middle">position</text><path class="d-line" d="M182 73 L204 73"></path><path class="d-arrow" d="M198 67 L208 73 L198 79 Z"></path><path class="d-line" d="M374 73 L396 73"></path><path class="d-arrow" d="M390 67 L400 73 L390 79 Z"></path><path class="d-line" d="M566 73 L588 73"></path><path class="d-arrow" d="M582 67 L592 73 L582 79 Z"></path><path class="d-line" d="M744 73 L766 73"></path><path class="d-arrow" d="M760 67 L770 73 L760 79 Z"></path><rect class="d-panel" x="16" y="154" width="888" height="150" rx="14"></rect><text class="d-title" x="40" y="184">integer forward pass</text><rect class="d-box" x="40" y="202" width="132" height="56" rx="8"></rect><text class="d-text" x="106" y="226" text-anchor="middle">embed</text><text class="d-muted" x="106" y="244" text-anchor="middle">int8 × Q16 &#8594; Q16</text><rect class="d-box" x="196" y="202" width="132" height="56" rx="8"></rect><text class="d-text" x="262" y="226" text-anchor="middle">RMSNorm</text><text class="d-muted" x="262" y="244" text-anchor="middle">isqrt + Q16</text><rect class="d-box" x="352" y="202" width="132" height="56" rx="8"></rect><text class="d-text" x="418" y="226" text-anchor="middle">attention</text><text class="d-muted" x="418" y="244" text-anchor="middle">Q12 scores · Q15</text><rect class="d-box" x="508" y="202" width="132" height="56" rx="8"></rect><text class="d-text" x="574" y="226" text-anchor="middle">MLP</text><text class="d-muted" x="574" y="244" text-anchor="middle">GELU LUT · Q16</text><rect class="d-box" x="664" y="202" width="110" height="56" rx="8"></rect><text class="d-text" x="719" y="226" text-anchor="middle">head</text><text class="d-muted" x="719" y="244" text-anchor="middle">D × V</text><rect class="d-box d-blue-box" x="798" y="202" width="82" height="56" rx="8"></rect><text class="d-text" x="839" y="226" text-anchor="middle">softmax</text><text class="d-muted" x="839" y="244" text-anchor="middle">Q15</text><path class="d-line" d="M172 230 L192 230"></path><path class="d-arrow" d="M186 224 L196 230 L186 236 Z"></path><path class="d-line" d="M328 230 L348 230"></path><path class="d-arrow" d="M342 224 L352 230 L342 236 Z"></path><path class="d-line" d="M484 230 L504 230"></path><path class="d-arrow" d="M498 224 L508 230 L498 236 Z"></path><path class="d-line" d="M640 230 L660 230"></path><path class="d-arrow" d="M654 224 L664 230 L654 236 Z"></path><path class="d-line" d="M774 230 L794 230"></path><path class="d-arrow" d="M788 224 L798 230 L788 236 Z"></path><text class="d-muted" x="460" y="320" text-anchor="middle">no float type, float literal, or math.h call after this boundary</text></svg><figcaption>One float boundary at load, then a fixed integer pipeline. The labels on the upper row are the storage formats; the lower row is the per-token forward pass.</figcaption></figure><div class="contract-grid"><div class="contract-card"><span class="contract-tag">before</span><h3>Float checkpoint</h3><p><code>weights.bin</code> is a packed little-endian float32 array. A trainer produced it. It is the only place a fractional value is allowed to enter the inference engine.</p></div><div class="contract-arrow" aria-hidden="true">&#8594;</div><div class="contract-card"><span class="contract-tag">boundary</span><h3>Quantize once</h3><p>At load, each matrix becomes int8 plus a Q16 scale. Gains become Q16 integers. The GELU table is built. After this point the engine never includes <code>math.h</code>.</p></div><div class="contract-arrow" aria-hidden="true">&#8594;</div><div class="contract-card"><span class="contract-tag">after</span><h3>Integer inference</h3><p>Tokens are integers. Activations are Q16 int32. Dot products accumulate in int32 and requantize in int64. Softmax is Q15. The sampler is a 32-bit xorshift.</p></div></div><h3 class="subhead">Three inference lanes, and only one is fully integer</h3><div class="table-wrap"><table><caption>The app ships three ways to compare the same checkpoint</caption><thead><tr><th scope="col">Lane</th><th scope="col">Where</th><th scope="col">What is integer</th><th scope="col">What is still float</th></tr></thead><tbody><tr><th scope="row">Float32</th><td>apps/only-gates-ai/src/lib/tinyGpt.ts</td><td>Nothing</td><td>Everything: matmul, norm, GELU, softmax</td></tr><tr><th scope="row">TS int8</th><td>apps/only-gates-ai/src/lib/tinyGpt.ts</td><td>int8 weights, int8 activations, int32 dot accumulation</td><td>RMSNorm, GELU, softmax, and the final scale multiplication</td></tr><tr><th scope="row">C/WASM integer-only</th><td>src/tiny_gpt_infer.c</td><td>The whole forward pass and sampler</td><td>Nothing after load</td></tr></tbody></table></div><aside class="note-box" aria-label="Note"><strong>Do not confuse the lanes.</strong> The TypeScript “int8” path is a useful visual comparison, but it keeps RMSNorm, GELU, and softmax in float. The reference this page builds is the C/WASM path in<!--!$--> <code>src/tiny_gpt_infer.c</code>. That file contains no float type, float literal, or <code>math.h</code> call.</aside><h3 class="subhead">The files you will read</h3><div class="table-wrap"><table><caption>Production map</caption><thead><tr><th scope="col">File</th><th scope="col">Lines</th><th scope="col">Role</th></tr></thead><tbody><tr><th scope="row">src/int_math.h</th><td>99</td><td>Q16/Q15/Q12 helpers, rounded division and shifts, integer sqrt, DI-Exp table</td></tr><tr><th scope="row">src/tiny_gpt.h</th><td>139</td><td>Storage contract, structs, scratch buffers, public API</td></tr><tr><th scope="row">src/tiny_gpt_quantize.c</th><td>301</td><td>The only float file: checkpoint conversion and allocation</td></tr><tr><th scope="row">src/tiny_gpt_infer.c</th><td>547</td><td>Integer-only forward pass, softmax, sampling</td></tr><tr><th scope="row">tests/test_tiny_gpt.c</th><td>207</td><td>Integer math, create/forward, probability sum, sampler determinism</td></tr><tr><th scope="row">apps/only-gates-ai/src/lib/tinyGptWasm.ts</th><td>261</td><td>Packs the checkpoint and calls the WASM API</td></tr><tr><th scope="row">apps/only-gates-ai/src/lib/tinyGptSolid2.ts</th><td>169</td><td>Solid 2 loader, chat wrapper, generation loop</td></tr><tr><th scope="row">scripts/train_tiny_gpt_solid2_colab.py</th><td>~1260</td><td>PyTorch training and exact export packing</td></tr><tr><th scope="row">examples/integer-gpt/main.c</th><td>new</td><td>Standalone CLI harness around the real engine</td></tr></tbody></table></div><h3 class="subhead">What you need to know</h3><p>You should be comfortable reading C and a little linear algebra. You do not need to know fixed-point arithmetic, quantization, or transformer internals in advance; chapters 1&#8211;3 build those up. The code is C17, but every idea ports to Rust, Go, C#, or TypeScript with 64-bit integers.</p><h3 class="subhead">The ten operations you are going to build</h3><ol class="steps compact"><li>Quantize a float matrix to int8 with one Q16 scale per output column.</li><li>Quantize an embedding table to int8 with one Q16 scale per row.</li><li>Quantize one Q16 activation row dynamically to int8.</li><li>Multiply int8 × int8 into int32, then requantize in int64.</li><li>Compute RMSNorm with an integer sum of squares and integer sqrt.</li><li>Evaluate GELU with a Q16 lookup table and linear interpolation.</li><li>Compute causal attention with Q12 scores and Q15 probabilities.</li><li>Approximate <code>exp(-x)</code> with a 33-entry table and a shift.</li><li>Normalize logits to Q15, apply temperature, and keep top-k.</li><li>Sample deterministically with xorshift32 and a cumulative sum.</li></ol><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Before moving on, open <code>src/tiny_gpt_infer.c</code> and confirm the rule for yourself: search for <code>float</code>, <code>double</code>, and <code>math.h</code>. You will find the word in comments, but no type or library call. The rule is the whole design.</p></aside><p class="source-line">Source: <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/src/tiny_gpt_infer.c">src/tiny_gpt_infer.c</a></p></section><section class="chapter" id="model"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">01</span><div><p class="kicker">The shape of the thing</p><h2>A decoder-only transformer small enough to hold in your head</h2></div></div><p>Both models on this page are the same architecture at two sizes. Tokens become learned embeddings, pass through pre-norm blocks, and are projected back onto the vocabulary with the same embedding matrix. There are no biases, no LayerNorm, no learned position table beyond the small embedding, and no operator that lacks an integer implementation.</p><div class="table-wrap"><table><caption>The two real configurations</caption><thead><tr><th scope="col">Model</th><th scope="col">Role</th><th scope="col">V</th><th scope="col">T</th><th scope="col">D</th><th scope="col">L</th><th scope="col">H</th><th scope="col">M</th><th scope="col">Params</th></tr></thead><tbody><tr><th scope="row">Alice</th><td>Built into the app, word-level</td><td>512</td><td>16</td><td>48</td><td>2</td><td>2</td><td>96</td><td>62,448</td></tr><tr><th scope="row">Solid 2</th><td>Community model, byte-level BPE</td><td>4096</td><td>256</td><td>48</td><td>3</td><td>4</td><td>96</td><td>264,528</td></tr></tbody></table></div><p>The parameter count is <code>V·D + T·D + D + L·(2D + 4D² + 2D·M)</code>. The first three terms are the token table, position table, and final norm gain. Each block has two norm gains of size <code>D</code>, a <code>D×3D</code> QKV matrix, a <code>D×D</code> output matrix, a <code>D×M</code> up-projection, and an <code>M×D</code> down-projection. For Solid 2 that is 264,528 values, or about 1.06 MB as float32.</p><figure class="figure"><svg class="diagram" viewBox="0 0 920 360" role="img" aria-labelledby="dd2t dd2d"><title id="dd2t">Tensor shapes through the tiny GPT</title><desc id="dd2d">Token ids of length T become a T by D embedding. Each pre-norm block holds attention and an MLP; the final norm feeds a tied D by V head, producing T by V logits.</desc><rect class="d-box d-blue-box" x="20" y="142" width="112" height="76" rx="10"></rect><text class="d-text" x="76" y="172" text-anchor="middle">token ids</text><text class="d-muted" x="76" y="194" text-anchor="middle">T</text><rect class="d-box" x="158" y="142" width="146" height="76" rx="10"></rect><text class="d-text" x="231" y="172" text-anchor="middle">embedding</text><text class="d-muted" x="231" y="194" text-anchor="middle">T × D</text><rect class="d-panel" x="330" y="44" width="342" height="272" rx="14"></rect><text class="d-title" x="501" y="74" text-anchor="middle">transformer block × L</text><rect class="d-box" x="352" y="94" width="298" height="46" rx="8"></rect><text class="d-text" x="501" y="114" text-anchor="middle">RMSNorm &#8594; Wqkv &#8594; attention</text><text class="d-muted" x="501" y="132" text-anchor="middle">T × 3D &#8594; T × D</text><rect class="d-box" x="352" y="152" width="298" height="46" rx="8"></rect><text class="d-text" x="501" y="172" text-anchor="middle">+ residual &#8594; RMSNorm &#8594; MLP</text><text class="d-muted" x="501" y="190" text-anchor="middle">T × M &#8594; T × D</text><rect class="d-box" x="352" y="210" width="298" height="46" rx="8"></rect><text class="d-text" x="501" y="230" text-anchor="middle">+ residual</text><text class="d-muted" x="501" y="248" text-anchor="middle">T × D stays Q16</text><text class="d-muted" x="501" y="288" text-anchor="middle">pre-norm · no biases · learned positions</text><rect class="d-box" x="698" y="142" width="96" height="76" rx="10"></rect><text class="d-text" x="746" y="172" text-anchor="middle">final</text><text class="d-text" x="746" y="192" text-anchor="middle">RMSNorm</text><rect class="d-box d-accent-box" x="820" y="142" width="80" height="76" rx="10"></rect><text class="d-text" x="860" y="172" text-anchor="middle">logits</text><text class="d-muted" x="860" y="194" text-anchor="middle">T × V</text><path class="d-line" d="M132 180 L154 180"></path><path class="d-arrow" d="M148 174 L158 180 L148 186 Z"></path><path class="d-line" d="M304 180 L326 180"></path><path class="d-arrow" d="M320 174 L330 180 L320 186 Z"></path><path class="d-line" d="M672 180 L694 180"></path><path class="d-arrow" d="M688 174 L698 180 L688 186 Z"></path><path class="d-line" d="M794 180 L816 180"></path><path class="d-arrow" d="M810 174 L820 180 L810 186 Z"></path><text class="d-muted" x="460" y="342" text-anchor="middle">Alice: V=512, T=16, D=48, L=2, H=2, M=96. Solid 2: V=4096, T=256, D=48, L=3, H=4, M=96.</text></svg><figcaption>The whole model is one embedding sum, a stack of identical blocks, one final norm, and a tied output head. The horizontal axis is the token position; the vertical axis is the model dimension.</figcaption></figure><h3 class="subhead">The tensor inventory</h3><div class="table-wrap"><table><caption>Storage layout and scale granularity</caption><thead><tr><th scope="col">Tensor</th><th scope="col">Shape</th><th scope="col">Storage</th><th scope="col">Scale</th><th scope="col">Why</th></tr></thead><tbody><tr><th scope="row">token_emb</th><td>V × D</td><td>int8</td><td>one Q16 per row (token)</td><td>Embedding lookup table; also the tied output head.</td></tr><tr><th scope="row">pos_emb</th><td>T × D</td><td>int8</td><td>one Q16 per row (position)</td><td>Learned absolute position table.</td></tr><tr><th scope="row">g1, g2, g_final</th><td>D</td><td>int32 Q16</td><td>none</td><td>RMSNorm gains.</td></tr><tr><th scope="row">wqkv</th><td>D × 3D</td><td>int8</td><td>one Q16 per output column</td><td>Q, K, V projections fused; [in, out] layout.</td></tr><tr><th scope="row">wo</th><td>D × D</td><td>int8</td><td>one Q16 per output column</td><td>Attention output projection.</td></tr><tr><th scope="row">w1</th><td>D × M</td><td>int8</td><td>one Q16 per output column</td><td>MLP up-projection.</td></tr><tr><th scope="row">w2</th><td>M × D</td><td>int8</td><td>one Q16 per output column</td><td>MLP down-projection.</td></tr><tr><th scope="row">head</th><td>D × V</td><td>int8</td><td>one Q16 per token</td><td>Transposed token_emb, reusing its row scales.</td></tr></tbody></table></div><p>Two details matter more than they look. First, the linear weights are stored as <code>[in, out]</code>, not PyTorch&#8217;s <code>[out, in]</code>. The C inner loop reads contiguous input rows and writes contiguous output columns, so the exporter transposes every linear weight. Second, the output head is not a separate learned matrix: it is the token embedding transposed to <code>[D, V]</code>, and it reuses the embedding&#8217;s row scales as its column scales. This is the &#8220;tied embeddings&#8221; trick.</p><figure class="figure"><svg class="diagram" viewBox="0 0 920 330" role="img" aria-labelledby="dd6t dd6d"><title id="dd6t">Checkpoint packing order</title><desc id="dd6d">PyTorch linear weights are output by input. The exporter transposes them so the C engine reads input by output. The packed buffer is token embeddings, position embeddings, the final gain, then per-layer gains and transposed matrices.</desc><rect class="d-panel" x="18" y="24" width="410" height="282" rx="14"></rect><text class="d-title" x="42" y="54">PyTorch</text><text class="d-muted" x="42" y="76">nn.Linear.weight · [out, in]</text><g transform="translate(46 100)"><rect class="d-box" x="0" y="0" width="330" height="26" rx="3"></rect><text class="d-muted" x="10" y="18">row = output neuron</text><text class="d-muted" x="190" y="18">columns = inputs</text></g><text class="d-muted" x="46" y="160">flat memory: out0 in0, out0 in1, &#8230;</text><text class="d-muted" x="46" y="184">a C dot product wants contiguous inputs</text><rect class="d-panel" x="492" y="24" width="410" height="282" rx="14"></rect><text class="d-title" x="516" y="54">C engine</text><text class="d-muted" x="516" y="76">weights · [in, out]</text><g transform="translate(520 100)"><rect class="d-box" x="0" y="0" width="330" height="26" rx="3"></rect><text class="d-muted" x="10" y="18">row = input</text><text class="d-muted" x="190" y="18">columns = outputs</text></g><text class="d-muted" x="520" y="160">flat memory: in0 out0, in0 out1, &#8230;</text><text class="d-muted" x="520" y="184">pack_weights uses .T.flatten()</text><path class="d-line d-line-wide" d="M432 165 L484 165"></path><path class="d-arrow" d="M478 159 L488 165 L478 171 Z"></path><text class="d-muted" x="460" y="152" text-anchor="middle">transpose</text><text class="d-title" x="42" y="236">packed order</text><text class="d-muted" x="42" y="260">token_emb · pos_emb · g_final</text><text class="d-muted" x="42" y="282">then per layer: g1 · wqkv · wo · g2 · w1 · w2</text></svg><figcaption>The checkpoint is a flat float32 buffer. The order is the contract between the trainer and the C loader.</figcaption></figure><h3 class="subhead">What one token costs</h3><p>For each layer and each position, the engine does a <code>D×3D</code> matmul, a <code>D×D</code> matmul, a <code>D×M</code> matmul, and an <code>M×D</code> matmul, plus attention. With <code>D=48</code>, <code>M=96</code>, and <code>T=256</code>, the matrix work dominates. Attention is <code>T²·D/H</code> per head, but the small model keeps the whole context in cache and the matmuls still dominate.</p><aside class="note-box" aria-label="Note">The current engine recomputes the entire context for every generated token. That is deliberately simple. Chapter 14 sketches the KV-cache change and explains why it is not in the shipping path yet.</aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Compute the parameter count for Alice by hand: <code>512·48 + 16·48 + 48 + 2·(2·48 + 4·48² + 2·48·96)</code>. You should get 62,448. Then confirm the packed buffer length is exactly that many float32 values.</p></aside></section><section class="chapter" id="float"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">02</span><div><p class="kicker">Build the reference first</p><h2>Train in float, then export a buffer the integer engine can read</h2></div></div><p>You cannot verify an integer engine without a float reference. The trainer is also where the model shape is defined, so the two sides must agree on every detail: pre-norm order, no biases, GELU tanh, tied embeddings, learned positions, and the exact packing order.</p><p>This is the real model definition from <code>scripts/train_tiny_gpt_solid2_colab.py</code>, abbreviated only in the data-loading code. It is the same architecture the C engine implements.</p><details class="code-details"><summary><span>scripts/train_tiny_gpt_solid2_colab.py</span><span class="code-meta">python · 74 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="scripts/train_tiny_gpt_solid2_colab.py, 74 lines"><code>class RMSNorm(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.gain = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + 1e-5) * self.gain
+
+class Block(nn.Module):
+    def __init__(self, dim: int, heads: int, mlp: int, dropout: float):
+        super().__init__()
+        if dim % heads:
+            raise ValueError("dim % heads != 0")
+        self.heads, self.head_dim = heads, dim // heads
+        self.g1, self.g2 = RMSNorm(dim), RMSNorm(dim)
+        self.wqkv = nn.Linear(dim, dim * 3, bias=False)
+        self.wo = nn.Linear(dim, dim, bias=False)
+        self.w1 = nn.Linear(dim, mlp, bias=False)
+        self.w2 = nn.Linear(mlp, dim, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, D = x.shape
+        h = self.g1(x)
+        qkv = self.wqkv(h).view(B, T, 3, self.heads, self.head_dim)
+        q, k, v = qkv.unbind(2)
+        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+        scores = (q @ k.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        mask = torch.triu(torch.ones(T, T, dtype=torch.bool), 1)
+        scores = scores.masked_fill(mask, float("-inf"))
+        x = x + self.dropout(
+            self.wo((torch.softmax(scores, -1) @ v).transpose(1, 2).reshape(B, T, D))
+        )
+        h = self.g2(x)
+        x = x + self.dropout(self.w2(F.gelu(self.w1(h), approximate="tanh")))
+        return x
+
+class TinyGPT(nn.Module):
+    def __init__(self, vocab, ctx, dim, layers, heads, mlp, dropout):
+        super().__init__()
+        self.vocab_size, self.context = vocab, ctx
+        self.dim, self.layers_n, self.heads, self.mlp_n = dim, layers, heads, mlp
+        self.token_emb = nn.Embedding(vocab, dim)
+        self.pos_emb = nn.Embedding(ctx, dim)
+        self.blocks = nn.ModuleList(
+            [Block(dim, heads, mlp, dropout) for _ in range(layers)]
+        )
+        self.g_final = RMSNorm(dim)
+        self.apply(self._init)
+        for b in self.blocks:
+            nn.init.normal_(b.wo.weight, std=0.02 / math.sqrt(2 * max(1, layers)))
+            nn.init.normal_(b.w2.weight, std=0.02 / math.sqrt(2 * max(1, layers)))
+
+    @staticmethod
+    def _init(m):
+        if isinstance(m, (nn.Linear, nn.Embedding)):
+            nn.init.normal_(m.weight, 0.0, 0.02)
+
+    def forward(self, tokens, targets=None):
+        B, T = tokens.shape
+        if T > self.context:
+            raise ValueError("seq > context")
+        x = self.token_emb(tokens) + self.pos_emb(torch.arange(T, device=tokens.device))
+        for b in self.blocks:
+            x = b(x)
+        logits = self.g_final(x) @ self.token_emb.weight.T
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.reshape(-1, self.vocab_size),
+                targets.reshape(-1),
+                ignore_index=-100,
+            )
+        return logits, loss</code></pre></details><h3 class="subhead">Why the forward pass is shaped this way</h3><ul><li><strong>Pre-norm.</strong> <code>h = RMSNorm(x)</code>, then attention or MLP, then <code>x = x + sublayer(h)</code>. The integer engine can reuse the same residual buffer without a separate normalization pass at the end of the block.</li><li><strong>No biases.</strong> Every linear layer is a matrix multiply. That removes an add and a second scale from every output.</li><li><strong>GELU tanh.</strong> The tanh approximation is smooth and bounded, which makes it a good lookup table. The exact erf form would need a wider table for the same error.</li><li><strong>Tied embeddings.</strong> The final projection is <code>g_final(x) @ token_emb.weight.T</code>. The C loader can build the transposed head once and reuse the embedding scales.</li><li><strong>Learned absolute positions.</strong> A <code>T×D</code> table is added to the token embeddings. No rotary or ALiBi path is needed, which keeps the integer engine smaller.</li></ul><h3 class="subhead">The export contract</h3><p>PyTorch stores <code>nn.Linear.weight</code> as <code>[out_features, in_features]</code>. The C engine wants <code>[in_features, out_features]</code> so the inner loop can walk a contiguous input row. The exporter transposes each matrix and then flattens. The resulting order is:</p><ol class="steps compact"><li><code>token_emb</code> · <code>V×D</code></li><li><code>pos_emb</code> · <code>T×D</code></li><li><code>g_final</code> · <code>D</code></li><li>for each layer: <code>g1</code>, <code>wqkv</code>, <code>wo</code>, <code>g2</code>, <code>w1</code>, <code>w2</code></li></ol><details class="code-details"><summary><span>Packing and verification</span><span class="code-meta">python · 42 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="Packing and verification, 42 lines"><code>def parameter_count(vocab, ctx, dim, layers, mlp):
+    return vocab*dim + ctx*dim + dim + layers*(2*dim + 4*dim*dim + 2*dim*mlp)
+
+def pack_weights(model: TinyGPT) -> torch.Tensor:
+    parts = [
+        model.token_emb.weight.detach().cpu().flatten(),
+        model.pos_emb.weight.detach().cpu().flatten(),
+        model.g_final.gain.detach().cpu().flatten(),
+    ]
+    for b in model.blocks:
+        parts += [
+            b.g1.gain.detach().cpu().flatten(),
+            b.wqkv.weight.detach().cpu().T.flatten(),
+            b.wo.weight.detach().cpu().T.flatten(),
+            b.g2.gain.detach().cpu().flatten(),
+            b.w1.weight.detach().cpu().T.flatten(),
+            b.w2.weight.detach().cpu().T.flatten(),
+        ]
+    return torch.cat(parts).to(torch.float32)
+
+def verify_packed(model, packed, cfg):
+    V, C, D, L, M = (cfg["vocabSize"], cfg["context"], cfg["dim"],
+                     cfg["layers"], cfg["mlp"])
+    if packed.numel() != parameter_count(V, C, D, L, M):
+        raise ValueError("packed length does not match config")
+    off = 0
+    def take(n):
+        nonlocal off
+        value = packed[off:off+n]
+        off += n
+        return value
+    assert torch.equal(take(V*D).view(V, D), model.token_emb.weight.cpu())
+    assert torch.equal(take(C*D).view(C, D), model.pos_emb.weight.cpu())
+    assert torch.equal(take(D), model.g_final.gain.cpu())
+    for b in model.blocks:
+        assert torch.equal(take(D), b.g1.gain.cpu())
+        assert torch.equal(take(D*D*3).view(D, D*3), b.wqkv.weight.cpu().T)
+        assert torch.equal(take(D*D).view(D, D), b.wo.weight.cpu().T)
+        assert torch.equal(take(D), b.g2.gain.cpu())
+        assert torch.equal(take(D*M).view(D, M), b.w1.weight.cpu().T)
+        assert torch.equal(take(M*D).view(M, D), b.w2.weight.cpu().T)
+    assert off == packed.numel()</code></pre></details><aside class="bug" aria-label="Common bug"><strong>Common bug</strong><p>The most common checkpoint bug is a missing transpose. The shapes can still line up, the C code runs, and the output is nonsense. Always assert <code>packed[k*out_cols + j] == W[j][k]</code> on a small matrix before training a real model.</p></aside><h3 class="subhead">What training does, in one paragraph</h3><p>The trainer builds a token stream, samples fixed-length windows, runs the float forward pass, computes cross-entropy against the next token, and backpropagates through every matrix and gain. AdamW updates the weights. The Solid 2 recipe has two stages: a language-model stage over the docs and stories, then a Q&amp;A fine-tune over chat-formatted examples. The exported artifact is only the final weights; optimizer state stays behind.</p><aside class="note-box" aria-label="Note"><strong>Why not train in integers?</strong> Gradients need dynamic range and fractional updates. The integer engine is an inference format, not a training format. The boundary is the checkpoint.</aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Train a one-layer toy model on a tiny corpus, export <code>weights.bin</code> and <code>checkpoint.json</code>, and load it with the example CLI. Before touching the integer path, confirm the float model&#8217;s logits match the Python forward pass for the same token window.</p></aside><p class="source-line">Source: <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/scripts/train_tiny_gpt_solid2_colab.py">scripts/train_tiny_gpt_solid2_colab.py</a> · <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/scripts/train-tiny-gpt.mjs">scripts/train-tiny-gpt.mjs</a> (dependency-free reference trainer)</p></section><section class="chapter" id="fixed"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">03</span><div><p class="kicker">Fixed-point foundations</p><h2>Q formats, rounding, and the overflow budget</h2></div></div><p>A fixed-point number is an integer plus a contract about where the binary point sits. Q16 means &#8220;divide by 65536 to get the real value.&#8221; Q15 means &#8220;divide by 32768.&#8221; Q12 means &#8220;divide by 4096.&#8221; There is no exponent, no NaN, and no denormal. The contract is the whole type.</p><div class="table-wrap"><table><caption>The formats used by the integer engine</caption><thead><tr><th scope="col">Format</th><th scope="col">Representable real range</th><th scope="col">Where</th><th scope="col">Why</th></tr></thead><tbody><tr><th scope="row">int8</th><td>-127 … 127</td><td>Weights, activations, embeddings</td><td>One byte per value. int8 × int8 fits easily in int32.</td></tr><tr><th scope="row">Q16</th><td>-32768 … 32767.999…</td><td>Activation stream, norm gains, scales, logits</td><td>16 fractional bits preserve small residuals.</td></tr><tr><th scope="row">int32</th><td>-2^31 … 2^31-1</td><td>Dot-product accumulators, buffers</td><td>A 96-term int8 dot product cannot overflow it.</td></tr><tr><th scope="row">int64</th><td>-2^63 … 2^63-1</td><td>Requantization, attention products</td><td>Products of scaled values need more headroom.</td></tr><tr><th scope="row">Q15</th><td>-1 … 0.99997</td><td>Softmax and attention probabilities</td><td>32768 = 1.0; probabilities stay non-negative.</td></tr><tr><th scope="row">Q12</th><td>-2048 … 2047.999…</td><td>DI-Exp input</td><td>A 20-nat clipped range with 1/4096 resolution.</td></tr></tbody></table></div><p>The activation stream is Q16 because residuals get small and sixteen fractional bits keep them useful. Probabilities are Q15 because they are non-negative and one is exactly 32768. The exponential input is Q12 because a 20-nat clipped range at 1/4096 resolution is enough for softmax. Weights are int8 because a byte-sized code with a per-column scale is a good trade between size and error.</p><h3 class="subhead">The four helpers you will use everywhere</h3><p>The complete header is short. Read it once, then keep it open while reading the forward pass.</p><details class="code-details"><summary><span>src/int_math.h</span><span class="code-meta">c · 99 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="src/int_math.h, 99 lines"><code>#ifndef ONLY_GATES_AI_INT_MATH_H
+#define ONLY_GATES_AI_INT_MATH_H
+
+#include &lt;stdint.h>
+
+/*
+ * Integer-only fixed-point helpers shared by the attention test bed and the
+ * tiny GPT inference path.
+ *
+ * The inference code keeps the activation stream in Q16 (value * 65536) and
+ * probabilities in Q15 (value * 32768). Products that would overflow 32 bits
+ * are accumulated in int64. No floating point is used here.
+ */
+
+#define INT_Q16_ONE 65536
+#define INT_Q15_ONE 32768
+#define INT_Q12_ONE 4096
+
+static inline int32_t int_clamp_i32(int32_t value, int32_t low, int32_t high) {
+  if (value &lt; low) {
+    return low;
+  }
+  if (value > high) {
+    return high;
+  }
+  return value;
+}
+
+/* Rounds a / b to nearest, with b > 0. */
+static inline int64_t int_div_round(int64_t a, int64_t b) {
+  if (b &lt;= 0) {
+    return 0;
+  }
+  if (a >= 0) {
+    return (a + b / 2) / b;
+  }
+  return -((-a + b / 2) / b);
+}
+
+/* Rounds a / 2^shift to nearest. */
+static inline int64_t int_shift_round(int64_t a, int shift) {
+  if (shift &lt;= 0) {
+    return a;
+  }
+  return (a + ((int64_t)1 &lt;&lt; (shift - 1))) >> shift;
+}
+
+/* Floor of sqrt(n), integer-only. */
+static inline uint64_t int_isqrt_u64(uint64_t n) {
+  uint64_t result = 0;
+  uint64_t bit = (uint64_t)1 &lt;&lt; 62;
+  while (bit > n) {
+    bit >>= 2;
+  }
+  while (bit != 0) {
+    if (n >= result + bit) {
+      n -= result + bit;
+      result = (result >> 1) + bit;
+    } else {
+      result >>= 1;
+    }
+    bit >>= 2;
+  }
+  return result;
+}
+
+/* round(32768 * 2^(-k/32)), k = 0..32. */
+static const int32_t INT_TWO_POW_NEG_Q15[33] = {
+    32768, 32066, 31379, 30706, 30048, 29405, 28774, 28158, 27554, 26964,
+    26386, 25821, 25268, 24726, 24196, 23678, 23170, 22674, 22188, 21713,
+    21247, 20792, 20347, 19911, 19484, 19066, 18658, 18258, 17867, 17484,
+    17109, 16743, 16384,
+};
+
+/*
+ * exp(-x) in Q15 for x >= 0 in Q12 (1/4096 nat resolution).
+ *
+ * The exponent is clamped to 20 nats by the callers (the paper's DI-Exp
+ * clipping range). Values beyond the Q15 resolution return 0.
+ */
+static inline int32_t int_exp_neg_q15_q12(int32_t x_q12) {
+  if (x_q12 &lt;= 0) {
+    return INT_Q15_ONE;
+  }
+  const int32_t y_q12 = (int32_t)(((int64_t)x_q12 * 5909) >> 12);
+  const int32_t integer_part = y_q12 >> 12;
+  if (integer_part >= 15) {
+    return 0;
+  }
+  const int32_t fraction = y_q12 &amp; 4095;
+  const int32_t index = fraction >> 7;
+  const int32_t remainder = fraction &amp; 127;
+  const int32_t a = INT_TWO_POW_NEG_Q15[index];
+  const int32_t b = INT_TWO_POW_NEG_Q15[index + 1];
+  const int32_t value = a - (((a - b) * remainder) >> 7);
+  return value >> integer_part;
+}
+
+#endif
+</code></pre></details><h3 class="subhead">Rounding is not an implementation detail</h3><p>Two different rounding helpers are used, and they do not have the same tie behavior:</p><ul><li><code>int_div_round(a, b)</code> computes <code>round(a / b)</code> with ties away from zero. It works for negative numerators because it negates, adds half, divides, and negates back.</li><li><code>int_shift_round(a, shift)</code> adds half of the divisor and then performs an arithmetic right shift. For negative exact halves, the result rounds toward +&#8734;, not away from zero. That is acceptable for model arithmetic, but a port must copy the behavior if it wants identical bytes.</li></ul><figure class="snippet"><figcaption class="snippet-head"><span>The rounding edge case</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="The rounding edge case, 7 lines"><code>/* int_div_round: ties away from zero */
+int_div_round( 7, 2) ==  4
+int_div_round(-7, 2) == -4
+
+/* int_shift_round: add half, then arithmetic shift */
+int_shift_round( 6, 2) == 2     /*  6/4 = 1.5 -> 2 */
+int_shift_round(-6, 2) == -1    /* -6/4 = -1.5 -> -1, not -2 */</code></pre></figure><h3 class="subhead">Integer square root</h3><p>RMSNorm needs <code>sqrt(mean of squares)</code>. The engine uses the classic bit-by-bit integer square root: start with the highest power of four below the input, then subtract and shift. It returns the floor of the square root, uses only integer arithmetic, and works for the full 64-bit range.</p><figure class="snippet"><figcaption class="snippet-head"><span>The square-root loop, isolated</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="The square-root loop, isolated, 15 lines"><code>uint64_t int_isqrt_u64(uint64_t n) {
+  uint64_t result = 0;
+  uint64_t bit = (uint64_t)1 &lt;&lt; 62;
+  while (bit > n) bit >>= 2;
+  while (bit != 0) {
+    if (n >= result + bit) {
+      n -= result + bit;
+      result = (result >> 1) + bit;
+    } else {
+      result >>= 1;
+    }
+    bit >>= 2;
+  }
+  return result;
+}</code></pre></figure><p>Why Q32 in RMSNorm? An activation is Q16. Squaring it gives Q32. Summing and dividing by the width stays Q32. The square root of a Q32 value is Q16, which is exactly the scale of the activation stream. The epsilon is also stored in Q32: <code>round(1e-5 · 2³²) = 42950</code>. That is why the code adds <code>42950</code> to the mean before taking the root.</p><h3 class="subhead">Overflow budget</h3><div class="table-wrap"><table><caption>Worst-case values for the two shipping configs</caption><thead><tr><th scope="col">Expression</th><th scope="col">Worst case</th><th scope="col">Limit</th><th scope="col">Headroom</th></tr></thead><tbody><tr><th scope="row">int8 × int8 product</th><td>127 × 127 = 16,129</td><td>int32</td><td>enormous</td></tr><tr><th scope="row">D=48 dot product</th><td>48 × 16,129 = 774,192</td><td>2,147,483,647</td><td>~2,700×</td></tr><tr><th scope="row">M=96 dot product</th><td>96 × 16,129 = 1,548,384</td><td>2,147,483,647</td><td>~1,300×</td></tr><tr><th scope="row">Q15 softmax sum, V=4096</th><td>4096 × 32,768 = 134,217,728</td><td>int32</td><td>16×</td></tr><tr><th scope="row">Q15 attention sum, T=256</th><td>256 × 32,768 = 8,388,608</td><td>int32</td><td>256×</td></tr><tr><th scope="row">Q16² sum of squares at |x|=1.0, D=48</th><td>48 × 65536² ≈ 2.06e11</td><td>int64</td><td>~4.5e7×</td></tr></tbody></table></div><aside class="note-box" aria-label="Note">The int32 accumulator is safe for the current model. If you double the width or switch to int16 weights, redo this table before assuming it is still true. Overflow is silent in C, so the proof is not optional.</aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Write four assertions: <code>isqrt(144) == 12</code>, <code>isqrt(145) == 12</code>, <code>div_round(-7, 2) == -4</code>, and <code>shift_round(-6, 2) == -1</code>. Then test <code>exp_neg_q15_q12(4096)</code> against<code>0.3679 · 32768</code>.</p></aside></section><section class="chapter" id="quantize"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">04</span><div><p class="kicker">The one float file</p><h2>Turn a checkpoint into int8 codes and Q16 scales</h2></div></div><p>Quantization is not &#8220;round everything to a whole number.&#8221; Each value is stored as a signed int8 code and interpreted through a scale: <code>real &#8776; code · scale / 65536</code>. The scale is chosen from the largest magnitude in a group, so the code uses the full <code>-127 &#8230; 127</code> range without overflowing.</p><figure class="figure"><svg class="diagram" viewBox="0 0 920 340" role="img" aria-labelledby="dd3t dd3d"><title id="dd3t">Per-column and per-row quantization</title><desc id="dd3d">Linear weights use one scale per output column. Embedding tables use one scale per row. A value is stored as an int8 code multiplied by its Q16 scale.</desc><rect class="d-panel" x="18" y="24" width="430" height="292" rx="14"></rect><text class="d-title" x="42" y="54">linear weights · per column</text><text class="d-muted" x="42" y="76">W is [in, out]; every output has its own scale</text><g transform="translate(46 100)"><rect class="d-box" x="0" y="0" width="330" height="20" rx="3"></rect><rect class="d-box" x="0" y="28" width="330" height="20" rx="3"></rect><rect class="d-box" x="0" y="56" width="330" height="20" rx="3"></rect><text class="d-muted" x="10" y="14">in = 0</text><text class="d-muted" x="10" y="42">in = 1</text><text class="d-muted" x="10" y="70">in = 2</text><path class="d-line" d="M70 0 L70 76"></path><path class="d-line" d="M140 0 L140 76"></path><path class="d-line" d="M210 0 L210 76"></path><path class="d-line" d="M280 0 L280 76"></path></g><text class="d-muted" x="46" y="206">scale[j] = max_abs(column j) / 127</text><text class="d-muted" x="46" y="226">q[k][j] = round(W[k][j] / scale[j])</text><text class="d-muted" x="46" y="250">one outlier cannot ruin the whole matrix</text><rect class="d-panel" x="472" y="24" width="430" height="292" rx="14"></rect><text class="d-title" x="496" y="54">embeddings · per row</text><text class="d-muted" x="496" y="76">token_emb is [vocab, dim]; each token has its own scale</text><g transform="translate(500 100)"><rect class="d-box" x="0" y="0" width="330" height="24" rx="3"></rect><rect class="d-box" x="0" y="32" width="330" height="24" rx="3"></rect><rect class="d-box" x="0" y="64" width="330" height="24" rx="3"></rect><text class="d-muted" x="10" y="16">token 0 · scale 0</text><text class="d-muted" x="10" y="48">token 1 · scale 1</text><text class="d-muted" x="10" y="80">token 2 · scale 2</text></g><text class="d-muted" x="500" y="206">scale[row] = max_abs(row) / 127</text><text class="d-muted" x="500" y="226">q[row][d] = round(E[row][d] / scale[row])</text><text class="d-muted" x="500" y="250">the tied head reuses these exact row scales</text><text class="d-muted" x="460" y="334" text-anchor="middle">dequantize: real &#8776; int8_code × Q16_scale / 65536</text></svg><figcaption>Linear weights get one scale per output column. Embedding tables get one scale per row. The group is chosen so that an outlier affects one column or row, not the whole matrix.</figcaption></figure><h3 class="subhead">The scalar helpers</h3><figure class="snippet"><figcaption class="snippet-head"><span>q16_from_float</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="q16_from_float, 10 lines"><code>static int32_t q16_from_float(float value) {
+  const float scaled = roundf(value * 65536.0f);
+  if (scaled > 2147483647.0f) {
+    return 2147483647;
+  }
+  if (scaled &lt; -2147483648.0f) {
+    return (-2147483647 - 1);
+  }
+  return (int32_t)scaled;
+}
+</code></pre></figure><figure class="snippet"><figcaption class="snippet-head"><span>scale_q16_from_float</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="scale_q16_from_float, 13 lines"><code>static int32_t scale_q16_from_float(float scale) {
+  if (!(scale > 0.0f)) {
+    return 0;
+  }
+  const float scaled = roundf(scale * 65536.0f);
+  if (scaled &lt; 1.0f) {
+    return 1;
+  }
+  if (scaled > 2147483647.0f) {
+    return 2147483647;
+  }
+  return (int32_t)scaled;
+}
+</code></pre></figure><figure class="snippet"><figcaption class="snippet-head"><span>quantize_value</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="quantize_value, 9 lines"><code>static int8_t quantize_value(float value, float inverse) {
+  float scaled = roundf(value * inverse);
+  if (scaled > 127.0f) {
+    scaled = 127.0f;
+  } else if (scaled &lt; -127.0f) {
+    scaled = -127.0f;
+  }
+  return (int8_t)scaled;
+}
+</code></pre></figure><p><code>q16_from_float</code> clamps to the int32 range after multiplying by 65536. <code>scale_q16_from_float</code> rejects non-positive scales and never returns zero, because a zero scale would make dequantization meaningless. <code>quantize_value</code> rounds and clamps to <code>-127 &#8230; 127</code>; the code deliberately does not use <code>-128</code>, which keeps symmetric multiplication and negation simple.</p><h3 class="subhead">Per-column weights</h3><figure class="snippet"><figcaption class="snippet-head"><span>quantize_columns</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="quantize_columns, 25 lines"><code>static void quantize_columns(const float *src, int rows, int cols, int8_t *dst,
+                             int32_t *scales) {
+  for (int col = 0; col &lt; cols; ++col) {
+    float max_abs = 0.0f;
+    for (int row = 0; row &lt; rows; ++row) {
+      const float magnitude = fabsf(src[(size_t)row * cols + col]);
+      if (magnitude > max_abs) {
+        max_abs = magnitude;
+      }
+    }
+    if (max_abs &lt;= 0.0f) {
+      scales[col] = 0;
+      for (int row = 0; row &lt; rows; ++row) {
+        dst[(size_t)row * cols + col] = 0;
+      }
+      continue;
+    }
+    scales[col] = scale_q16_from_float(max_abs / 127.0f);
+    const float inverse = 127.0f / max_abs;
+    for (int row = 0; row &lt; rows; ++row) {
+      const size_t index = (size_t)row * cols + col;
+      dst[index] = quantize_value(src[index], inverse);
+    }
+  }
+}
+</code></pre></figure><p>A linear layer computes one output per column. Giving every column its own scale means a single large weight in column 7 does not force every other column to use a tiny scale. The transpose in the exporter ensures that &#8220;column&#8221; in the C matrix is &#8220;output feature&#8221; in PyTorch.</p><h3 class="subhead">Per-row embeddings</h3><figure class="snippet"><figcaption class="snippet-head"><span>quantize_rows</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="quantize_rows, 24 lines"><code>static void quantize_rows(const float *src, int rows, int cols, int8_t *dst,
+                          int32_t *scales) {
+  for (int row = 0; row &lt; rows; ++row) {
+    const float *source = src + (size_t)row * cols;
+    int8_t *target = dst + (size_t)row * cols;
+    float max_abs = 0.0f;
+    for (int col = 0; col &lt; cols; ++col) {
+      const float magnitude = fabsf(source[col]);
+      if (magnitude > max_abs) {
+        max_abs = magnitude;
+      }
+    }
+    if (max_abs &lt;= 0.0f) {
+      memset(target, 0, (size_t)cols);
+      scales[row] = 0;
+      continue;
+    }
+    scales[row] = scale_q16_from_float(max_abs / 127.0f);
+    const float inverse = 127.0f / max_abs;
+    for (int col = 0; col &lt; cols; ++col) {
+      target[col] = quantize_value(source[col], inverse);
+    }
+  }
+}
+</code></pre></figure><p>An embedding lookup returns one entire row, so the row is the natural quantization group. The tied output head reuses those exact row scales: when the embedding row is copied into the transposed head column, its scale becomes the column scale.</p><h3 class="subhead">Gains and the head transpose</h3><figure class="snippet"><figcaption class="snippet-head"><span>quantize_gain</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="quantize_gain, 5 lines"><code>static void quantize_gain(const float *src, int length, int32_t *dst) {
+  for (int i = 0; i &lt; length; ++i) {
+    dst[i] = q16_from_float(src[i]);
+  }
+}
+</code></pre></figure><figure class="snippet"><figcaption class="snippet-head"><span>The tied head</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="The tied head, 7 lines"><code>for (int token = 0; token &lt; vocab_size; ++token) {
+  model->head_scale[token] = model->token_emb_scale[token];
+  for (int d = 0; d &lt; dim; ++d) {
+    model->head[(size_t)d * vocab_size + token] =
+        model->token_emb[(size_t)token * dim + d];
+  }
+}</code></pre></figure><h3 class="subhead">The GELU table and the head-dimension reciprocal</h3><figure class="snippet"><figcaption class="snippet-head"><span>build_gelu_lut</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="build_gelu_lut, 8 lines"><code>static void build_gelu_lut(int32_t *lut) {
+  for (int i = 0; i &lt; TINY_GPT_GELU_POINTS; ++i) {
+    const float x = -16.0f + (float)i / 32.0f;
+    const float inner = 0.7978845608028654f * (x + 0.044715f * x * x * x);
+    const float value = 0.5f * x * (1.0f + tanhf(inner));
+    lut[i] = q16_from_float(value);
+  }
+}
+</code></pre></figure><figure class="snippet"><figcaption class="snippet-head"><span>inverse_sqrt_q16</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="inverse_sqrt_q16, 10 lines"><code>static int32_t inverse_sqrt_q16(int value) {
+  if (value &lt;= 0) {
+    return INT_Q16_ONE;
+  }
+  const uint64_t root = int_isqrt_u64(((uint64_t)value) &lt;&lt; 32);
+  if (root == 0) {
+    return INT_Q16_ONE;
+  }
+  return (int32_t)(((uint64_t)INT_Q16_ONE * INT_Q16_ONE) / root);
+}
+</code></pre></figure><p>The GELU table has 1025 entries from -16 to 16 in steps of 1/32. Each entry is a Q16 value. That is 4,100 bytes, small enough to live in on-chip memory and cheap enough to build at load. The attention reciprocal is also computed once: <code>inverse_sqrt_q16(head_dim)</code> returns <code>round(65536 / sqrt(head_dim))</code> using the integer square root.</p><h3 class="subhead">Creation and allocation</h3><details class="code-details"><summary><span>tiny_gpt_create</span><span class="code-meta">c · 85 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="tiny_gpt_create, 85 lines"><code>TinyGpt *tiny_gpt_create(int vocab_size, int context, int dim, int layers,
+                         int heads, int mlp, const float *packed_weights) {
+  tiny_gpt_error_code = TINY_GPT_OK;
+  if (vocab_size &lt;= 0 || context &lt;= 0 || dim &lt;= 0 || layers &lt;= 0 ||
+      heads &lt;= 0 || mlp &lt;= 0 || packed_weights == NULL || dim % heads != 0) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_CONFIG;
+    return NULL;
+  }
+
+  TinyGpt *model = calloc(1, sizeof(*model));
+  if (model == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ALLOC;
+    return NULL;
+  }
+
+  model->config.vocab_size = vocab_size;
+  model->config.context = context;
+  model->config.dim = dim;
+  model->config.layers = layers;
+  model->config.heads = heads;
+  model->config.mlp = mlp;
+  model->inv_sqrt_head_dim_q16 = inverse_sqrt_q16(dim / heads);
+  model->rng = 0x9e3779b9u;
+
+  const float *cursor = packed_weights;
+  const float *token_emb = cursor;
+  cursor += (size_t)vocab_size * dim;
+  const float *pos_emb = cursor;
+  cursor += (size_t)context * dim;
+  const float *g_final = cursor;
+  cursor += dim;
+
+  model->token_emb = allocate_zero((size_t)vocab_size * dim, sizeof(int8_t));
+  model->token_emb_scale = allocate_zero((size_t)vocab_size, sizeof(int32_t));
+  model->pos_emb = allocate_zero((size_t)context * dim, sizeof(int8_t));
+  model->pos_emb_scale = allocate_zero((size_t)context, sizeof(int32_t));
+  model->head = allocate_zero((size_t)dim * vocab_size, sizeof(int8_t));
+  model->head_scale = allocate_zero((size_t)vocab_size, sizeof(int32_t));
+  model->g_final = allocate_zero((size_t)dim, sizeof(int32_t));
+  model->layers = allocate_zero((size_t)layers, sizeof(TinyGptLayer));
+
+  if (model->token_emb == NULL || model->token_emb_scale == NULL ||
+      model->pos_emb == NULL || model->pos_emb_scale == NULL ||
+      model->head == NULL || model->head_scale == NULL ||
+      model->g_final == NULL || model->layers == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ALLOC;
+    tiny_gpt_destroy(model);
+    return NULL;
+  }
+
+  quantize_rows(token_emb, vocab_size, dim, model->token_emb,
+                model->token_emb_scale);
+  quantize_rows(pos_emb, context, dim, model->pos_emb, model->pos_emb_scale);
+  quantize_gain(g_final, dim, model->g_final);
+
+  /*
+   * The output head is the tied token embedding, transposed to dim x vocab.
+   * Reuse the row-quantized values and scales so the two paths stay identical.
+   */
+  for (int token = 0; token &lt; vocab_size; ++token) {
+    model->head_scale[token] = model->token_emb_scale[token];
+    for (int d = 0; d &lt; dim; ++d) {
+      model->head[(size_t)d * vocab_size + token] =
+          model->token_emb[(size_t)token * dim + d];
+    }
+  }
+
+  for (int layer = 0; layer &lt; layers; ++layer) {
+    if (!allocate_layer_weights(&amp;model->layers[layer], dim, mlp, &amp;cursor)) {
+      tiny_gpt_error_code = TINY_GPT_ERROR_ALLOC;
+      tiny_gpt_destroy(model);
+      return NULL;
+    }
+  }
+
+  if (!allocate_scratch(model)) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ALLOC;
+    tiny_gpt_destroy(model);
+    return NULL;
+  }
+
+  build_gelu_lut(model->gelu_lut);
+
+  return model;
+}
+</code></pre></details><p><code>tiny_gpt_create</code> walks the packed float32 buffer in order, quantizes each group, allocates every scratch buffer once, and builds the GELU table. After it returns, the float buffer is no longer needed. The model struct owns only integers.</p><aside class="bug" aria-label="Common bug"><strong>Common bug</strong><p>The two scale units are easy to mix up. A weight scale is a Q16 <em>fraction</em> of the real value. An activation scale is a count of Q16 <em>units</em> per code. The matmul multiplies both and shifts by 16; if you treat the activation scale as a fraction you will be off by a factor of 65536.</p></aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Quantize a matrix with one outlier and compare the reconstruction error with per-tensor quantization. Then assert <code>abs(restored - original) &#8804; scale/2</code> for every value, and confirm a zero row produces scale 0 and all-zero codes.</p></aside><p class="source-line">Source: <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/src/tiny_gpt_quantize.c">src/tiny_gpt_quantize.c</a></p></section><section class="chapter" id="matmul"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">05</span><div><p class="kicker">The heart of the engine</p><h2>int8 dot products, int32 accumulation, int64 requantization</h2></div></div><p>Every linear layer is the same operation: quantize one Q16 activation row to int8, dot it against every int8 weight column, accumulate in int32, then multiply by the two scales in int64 and shift back to Q16.</p><figure class="figure"><svg class="diagram" viewBox="0 0 920 330" role="img" aria-labelledby="dd4t dd4d"><title id="dd4t">Integer matrix multiplication and requantization</title><desc id="dd4d">A Q16 activation row is quantized to int8 with one scale. It is dotted against int8 weight columns and accumulated in int32. The accumulator is multiplied by both scales in int64 and shifted by 16 to produce Q16.</desc><rect class="d-box d-blue-box" x="20" y="42" width="146" height="76" rx="10"></rect><text class="d-text" x="93" y="70" text-anchor="middle">Q16 x row</text><text class="d-muted" x="93" y="92" text-anchor="middle">1 × K</text><rect class="d-box" x="196" y="42" width="146" height="76" rx="10"></rect><text class="d-text" x="269" y="70" text-anchor="middle">quantize row</text><text class="d-muted" x="269" y="92" text-anchor="middle">int8 + act_scale</text><rect class="d-box" x="372" y="42" width="146" height="76" rx="10"></rect><text class="d-text" x="445" y="70" text-anchor="middle">int8 dot</text><text class="d-muted" x="445" y="92" text-anchor="middle">K terms &#8594; int32</text><rect class="d-box" x="548" y="42" width="146" height="76" rx="10"></rect><text class="d-text" x="621" y="70" text-anchor="middle">requantize</text><text class="d-muted" x="621" y="92" text-anchor="middle">int64 · shift 16</text><rect class="d-box d-accent-box" x="724" y="42" width="176" height="76" rx="10"></rect><text class="d-text" x="812" y="70" text-anchor="middle">Q16 output row</text><text class="d-muted" x="812" y="92" text-anchor="middle">1 × N</text><path class="d-line" d="M166 80 L192 80"></path><path class="d-arrow" d="M186 74 L196 80 L186 86 Z"></path><path class="d-line" d="M342 80 L368 80"></path><path class="d-arrow" d="M362 74 L372 80 L362 86 Z"></path><path class="d-line" d="M518 80 L544 80"></path><path class="d-arrow" d="M538 74 L548 80 L538 86 Z"></path><path class="d-line" d="M694 80 L720 80"></path><path class="d-arrow" d="M714 74 L724 80 L714 86 Z"></path><rect class="d-panel" x="20" y="150" width="880" height="150" rx="14"></rect><text class="d-title" x="44" y="180">the arithmetic, in order</text><text class="d-text" x="44" y="210">acc = &#931; q8_x[k] · q8_w[k][j]</text><text class="d-text" x="44" y="236">product = (int64)acc · act_scale · weight_scale[j]</text><text class="d-text" x="44" y="262">y_q16[j] = round(product / 2^16)</text><text class="d-muted" x="44" y="284">act_scale is in Q16 units; weight_scale is a Q16 fraction</text><text class="d-muted" x="620" y="210">max |acc| here: 96 · 127 · 127 = 1,548,384</text><text class="d-muted" x="620" y="236">int32 limit: 2,147,483,647</text><text class="d-muted" x="620" y="262">the accumulator has ~1,300× headroom</text></svg><figcaption>The dot product stays narrow; only the scale multiplication needs 64 bits. The final shift is what turns an accumulator back into a Q16 activation.</figcaption></figure><h3 class="subhead">The derivation</h3><p>Let <code>x = qx · sx / 2¹&#8310;</code> and <code>w = qw · sw / 2¹&#8310;</code>. Then</p><pre class="math-block"><code>y = &#931; x·w
+  = &#931; (qx·qw) · sx·sw / 2³²
+  = acc · sx·sw / 2³²
+
+The engine stores y in Q16, so:
+y_q16 = y · 2¹&#8310; = acc · sx·sw / 2¹&#8310;</code></pre><p>That is the entire justification for the single <code>&gt;&gt; 16</code> at the end of <code>matmul_q16</code>. The activation scale <code>sx</code> is in Q16 units, so it is not itself divided by 65536; the weight scale <code>sw</code> is a Q16 fraction, so it is.</p><h3 class="subhead">Dynamic row quantization</h3><figure class="snippet"><figcaption class="snippet-head"><span>quantize_activation_row</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="quantize_activation_row, 35 lines"><code>static void quantize_activation_row(const int32_t *src, int count, int8_t *dst,
+                                    int32_t *scale_out) {
+  int32_t max_abs = 0;
+  for (int i = 0; i &lt; count; ++i) {
+    const int32_t value = src[i];
+    const int32_t magnitude = value &lt; 0 ? -value : value;
+    if (magnitude > max_abs) {
+      max_abs = magnitude;
+    }
+  }
+
+  if (max_abs == 0) {
+    *scale_out = 0;
+    memset(dst, 0, (size_t)count);
+    return;
+  }
+  if (max_abs &lt;= 127) {
+    *scale_out = 1;
+    for (int i = 0; i &lt; count; ++i) {
+      dst[i] = (int8_t)src[i];
+    }
+    return;
+  }
+
+  *scale_out = (max_abs + 63) / 127;
+  for (int i = 0; i &lt; count; ++i) {
+    int64_t quantized = int_div_round((int64_t)src[i] * 127, max_abs);
+    if (quantized > 127) {
+      quantized = 127;
+    } else if (quantized &lt; -127) {
+      quantized = -127;
+    }
+    dst[i] = (int8_t)quantized;
+  }
+}
+</code></pre></figure><p>There are two regimes. If every value fits in <code>-127 &#8230; 127</code>, the row is already small enough to use directly and the scale is <code>1</code>. Otherwise the scale is <code>ceil(max_abs / 127)</code>, and each code is <code>round(value · 127 / max_abs)</code>. The first regime is not a rounding shortcut: the source values are Q16 integers, so a code of <code>100</code> with scale 1 means &#8220;100 Q16 units,&#8221; and the final shift handles the rest.</p><h3 class="subhead">The matmul</h3><figure class="snippet"><figcaption class="snippet-head"><span>matmul_q16</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="matmul_q16, 20 lines"><code>static void matmul_q16(const int32_t *x, int rows, int cols,
+                       const int8_t *weights, const int32_t *weight_scale,
+                       int out_cols, int8_t *scratch, int32_t *out) {
+  for (int row = 0; row &lt; rows; ++row) {
+    int32_t activation_scale = 0;
+    quantize_activation_row(x + (size_t)row * cols, cols, scratch,
+                            &amp;activation_scale);
+    int32_t *target = out + (size_t)row * out_cols;
+    for (int j = 0; j &lt; out_cols; ++j) {
+      int32_t accumulator = 0;
+      for (int k = 0; k &lt; cols; ++k) {
+        accumulator +=
+            (int32_t)scratch[k] * (int32_t)weights[(size_t)k * out_cols + j];
+      }
+      const int64_t product =
+          (int64_t)accumulator * activation_scale * weight_scale[j];
+      target[j] = (int32_t)int_shift_round(product, 16);
+    }
+  }
+}
+</code></pre></figure><h3 class="subhead">A worked example</h3><p>Take a Q16 activation row <code>[65536, 32768]</code>, which is <code>[1.0, 0.5]</code>. The maximum is 65536, so the activation scale is <code>(65536 + 63) / 127 = 516</code> and the codes are <code>[127, 64]</code>. Take an int8 weight column <code>[64, -32]</code> with Q16 scale <code>1024</code>, which is <code>[1.0, -0.5]</code>.</p><pre class="math-block"><code>acc = 127·64 + 64·(-32) = 8128 - 2048 = 6080
+product = 6080 · 516 · 1024 = 3,212,574,720
+y_q16 = round(product / 65536) = 49,020
+y = 49,020 / 65536 &#8776; 0.748</code></pre><p>The exact float answer is <code>1.0·1.0 + 0.5·(-0.5) = 0.75</code>. The difference is the activation and weight quantization error, not a shift bug.</p><aside class="bug" aria-label="Common bug"><strong>Common bug</strong><p>If the output is consistently 65536 times too large, the final shift is missing. If it is 65536 times too small, an extra shift was added. Check the shift before changing the scales. In attention the corresponding shift is 36, not 16, because scores are Q12.</p></aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Implement a scalar reference in double precision and compare it with <code>matmul_q16</code> on random rows with a known maximum. The mean error should be on the order of <code>max_abs / 127</code>. Then test a row whose maximum is below 127 and confirm the scale-1 path.</p></aside></section><section class="chapter" id="norm"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">06</span><div><p class="kicker">Normalization</p><h2>RMSNorm without a square-root instruction</h2></div></div><p>RMSNorm scales a row by the reciprocal of its root mean square, then multiplies by a learned gain. In float it is <code>x / sqrt(mean(x²) + &#949;) · gain</code>. The integer version replaces the square root with a bitwise loop and the division with a rounded integer divide.</p><figure class="snippet"><figcaption class="snippet-head"><span>rmsnorm_q16</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="rmsnorm_q16, 23 lines"><code>static void rmsnorm_q16(const int32_t *x, int rows, int cols,
+                        const int32_t *gain, int32_t *out) {
+  /* round(1e-5 * 2^32), matching the float path's epsilon. */
+  const int64_t epsilon_q32 = 42950;
+  for (int row = 0; row &lt; rows; ++row) {
+    const int32_t *source = x + (size_t)row * cols;
+    int32_t *target = out + (size_t)row * cols;
+    int64_t sum_squares = 0;
+    for (int i = 0; i &lt; cols; ++i) {
+      const int64_t value = source[i];
+      sum_squares += value * value;
+    }
+    const int64_t mean_q32 = sum_squares / cols + epsilon_q32;
+    int64_t rms_q16 = (int64_t)int_isqrt_u64((uint64_t)mean_q32);
+    if (rms_q16 == 0) {
+      rms_q16 = 1;
+    }
+    for (int i = 0; i &lt; cols; ++i) {
+      const int64_t scaled = (int64_t)source[i] * gain[i];
+      target[i] = (int32_t)int_div_round(scaled, rms_q16);
+    }
+  }
+}
+</code></pre></figure><h3 class="subhead">The scale bookkeeping</h3><ul><li><code>x</code> is Q16, so <code>x²</code> is Q32. The sum of squares and the mean stay Q32 in an int64.</li><li>The epsilon is <code>round(1e-5 · 2³²) = 42950</code>, also Q32.</li><li><code>int_isqrt_u64(mean_q32)</code> returns Q16, the same scale as the input.</li><li>The gain is Q16. Dividing <code>x · gain</code> by the Q16 RMS cancels the gain&#8217;s scale and returns Q16.</li></ul><h3 class="subhead">A worked row</h3><pre class="math-block"><code>x = [65536, 65536]              // [1.0, 1.0] in Q16
+sum_squares = 2 · 65536² = 8,589,934,592
+mean_q32 = sum_squares / 2 + 42950 = 4,295,010,246
+rms_q16 = isqrt(4,295,010,246) = 65536
+y[i] = round(x[i] · gain[i] / rms_q16)
+     = round(65536 · 65536 / 65536) = 65536  // [1.0, 1.0]</code></pre><aside class="bug" aria-label="Common bug"><strong>Common bug</strong><p>Do not divide by <code>cols</code> after adding epsilon, and do not use a Q16 epsilon. The epsilon belongs in the same Q32 units as the mean. A Q16 epsilon would be far too small after squaring and the norm would behave differently from the float model.</p></aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Compare <code>rmsnorm_q16</code> with the float formula on random rows. Test a zero row (the code forces <code>rms_q16 = 1</code>), a row with one large value, and a row with negative values. The error should be within a few Q16 units, not a few thousand.</p></aside></section><section class="chapter" id="gelu"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">07</span><div><p class="kicker">The nonlinearity</p><h2>GELU as a 4 KB lookup table</h2></div></div><p>The MLP uses the tanh approximation of GELU:</p><pre class="math-block"><code>GELU(x) = 0.5 · x · (1 + tanh(0.79788456 · (x + 0.044715 · x³)))</code></pre><p>The function is smooth and bounded, so the engine samples it once at load into a Q16 table and interpolates between points at runtime. No transcendental call is needed in the forward pass.</p><figure class="snippet"><figcaption class="snippet-head"><span>build_gelu_lut</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="build_gelu_lut, 8 lines"><code>static void build_gelu_lut(int32_t *lut) {
+  for (int i = 0; i &lt; TINY_GPT_GELU_POINTS; ++i) {
+    const float x = -16.0f + (float)i / 32.0f;
+    const float inner = 0.7978845608028654f * (x + 0.044715f * x * x * x);
+    const float value = 0.5f * x * (1.0f + tanhf(inner));
+    lut[i] = q16_from_float(value);
+  }
+}
+</code></pre></figure><figure class="snippet"><figcaption class="snippet-head"><span>gelu_q16</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="gelu_q16, 15 lines"><code>static int32_t gelu_q16(const TinyGpt *model, int32_t x) {
+  if (x &lt;= TINY_GPT_GELU_MIN_Q16) {
+    return 0;
+  }
+  if (x >= TINY_GPT_GELU_MAX_Q16) {
+    return x;
+  }
+  const int32_t offset = x - TINY_GPT_GELU_MIN_Q16;
+  const int index = offset / TINY_GPT_GELU_STEP_Q16;
+  const int32_t remainder = offset &amp; (TINY_GPT_GELU_STEP_Q16 - 1);
+  const int32_t a = model->gelu_lut[index];
+  const int32_t b = model->gelu_lut[index + 1];
+  /* STEP_Q16 is 2048 = 1 &lt;&lt; 11, so the interpolation shift is 11. */
+  return a + (int32_t)(((int64_t)(b - a) * remainder) >> 11);
+}
+</code></pre></figure><h3 class="subhead">The table geometry</h3><ul><li>Range: -16.0 to +16.0 in Q16.</li><li>Step: 1/32, or 2048 in Q16 units.</li><li>Points: 1025, because 32 units per side times 32 steps plus one.</li><li>Storage: 1025 int32 values, about 4.1 KB.</li></ul><p>Below -16 the function is effectively zero, so the lookup returns 0. Above +16 it is effectively the identity, so it returns the input. In between, the index is <code>offset / 2048</code> and the remainder is <code>offset &amp; 2047</code>. The interpolation shift is 11 because <code>2¹¹ = 2048</code>.</p><aside class="bug" aria-label="Common bug"><strong>Common bug</strong><p>Two off-by-ones live here. The table has 1025 entries, so the last valid index is 1024; the code guards the upper range before indexing. And the interpolation shift is 11, not 12: the step is 1/32 of a Q16 unit, not 1/16.</p></aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Build the table in a test, evaluate it at every grid point, and compare with the float formula. Then evaluate halfway between two grid points and check that the result is between the neighbors. Measure the maximum error; it should be far below the Q16 resolution of the activation stream.</p></aside></section><section class="chapter" id="attention"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">08</span><div><p class="kicker">Where the precision changes</p><h2>Causal attention with Q12 scores and Q15 probabilities</h2></div></div><p>Attention is the part that looks hardest to quantize because it contains an exponential and a division. The engine handles both with tables and fixed-point normalization. The data flow is still the familiar one: project Q, K, and V; score every allowed key against the query; softmax the scores; mix the values.</p><figure class="figure"><svg class="diagram" viewBox="0 0 920 380" role="img" aria-labelledby="dd5t dd5d"><title id="dd5t">Integer attention</title><desc id="dd5d">Q, K, and V are quantized per head and per token. Scores become Q12 nats, future positions are masked, DI-Exp produces Q15 probabilities, and the weighted values are requantized to Q16.</desc><rect class="d-box d-blue-box" x="18" y="34" width="130" height="70" rx="9"></rect><text class="d-text" x="83" y="62" text-anchor="middle">QKV</text><text class="d-muted" x="83" y="82" text-anchor="middle">T × 3D · Q16</text><rect class="d-box" x="172" y="34" width="146" height="70" rx="9"></rect><text class="d-text" x="245" y="62" text-anchor="middle">per-head quant</text><text class="d-muted" x="245" y="82" text-anchor="middle">q8 · k8 · v8</text><rect class="d-box" x="342" y="34" width="146" height="70" rx="9"></rect><text class="d-text" x="415" y="62" text-anchor="middle">Q · K&#7488;</text><text class="d-muted" x="415" y="82" text-anchor="middle">int32 dot</text><rect class="d-box" x="512" y="34" width="146" height="70" rx="9"></rect><text class="d-text" x="585" y="62" text-anchor="middle">scale + mask</text><text class="d-muted" x="585" y="82" text-anchor="middle">Q12 · j &#8804; t</text><rect class="d-box d-accent-box" x="682" y="34" width="100" height="70" rx="9"></rect><text class="d-text" x="732" y="62" text-anchor="middle">DI-Exp</text><text class="d-muted" x="732" y="82" text-anchor="middle">Q15</text><rect class="d-box" x="806" y="34" width="96" height="70" rx="9"></rect><text class="d-text" x="854" y="62" text-anchor="middle">P · V</text><text class="d-muted" x="854" y="82" text-anchor="middle">Q16</text><path class="d-line" d="M148 69 L168 69"></path><path class="d-arrow" d="M162 63 L172 69 L162 75 Z"></path><path class="d-line" d="M318 69 L338 69"></path><path class="d-arrow" d="M332 63 L342 69 L332 75 Z"></path><path class="d-line" d="M488 69 L508 69"></path><path class="d-arrow" d="M502 63 L512 69 L502 75 Z"></path><path class="d-line" d="M658 69 L678 69"></path><path class="d-arrow" d="M672 63 L682 69 L672 75 Z"></path><path class="d-line" d="M782 69 L802 69"></path><path class="d-arrow" d="M796 63 L806 69 L796 75 Z"></path><rect class="d-panel" x="18" y="136" width="884" height="216" rx="14"></rect><text class="d-title" x="42" y="166">causal softmax, one query at a time</text><g transform="translate(46 188)"><rect class="d-box" x="0" y="0" width="330" height="24" rx="3"></rect><text class="d-muted" x="10" y="16">score[j] = dot(q8, k8[j]) · qscale · kscale · inv_sqrt &gt;&gt; 36</text></g><g transform="translate(46 226)"><rect class="d-box d-accent-box" x="0" y="0" width="330" height="24" rx="3"></rect><text class="d-muted" x="10" y="16">delta = max(score) - score[j], clamped to 20 nats</text></g><g transform="translate(46 264)"><rect class="d-box" x="0" y="0" width="330" height="24" rx="3"></rect><text class="d-muted" x="10" y="16">p[j] = exp_neg_q15_q12(delta) / &#931; p</text></g><g transform="translate(46 302)"><rect class="d-box" x="0" y="0" width="330" height="24" rx="3"></rect><text class="d-muted" x="10" y="16">out[d] = &#931; p15[j] · v8[j][d] · vscale[j] &gt;&gt; 15</text></g><text class="d-muted" x="430" y="204">only j &#8804; t is computed; the rest is zero</text><text class="d-muted" x="430" y="228">scores are Q12 nats, not Q16</text><text class="d-muted" x="430" y="252">probabilities are Q15, sum &#8776; 32768</text><text class="d-muted" x="430" y="276">V is quantized per token, per head</text><text class="d-muted" x="430" y="312">the output is Q16, ready for Wo</text><text class="d-muted" x="460" y="372" text-anchor="middle">head_dim = D / H; inv_sqrt_head_dim is a Q16 integer</text></svg><figcaption>Q, K, and V are quantized per head and per token. Scores are Q12 nats, probabilities are Q15, and the value sum is requantized to Q16.</figcaption></figure><h3 class="subhead">Quantizing Q, K, and V</h3><p><code>wqkv</code> produces a <code>T × 3D</code> Q16 matrix. For each head, the engine slices the head&#8217;s <code>head_dim</code> values and quantizes each key and value row with <code>quantize_activation_row</code>. Keys and values are quantized for every position once per head; the query is quantized per position inside the loop. The resulting codes are int8 and the scales are Q16-unit integers.</p><h3 class="subhead">The score rescale</h3><p>A dot product of int8 query and key codes is an int32. To turn it into a real score, multiply by the query scale, the key scale, and <code>1/sqrt(head_dim)</code>, all Q16. The real score is the product divided by <code>2&#8308;&#8312;</code>. Softmax wants Q12 nats, so multiply by <code>2¹²</code>; the engine implements that as a single rounded shift by 36:</p><pre class="math-block"><code>real_score = dot · qscale · kscale · inv_sqrt / 2&#8308;&#8312;
+score_q12  = real_score · 2¹²
+           = dot · qscale · kscale · inv_sqrt / 2³&#8310;</code></pre><p>The result is clamped to ±81920 Q12, which is ±20 nats. That is the DI-Exp clipping range. The causal mask is the loop bound <code>j &lt;= t</code>; positions after the query are never computed and their probabilities are zeroed.</p><h3 class="subhead">DI-Exp softmax</h3><p>Subtracting the row maximum before exponentiating keeps the arguments non-positive. The engine computes <code>exp(-delta)</code> in Q15 with a 33-entry table of <code>2^(-k/32)</code>, linear interpolation, and a shift by the integer part. The constants are in <code>int_math.h</code>: <code>5909/4096 &#8776; log&#8322;(e)</code> converts nats to bits. The result is normalized with a rounded integer divide so the weights sum to about 32768.</p><h3 class="subhead">The value sum</h3><p>Each value code is int8 with a per-token Q16-unit scale. The probability is Q15. The real output is <code>&#931; p·v / 2³¹</code>; storing it as Q16 means shifting the int64 accumulator by 15. That is the second shift that is easy to get wrong.</p><details class="code-details"><summary><span>attention_q16</span><span class="code-meta">c · 96 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="attention_q16, 96 lines"><code>static void attention_q16(TinyGpt *model, const int32_t *qkv) {
+  const TinyGptConfig *config = &amp;model->config;
+  const int context = config->context;
+  const int dim = config->dim;
+  const int heads = config->heads;
+  const int head_dim = dim / heads;
+  const int qkv_stride = dim * 3;
+
+  for (int head = 0; head &lt; heads; ++head) {
+    const int head_offset = head * head_dim;
+
+    for (int j = 0; j &lt; context; ++j) {
+      const int32_t *key =
+          qkv + (size_t)j * qkv_stride + dim + head_offset;
+      const int32_t *value =
+          qkv + (size_t)j * qkv_stride + dim * 2 + head_offset;
+      quantize_activation_row(key, head_dim, model->k8 + (size_t)j * head_dim,
+                              &amp;model->k_scale[j]);
+      quantize_activation_row(value, head_dim, model->v8 + (size_t)j * head_dim,
+                              &amp;model->v_scale[j]);
+    }
+
+    for (int t = 0; t &lt; context; ++t) {
+      const int32_t *query = qkv + (size_t)t * qkv_stride + head_offset;
+      int32_t query_scale = 0;
+      quantize_activation_row(query, head_dim, model->q8, &amp;query_scale);
+
+      int32_t row_max = -2147483647;
+      for (int j = 0; j &lt;= t; ++j) {
+        int32_t dot = 0;
+        for (int d = 0; d &lt; head_dim; ++d) {
+          dot += (int32_t)model->q8[d] *
+                 (int32_t)model->k8[(size_t)j * head_dim + d];
+        }
+        /*
+         * product = dot * qscale * kscale * inv_sqrt_q16. With qscale and
+         * kscale in Q16, the real score is product / 2^48. Shift by 36 to
+         * land in Q12 (1/4096 nat), which keeps the softmax error well below
+         * the Q8 variant's ~1e-3.
+         */
+        const int64_t product = (int64_t)dot * query_scale *
+                                model->k_scale[j] *
+                                model->inv_sqrt_head_dim_q16;
+        int64_t score = int_shift_round(product, 36);
+        if (score > TINY_GPT_SOFTMAX_CLIP_Q12) {
+          score = TINY_GPT_SOFTMAX_CLIP_Q12;
+        } else if (score &lt; -TINY_GPT_SOFTMAX_CLIP_Q12) {
+          score = -TINY_GPT_SOFTMAX_CLIP_Q12;
+        }
+        model->scores[j] = (int32_t)score;
+        if (model->scores[j] > row_max) {
+          row_max = model->scores[j];
+        }
+      }
+
+      int32_t total = 0;
+      for (int j = 0; j &lt;= t; ++j) {
+        int32_t delta = row_max - model->scores[j];
+        if (delta &lt; 0) {
+          delta = 0;
+        } else if (delta > TINY_GPT_SOFTMAX_CLIP_Q12) {
+          delta = TINY_GPT_SOFTMAX_CLIP_Q12;
+        }
+        const int32_t weight = int_exp_neg_q15_q12(delta);
+        model->attn_prob[j] = weight;
+        total += weight;
+      }
+      for (int j = t + 1; j &lt; context; ++j) {
+        model->attn_prob[j] = 0;
+      }
+
+      if (total > 0) {
+        for (int j = 0; j &lt;= t; ++j) {
+          model->attn_prob[j] = (int32_t)int_div_round(
+              (int64_t)model->attn_prob[j] * INT_Q15_ONE, total);
+        }
+      } else {
+        const int32_t uniform = INT_Q15_ONE / (t + 1);
+        for (int j = 0; j &lt;= t; ++j) {
+          model->attn_prob[j] = uniform;
+        }
+      }
+
+      for (int d = 0; d &lt; head_dim; ++d) {
+        int64_t accumulator = 0;
+        for (int j = 0; j &lt;= t; ++j) {
+          accumulator += (int64_t)model->attn_prob[j] *
+                         (int64_t)model->v8[(size_t)j * head_dim + d] *
+                         model->v_scale[j];
+        }
+        model->attn[(size_t)t * dim + head_offset + d] =
+            (int32_t)int_shift_round(accumulator, 15);
+      }
+    }
+  }
+}
+</code></pre></details><aside class="bug" aria-label="Common bug"><strong>Common bug</strong><p>The three most common attention bugs are: using <code>&gt;&gt; 32</code> instead of <code>&gt;&gt; 36</code> for scores, forgetting <code>j &lt;= t</code> and attending to the future, and mixing the Q12 score scale with the Q15 probability scale. Print one row&#8217;s scores and probabilities and check that they sum to about 32768.</p></aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>For a fixed random QKV buffer, compare each head&#8217;s output with a float reference. Then check the mask by changing a future value and confirming the output for an earlier position does not move. Finally, verify that a one-token row produces probability 32768 on itself.</p></aside><p class="source-line">Source: <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/src/tiny_gpt_infer.c">src/tiny_gpt_infer.c · attention_q16</a></p></section><section class="chapter" id="forward"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">09</span><div><p class="kicker">Putting it together</p><h2>The full integer forward pass</h2></div></div><p>The forward pass is deliberately boring once the pieces exist. Embed, then repeat a pre-norm attention block and a pre-norm MLP block, then normalize one last time and project onto the vocabulary.</p><div class="table-wrap"><table><caption>The buffers reused by one forward pass</caption><thead><tr><th scope="col">Buffer</th><th scope="col">Shape</th><th scope="col">Contents</th></tr></thead><tbody><tr><th scope="row">x</th><td>T × D</td><td>Residual stream, Q16</td></tr><tr><th scope="row">x1</th><td>T × D</td><td>Residual after attention</td></tr><tr><th scope="row">h</th><td>T × D</td><td>Normalized activations</td></tr><tr><th scope="row">qkv</th><td>T × 3D</td><td>Q, K, V projections, Q16</td></tr><tr><th scope="row">attn</th><td>T × D</td><td>Attention output, Q16</td></tr><tr><th scope="row">y</th><td>T × D</td><td>Wo output</td></tr><tr><th scope="row">z</th><td>T × M</td><td>MLP up-projection</td></tr><tr><th scope="row">gz</th><td>T × M</td><td>GELU output</td></tr><tr><th scope="row">m</th><td>T × D</td><td>MLP down-projection</td></tr><tr><th scope="row">logits</th><td>T × V</td><td>Q16 logits for every position</td></tr></tbody></table></div><h3 class="subhead">Embedding</h3><p>The token row and position row are both int8. Each is multiplied by its own Q16 scale and added. The result is Q16 and is saturated to the int32 range. There is no separate scale on the sum because both sides already share the Q16 unit.</p><h3 class="subhead">The block</h3><ol class="steps compact"><li><code>h = RMSNorm(x, g1)</code></li><li><code>qkv = h · Wqkv</code></li><li><code>attn = attention(qkv)</code></li><li><code>y = attn · Wo</code></li><li><code>x1 = x + y</code></li><li><code>h = RMSNorm(x1, g2)</code></li><li><code>z = h · W1</code></li><li><code>gz = GELU(z)</code></li><li><code>m = gz · W2</code></li><li><code>x = x1 + m</code></li></ol><details class="code-details"><summary><span>tiny_gpt_forward</span><span class="code-meta">c · 70 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="tiny_gpt_forward, 70 lines"><code>void tiny_gpt_forward(TinyGpt *model, const int32_t *tokens) {
+  if (model == NULL || tokens == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+
+  const TinyGptConfig *config = &amp;model->config;
+  const int context = config->context;
+  const int dim = config->dim;
+  const int mlp = config->mlp;
+  const int vocab = config->vocab_size;
+
+  /* Embeddings: token and position tables are int8 with Q16 row scales. */
+  for (int t = 0; t &lt; context; ++t) {
+    int token = tokens[t];
+    if (token &lt; 0 || token >= vocab) {
+      token = 0;
+    }
+    const int8_t *token_row = model->token_emb + (size_t)token * dim;
+    const int32_t token_scale = model->token_emb_scale[token];
+    const int8_t *position_row = model->pos_emb + (size_t)t * dim;
+    const int32_t position_scale = model->pos_emb_scale[t];
+    for (int d = 0; d &lt; dim; ++d) {
+      int64_t value = (int64_t)token_row[d] * token_scale +
+                      (int64_t)position_row[d] * position_scale;
+      if (value > 2147483647) {
+        value = 2147483647;
+      } else if (value &lt; -2147483647) {
+        value = -2147483647;
+      }
+      model->x[(size_t)t * dim + d] = (int32_t)value;
+    }
+  }
+
+  for (int layer = 0; layer &lt; config->layers; ++layer) {
+    const TinyGptLayer *weights = &amp;model->layers[layer];
+
+    rmsnorm_q16(model->x, context, dim, weights->g1, model->h);
+    matmul_q16(model->h, context, dim, weights->wqkv, weights->wqkv_scale,
+               dim * 3, model->q8, model->qkv);
+    attention_q16(model, model->qkv);
+    matmul_q16(model->attn, context, dim, weights->wo, weights->wo_scale, dim,
+               model->q8, model->y);
+
+    for (int i = 0; i &lt; context * dim; ++i) {
+      model->x1[i] = model->x[i] + model->y[i];
+    }
+
+    rmsnorm_q16(model->x1, context, dim, weights->g2, model->h);
+    matmul_q16(model->h, context, dim, weights->w1, weights->w1_scale, mlp,
+               model->q8, model->z);
+
+    for (int i = 0; i &lt; context * mlp; ++i) {
+      model->gz[i] = gelu_q16(model, model->z[i]);
+    }
+
+    matmul_q16(model->gz, context, mlp, weights->w2, weights->w2_scale, dim,
+               model->q8, model->m);
+
+    for (int i = 0; i &lt; context * dim; ++i) {
+      model->x[i] = model->x1[i] + model->m[i];
+    }
+  }
+
+  rmsnorm_q16(model->x, context, dim, model->g_final, model->h);
+  matmul_q16(model->h, context, dim, model->head, model->head_scale, vocab,
+             model->q8, model->logits);
+
+  tiny_gpt_error_code = TINY_GPT_OK;
+}
+</code></pre></details><h3 class="subhead">The final projection</h3><p>The final norm uses <code>g_final</code>, then the head matmul projects <code>T × D</code> onto <code>T × V</code>. Only the last row is needed for generation, but the engine computes all positions because the same function is used for evaluation, probability inspection, and next-token comparisons. A later KV-cache implementation would compute the last row only during decode.</p><aside class="note-box" aria-label="Note"><strong>Aliasing rules.</strong> The scratch buffers are reused across projections, but no matmul writes its output into its input. If you refactor for memory, preserve that rule or add an explicit temporary. The sampling path uses <code>probs</code>; attention uses<!--!$--> <code>scores</code> and <code>attn_prob</code>. Each buffer is sized for the largest use.</aside><aside class="bug" aria-label="Common bug"><strong>Common bug</strong><p>A missing final norm produces plausible-looking but wrong logits, because the head expects a normalized residual stream. A missing residual produces a model that still runs but cannot represent the identity path. Check the two additions before debugging the quantization.</p></aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Run the forward pass with synthetic weights and assert that logits are non-degenerate, that every buffer is populated, and that the same tokens produce identical logits on a second call. Then compare the final row with the float reference from chapter 2.</p></aside></section><section class="chapter" id="sampling"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">10</span><div><p class="kicker">From logits to a token</p><h2>Softmax, temperature, top-k, and xorshift32</h2></div></div><p>The head produces Q16 logits. Generation needs a probability distribution over the vocabulary, a temperature, a top-k cut, and a random draw. Every step is integer-only.</p><h3 class="subhead">Logits to Q15</h3><p>The last position&#8217;s logits are divided by a Q16 temperature. A Q16 logit divided by a Q16 temperature is a Q16 ratio; shifting by 4 gives Q12 nats for the same DI-Exp table used by attention. The maximum is subtracted, each delta is clipped to 20 nats, and the weights are normalized to Q15.</p><details class="code-details"><summary><span>softmax_last_q15</span><span class="code-meta">c · 50 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="softmax_last_q15, 50 lines"><code>static void softmax_last_q15(TinyGpt *model, int32_t temperature_q16,
+                             int32_t *out_q15) {
+  const int vocab = model->config.vocab_size;
+  const int offset = (model->config.context - 1) * vocab;
+  const int32_t *logits = model->logits + offset;
+
+  if (temperature_q16 &lt;= 0) {
+    temperature_q16 = 655; /* 0.01 */
+  } else if (temperature_q16 &lt; 655) {
+    temperature_q16 = 655;
+  }
+
+  int32_t maximum = -2147483647;
+  for (int i = 0; i &lt; vocab; ++i) {
+    const int64_t scaled =
+        int_div_round((int64_t)logits[i] * INT_Q16_ONE, temperature_q16);
+    /* Q16 (logit / temperature) -> Q12 nats for DI-Exp. */
+    const int32_t score = (int32_t)(scaled >> 4);
+    model->probs[i] = score;
+    if (score > maximum) {
+      maximum = score;
+    }
+  }
+
+  int32_t total = 0;
+  for (int i = 0; i &lt; vocab; ++i) {
+    int32_t delta = maximum - model->probs[i];
+    if (delta &lt; 0) {
+      delta = 0;
+    } else if (delta > TINY_GPT_SOFTMAX_CLIP_Q12) {
+      delta = TINY_GPT_SOFTMAX_CLIP_Q12;
+    }
+    const int32_t weight = int_exp_neg_q15_q12(delta);
+    model->probs[i] = weight;
+    total += weight;
+  }
+
+  if (total &lt;= 0) {
+    const int32_t uniform = INT_Q15_ONE / vocab;
+    for (int i = 0; i &lt; vocab; ++i) {
+      out_q15[i] = uniform;
+    }
+    return;
+  }
+
+  for (int i = 0; i &lt; vocab; ++i) {
+    out_q15[i] = (int32_t)int_div_round(
+        (int64_t)model->probs[i] * INT_Q15_ONE, total);
+  }
+}
+</code></pre></details><p><code>tiny_gpt_probabilities</code> calls the same softmax and then doubles each Q15 value to produce Q16 for the host API. The WASM wrapper divides by 65536. If you forget the doubling, every probability is half of what it should be and the sum is 32768 instead of 65536.</p><figure class="snippet"><figcaption class="snippet-head"><span>tiny_gpt_probabilities</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="tiny_gpt_probabilities, 11 lines"><code>void tiny_gpt_probabilities(TinyGpt *model, int32_t temperature_q16,
+                            int32_t *out) {
+  if (model == NULL || out == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+  softmax_last_q15(model, temperature_q16, model->probs);
+  for (int i = 0; i &lt; model->config.vocab_size; ++i) {
+    out[i] = model->probs[i] * 2;
+  }
+}
+</code></pre></figure><h3 class="subhead">Top-k</h3><p>The sampler keeps the k highest Q15 weights with a partial insertion sort. It skips zero weights, maintains a descending list, and stops at <code>count = k</code>. For a 4096-token vocabulary and k=40 this is trivial compared with the matmuls.</p><h3 class="subhead">The random draw</h3><p>A 32-bit xorshift generator supplies the only randomness in the engine. A zero seed is replaced by the golden-ratio constant so the state can never get stuck at zero. The target is <code>(random · total) &gt;&gt; 32</code>, which maps the 32-bit value onto the integer weight range without floating point. The sampler walks the cumulative sum and returns the first candidate whose cumulative weight exceeds the target.</p><figure class="snippet"><figcaption class="snippet-head"><span>next_random</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="next_random, 8 lines"><code>static uint32_t next_random(uint32_t *state) {
+  uint32_t value = *state;
+  value ^= value &lt;&lt; 13;
+  value ^= value >> 17;
+  value ^= value &lt;&lt; 5;
+  *state = value;
+  return value;
+}
+</code></pre></figure><details class="code-details"><summary><span>tiny_gpt_sample</span><span class="code-meta">c · 71 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="tiny_gpt_sample, 71 lines"><code>int32_t tiny_gpt_sample(TinyGpt *model, int32_t temperature_q16,
+                        int32_t top_k) {
+  if (model == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return -1;
+  }
+
+  const int vocab = model->config.vocab_size;
+  softmax_last_q15(model, temperature_q16, model->probs);
+
+  if (top_k &lt; 1) {
+    top_k = 1;
+  } else if (top_k > vocab) {
+    top_k = vocab;
+  }
+
+  /*
+   * Partial insertion sort: keep the top-k probabilities in descending order.
+   * k is small (typically 40), so O(vocab * k) is fine.
+   */
+  int count = 0;
+  for (int id = 0; id &lt; vocab; ++id) {
+    const int32_t value = model->probs[id];
+    if (value &lt;= 0) {
+      continue;
+    }
+    if (count &lt; top_k) {
+      int position = count;
+      while (position > 0 &amp;&amp; model->top_vals[position - 1] &lt; value) {
+        model->top_vals[position] = model->top_vals[position - 1];
+        model->top_ids[position] = model->top_ids[position - 1];
+        --position;
+      }
+      model->top_vals[position] = value;
+      model->top_ids[position] = id;
+      ++count;
+    } else if (value > model->top_vals[top_k - 1]) {
+      int position = top_k - 1;
+      while (position > 0 &amp;&amp; model->top_vals[position - 1] &lt; value) {
+        model->top_vals[position] = model->top_vals[position - 1];
+        model->top_ids[position] = model->top_ids[position - 1];
+        --position;
+      }
+      model->top_vals[position] = value;
+      model->top_ids[position] = id;
+    }
+  }
+
+  if (count &lt;= 0) {
+    return 0;
+  }
+
+  int64_t total = 0;
+  for (int i = 0; i &lt; count; ++i) {
+    total += model->top_vals[i];
+  }
+  if (total &lt;= 0) {
+    return model->top_ids[0];
+  }
+
+  const uint32_t random = next_random(&amp;model->rng);
+  const uint64_t target = ((uint64_t)random * (uint64_t)total) >> 32;
+  uint64_t cumulative = 0;
+  for (int i = 0; i &lt; count; ++i) {
+    cumulative += (uint64_t)model->top_vals[i];
+    if (target &lt; cumulative) {
+      return model->top_ids[i];
+    }
+  }
+  return model->top_ids[count - 1];
+}
+</code></pre></details><aside class="bug" aria-label="Common bug"><strong>Common bug</strong><p>Temperature has a floor of 0.01 in Q16. If you pass 0, the engine clamps it rather than dividing by zero. If top_k is greater than the vocabulary, it clamps to the vocabulary. If every probability is zero, the sampler returns token 0; do not treat that as a valid distribution.</p></aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>With a fixed seed, call the sampler twice and assert the same token. Then lower the temperature and assert that the peak probability grows. Verify that the Q15 probabilities sum to within a few units of 32768 and the Q16 output to within a few units of 65536.</p></aside><p class="source-line">Source: <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/src/tiny_gpt_infer.c">src/tiny_gpt_infer.c · softmax_last_q15 · tiny_gpt_sample</a></p></section><section class="chapter" id="generation"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">11</span><div><p class="kicker">End-to-end decode</p><h2>A tokenizer, a sliding window, and one integer forward pass per token</h2></div></div><p>The engine does not know what a word is. It receives exactly <code>config.context</code> token ids, runs the forward pass, and returns logits. Everything about prompts, chat templates, and stop tokens lives in the host wrapper. Keeping that boundary clean is what lets the same C engine run Alice, Solid 2, or a future checkpoint.</p><h3 class="subhead">Two tokenizers, one engine</h3><div class="table-wrap"><table><caption>What the wrapper hands to the engine</caption><thead><tr><th scope="col">Model</th><th scope="col">Tokenizer</th><th scope="col">Prompt shape</th><th scope="col">Stop condition</th></tr></thead><tbody><tr><th scope="row">Alice</th><td>Word-level, 512 entries</td><td>&lt;bos> + words mapped through the vocabulary</td><td>&lt;eos> token 2</td></tr><tr><th scope="row">Solid 2</th><td>Byte-level BPE, 4096 entries</td><td>&lt;|user|>question&lt;|assistant|></td><td>&lt;|end|> or &lt;|pad|></td></tr></tbody></table></div><figure class="snippet"><figcaption class="snippet-head"><span>Tokenizer boundary</span><span class="code-meta">text</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="Tokenizer boundary, 9 lines"><code>// The engine only sees ids. Tokenization is a separate layer.
+//
+// Alice: word-level vocabulary, &lt;unk>=0, &lt;bos>=1, &lt;eos>=2.
+// Solid 2: byte-level BPE, special tokens:
+//   &lt;|pad|> &lt;|user|> &lt;|assistant|> &lt;|end|> &lt;|facts|>
+//
+// The Solid 2 prompt is a chat template:
+//   &lt;|user|>{question}&lt;|assistant|>
+// and generation stops on &lt;|end|> or &lt;|pad|>.</code></pre></figure><h3 class="subhead">The context window</h3><p>The model has a fixed context length. A prompt shorter than the window is left-padded; a prompt longer than the window keeps only the last <code>T</code> tokens. The position embedding is indexed by the position inside the window, not by the absolute position in the original prompt. This is an inference simplification, and it does not exactly match the trainer: training right-pads fixed-length examples, while generation left-pads so the newest token sits at the last position. A stronger design would use one convention on both sides, or an attention mask that ignores pad tokens.</p><figure class="snippet"><figcaption class="snippet-head"><span>tinyGptSolid2.ts</span><span class="code-meta">ts</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="tinyGptSolid2.ts, 15 lines"><code>function windowTokens(ids, context, padId) {
+  const window = ids.slice(-context);
+  while (window.length &lt; context) window.unshift(padId);
+  return window;
+}
+
+for (let step = 0; step &lt; maxTokens; step++) {
+  model.forward(windowTokens(ids, config.context, padId));
+  const next = repetitionPenalty > 1
+    ? sampleWithRepetitionPenalty(...)
+    : model.sample(temperature, topK);
+  if (isStopToken(tokenizer, next)) break;
+  ids.push(next);
+  output.push(next);
+}</code></pre></figure><h3 class="subhead">What crosses the WASM boundary</h3><ul><li><code>forward</code>: a pointer to <code>T</code> int32 token ids.</li><li><code>logits</code>: a pointer to <code>T × V</code> Q16 int32 values.</li><li><code>probabilities</code>: a pointer to <code>V</code> Q16 int32 values, converted to float only for display.</li><li><code>sample</code>: temperature in Q16, top-k as an integer; the return value is a token id.</li></ul><p>The only float value that crosses the core WASM API is the temperature, which the wrapper rounds to Q16 (<code>round(temperature · 65536)</code>). The model arithmetic never crosses back into float. The optional repetition-penalty path is different: it re-scores logits in JavaScript, as the next section explains.</p><h3 class="subhead">Repetition penalty is a host feature</h3><p>The Solid 2 wrapper optionally applies a repetition penalty before sampling. That path is implemented in JavaScript because it needs the recent token set and a float logit adjustment; it is not part of the integer engine. If you want a fully integer generation loop, port the penalty into the C sampler or leave it out.</p><aside class="bug" aria-label="Common bug"><strong>Common bug</strong><p>If generation repeats the same token forever, check the tokenizer and stop-token ids before blaming the model. A one-off BOS/pad id or a missing <code>&lt;|end|&gt;</code> will look like a model failure. Print the ids, not just the decoded text.</p></aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Encode a prompt, print the ids, run one forward pass, and print the top five tokens with probabilities. Then generate ten tokens with a fixed seed. Repeat and confirm the same ten ids. Finally, feed a prompt longer than the context and confirm the window keeps the last<code>T</code> ids.</p></aside><p class="source-line">Source: <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/apps/only-gates-ai/src/lib/tinyGptSolid2.ts">tinyGptSolid2.ts</a> · <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/apps/only-gates-ai/src/lib/tinyGptBpe.ts">tinyGptBpe.ts</a></p></section><section class="chapter" id="training"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">12</span><div><p class="kicker">Where the weights come from</p><h2>Train the float model, export the contract, then quantize</h2></div></div><p>The integer engine is only as good as the checkpoint. This chapter is the minimum you need to produce one that the engine can load: the data pipeline, the two training stages, the tokenizer artifact, and the exact export format.</p><h3 class="subhead">The Solid 2 recipe</h3><div class="table-wrap"><table><caption>Default configuration and training budget</caption><thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">Why</th></tr></thead><tbody><tr><th scope="row">vocab</th><td>4,096</td><td>Byte-level BPE over docs, Q&amp;A, and stories</td></tr><tr><th scope="row">context</th><td>256</td><td>Long enough for a doc section; small enough for the demo</td></tr><tr><th scope="row">dim / layers / heads / mlp</th><td>48 / 3 / 4 / 96</td><td>264,528 parameters</td></tr><tr><th scope="row">LM stage</th><td>5,000 steps</td><td>Learn the corpus distribution</td></tr><tr><th scope="row">QA stage</th><td>100 epochs</td><td>Fit chat-formatted question/answer pairs</td></tr><tr><th scope="row">optimizer</th><td>AdamW + warmup cosine</td><td>Stable small-model training</td></tr><tr><th scope="row">dropout</th><td>0.1 during training, 0 at inference</td><td>The C engine has no dropout</td></tr></tbody></table></div><h3 class="subhead">Data and tokenizer</h3><p>The corpus is pinned Solid 2 documentation, supplemental Solid 2 notes, a curated Q&amp;A set, and optional short stories for general-language coherence. The byte-level BPE tokenizer is trained once and written to <code>tokenizer.json</code> before the LM stage. On resume, the trainer reuses that file and refuses to continue if the data or tokenizer hash changed.</p><aside class="note-box" aria-label="Note"><strong>Tokenization is part of the model contract.</strong> A checkpoint and a tokenizer are a pair. Loading Solid 2 weights with the Alice word-level vocabulary would produce valid integers and meaningless text.</aside><h3 class="subhead">Two stages</h3><p>The LM stage samples fixed-length windows from the token stream and predicts the next token at every position. The QA stage formats each example as a chat sequence, masks the prompt tokens from the loss, and trains on the answer plus the end token. Both stages use the same model; only the data and the loss mask change.</p><h3 class="subhead">Export</h3><p>Training ends with <code>pack_weights(model)</code>, which transposes every linear matrix, concatenates the buffer in the order from chapter 1, and writes little-endian float32. <code>checkpoint.json</code> records the config, parameter count, tokenizer filename, and training metadata. The integer engine reads <code>weights.bin</code> and the config; the tokenizer stays on the host.</p><figure class="snippet"><figcaption class="snippet-head"><span>Training commands</span><span class="code-meta">sh</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="Training commands, 11 lines"><code># first session: mount Drive, clone, smoke test, then train
+python scripts/train_tiny_gpt_solid2_colab.py \
+  --out /content/drive/MyDrive/tiny-gpt-solid2 \
+  --lm-steps 5000 --qa-epochs 100 \
+  --save-every 100 --max-minutes 300 --fresh
+
+# later session: continue instead of restarting
+python scripts/train_tiny_gpt_solid2_colab.py \
+  --out /content/drive/MyDrive/tiny-gpt-solid2 \
+  --lm-steps 5000 --qa-epochs 100 \
+  --save-every 100 --max-minutes 300 --resume</code></pre></figure><p>The checkpoint stores the model, optimizer, scheduler, RNG state, LM step, QA epoch and batch cursor, and the exact QA permutation. A free Colab session can stop at a time budget and the next session continues from the same optimizer step. See <code>docs/COMPUTE.md</code> for the reporting protocol.</p><aside class="bug" aria-label="Common bug"><strong>Common bug</strong><p>The most expensive training mistake is a shape-compatible export with a missing transpose. The second most expensive is training with dropout left on at evaluation. Both produce a model that looks trained and fails in the integer engine. Run <code>verify_packed</code> and a no-dropout sample before exporting.</p></aside><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Train a one-layer, one-head toy model on a few hundred lines of text. Export it, load it in the example CLI, and confirm the float PyTorch logits and the integer logits have the same top-1 token for a fixed prompt. Then intentionally remove one transpose and watch it fail; that is the debugging skill worth having.</p></aside><p class="source-line">Source: <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/scripts/train_tiny_gpt_solid2_colab.py">scripts/train_tiny_gpt_solid2_colab.py</a> · <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/docs/COMPUTE.md">docs/COMPUTE.md</a></p></section><section class="chapter" id="verify"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">13</span><div><p class="kicker">Make the difference visible</p><h2>Verify against float, then debug by buffer, not by vibe</h2></div></div><p>Integer inference is not bit-identical to float inference. Quantization changes every number. The goal is to preserve the behavior that matters: the top prediction, the top-five set, and the character of the distribution. Verification is how you prove that instead of hoping.</p><h3 class="subhead">The metrics</h3><div class="table-wrap"><table><caption>What to measure between the float and integer paths</caption><thead><tr><th scope="col">Metric</th><th scope="col">What it tells you</th><th scope="col">Healthy sign</th></tr></thead><tbody><tr><th scope="row">Top-1 agreement</th><td>Does the argmax survive quantization?</td><td>High on a working model; not guaranteed on every prompt</td></tr><tr><th scope="row">Top-5 overlap</th><td>Is the near-tie set stable?</td><td>Usually higher than top-1</td></tr><tr><th scope="row">Mean absolute probability delta</th><td>How much mass moved across the vocabulary</td><td>Small compared with the peak probability</td></tr><tr><th scope="row">Max probability delta</th><td>Worst single-token change</td><td>Inspect the token when it is large</td></tr><tr><th scope="row">Perplexity / QA validation</th><td>Did the model learn the task?</td><td>Compare before and after quantization</td></tr></tbody></table></div><p>The TS comparison helper <code>compareTinyGpt</code> computes top-1, top-5 overlap, and mean/max delta between the float and TS int8 paths. The WASM comparison uses the same metrics against the C engine. Neither is a proof of correctness, but a large regression points at a specific stage.</p><h3 class="subhead">Debug by buffer</h3><p>The engine exposes its internal Q16 buffers through <code>tiny_gpt_buffer</code>: <code>x</code>, <code>x1</code>, <code>h</code>, <code>qkv</code>, <code>attn</code>, <code>y</code>, <code>z</code>, <code>gz</code>, <code>m</code>, and <code>logits</code>. Compare the first buffer where the integer and float paths diverge. Debugging the final logits without looking at the intermediates is guesswork.</p><figure class="snippet"><figcaption class="snippet-head"><span>tests/test_tiny_gpt.c</span><span class="code-meta">c</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="tests/test_tiny_gpt.c, 16 lines"><code>/* The test suite already checks these invariants. */
+tiny_gpt_forward(model, tokens);
+assert(tiny_gpt_last_error() == TINY_GPT_OK);
+
+const int32_t *logits = tiny_gpt_logits(model);
+assert(max(logits) > min(logits));       /* non-degenerate */
+
+tiny_gpt_probabilities(model, INT_Q16_ONE, probabilities);
+assert(sum(probabilities) > 65536 - vocab);
+assert(sum(probabilities) &lt; 65536 + vocab);
+
+tiny_gpt_set_seed(model, 12345);
+const int32_t a = tiny_gpt_sample(model, 0.8 * 65536, 40);
+tiny_gpt_set_seed(model, 12345);
+const int32_t b = tiny_gpt_sample(model, 0.8 * 65536, 40);
+assert(a == b);</code></pre></figure><h3 class="subhead">A symptom table</h3><div class="table-wrap"><table><caption>Start here when the output is wrong</caption><thead><tr><th scope="col">Symptom</th><th scope="col">Likely cause</th><th scope="col">Check</th></tr></thead><tbody><tr><th scope="row">Logits are all identical or zero</th><td>Weights not loaded, wrong packing order, or zero scales</td><td>Dump the first embedding row and the first matmul output.</td></tr><tr><th scope="row">Output is garbage but shapes are right</th><td>PyTorch [out, in] weights were not transposed</td><td>Compare packed index [k*out_cols + j] with W[out=j, in=k].</td></tr><tr><th scope="row">Model outputs are 65536× too large</th><td>One requantization shift is missing</td><td>Matmul should shift 16; attention scores shift 36; V sum shift 15.</td></tr><tr><th scope="row">Attention attends to the future</th><td>Causal mask or loop bound is wrong</td><td>For row t, only j &lt;= t may contribute.</td></tr><tr><th scope="row">Probabilities sum to 32768, not 65536</th><td>Q15 output was not converted to Q16</td><td>tiny_gpt_probabilities doubles the Q15 result.</td></tr><tr><th scope="row">Float and integer top-1 differ</th><td>Expected: quantization changes the distribution</td><td>Measure top-1 agreement, top-5 overlap, and mean delta.</td></tr><tr><th scope="row">Generation repeats or stops immediately</th><td>Tokenizer, BOS/pad, or stop-token handling</td><td>Print the token ids, not just the decoded text.</td></tr></tbody></table></div><h3 class="subhead">The honesty rule</h3><p>Do not claim the integer model is identical to the float model. Do claim what you measured: top-1 agreement, top-5 overlap, validation loss, and the exact prompt set. The app ships the comparison because the difference is part of the result, not a bug to hide.</p><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Build a table of ten prompts. For each, record the float top-1, the integer top-1, the top-5 overlap, and the mean delta. Then find the prompt with the largest delta and trace it to the first diverging buffer. That is the debugging loop.</p></aside><p class="source-line">Source: <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/tests/test_tiny_gpt.c">tests/test_tiny_gpt.c</a> · <a href="https://github.com/clinuxrulz/only-gates-ai/blob/main/apps/only-gates-ai/src/lib/tinyGpt.ts">tinyGpt.ts</a></p></section><section class="chapter" id="beyond"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">14</span><div><p class="kicker">What comes next</p><h2>Performance, KV cache, and the road to gates</h2></div></div><p>The shipping engine is intentionally simple. It recomputes the full context for every generated token, quantizes activations dynamically, and keeps every intermediate buffer in Q16. That is enough to prove the integer path; it is not the final performance story.</p><h3 class="subhead">The current cost</h3><p>For each generated token, the engine runs <code>L</code> blocks over <code>T</code> positions. The matrix work is roughly <code>L·T·(4D² + 2DM)</code> multiply-accumulates, and attention is <code>L·T²·D</code>. With the Solid 2 config that is small on a modern CPU, but it grows linearly in <code>T</code> for the matmuls and quadratically for attention. The implementation has no KV cache, so generating 100 tokens does 100 full passes.</p><h3 class="subhead">The first optimization: KV cache</h3><p>During decode, the keys and values for past positions do not change. Quantize them once, store <code>k8</code>, <code>v8</code>, and their scales per layer, and compute only the new query. The block still needs the current token&#8217;s residual, but the QKV projection can be reduced to one row, and attention becomes a dot product against the cache. The output is mathematically identical if the cache stores the same quantized values.</p><aside class="note-box" aria-label="Note">A KV cache changes the memory profile: each layer stores<!--!$--> <code>T × D/H × H</code> int8 keys and values plus scales. For Solid 2 that is small; for a larger model it becomes the dominant memory cost. This is why the current simple version is a good teaching reference first.</aside><h3 class="subhead">From integers to gates</h3><p>Every operation in this page has a hardware shape. An 8-bit adder is a handful of gates. A comparator is a tree of them. A shift by a constant is wiring. A multiply by a constant can become a shift-add network or a ROM. A GELU or exp lookup is BRAM plus an address mux. The quantized model is already a fixed dataflow; the lowering problem is scheduling that graph onto gates and memory, not inventing a new model.</p><p>The repository&#8217;s gate compiler already lowers small symbol-classifier circuits to a 16-gate vocabulary. Lowering a full transformer adds wider arithmetic, a matrix-tile schedule, on-chip memory planning, and token-by-token control. Those are engineering problems, not reasons the idea fails.</p><h3 class="subhead">What changes for an FPGA</h3><ul><li>Dynamic per-row activation quantization needs a max-reduction and a reciprocal at runtime. An FPGA implementation may prefer static or per-tile scales, or a small divider pipeline.</li><li>The GELU and DI-Exp tables map naturally to block RAM; the address generation and interpolation are the work.</li><li>Attention is a systolic or tiled array problem; the causal mask lets you skip work, but the schedule must not stall.</li><li>The model is fixed at synthesis time. Changing weights means resynthesis or a memory-load path.</li></ul><p>The honest status is: integer-only inference in WebAssembly is working; the gate compiler is a prototype for small circuits; a gate-lowered GPT and an FPGA implementation are the roadmap. The deep dive stops at the integer engine because that is the part that ships.</p><aside class="checkpoint" aria-label="Checkpoint"><strong>Checkpoint</strong><p>Measure tokens per second for a fixed prompt, then sketch a KV-cache layout with <code>k8</code>, <code>v8</code>, <code>k_scale</code>, and <code>v_scale</code> per layer. Estimate the memory for Solid 2 at<code>T=256</code>. Then pick one integer operation and write down its gate-level shape.</p></aside><p class="source-line">Related: <a href="../#gates">the field notes on the gate path</a> · <a href="https://github.com/clinuxrulz/only-gates-ai/tree/main/packages/only-gates-ai-compiler">the gate compiler</a></p></section><section class="chapter" id="appendix"><div class="chapter-head"><span class="chapter-number" aria-hidden="true">15</span><div><p class="kicker">Appendix</p><h2>The full source, the runnable harness, and the checklist</h2></div></div><p>Everything on this page is grounded in the shipping files below. The chapter listings are extracted from these exact sources; if a function changes, the page build fails rather than showing old code.</p><div class="table-wrap"><table><caption>Full source files on this page</caption><thead><tr><th scope="col">File</th><th scope="col">Lines</th><th scope="col">What it contains</th></tr></thead><tbody><tr><th scope="row">src/int_math.h</th><td>99</td><td>Q formats, rounding, sqrt, DI-Exp</td></tr><tr><th scope="row">src/tiny_gpt.h</th><td>139</td><td>Storage contract, structs, API</td></tr><tr><th scope="row">src/tiny_gpt_quantize.c</th><td>301</td><td>Float boundary and allocation</td></tr><tr><th scope="row">src/tiny_gpt_infer.c</th><td>547</td><td>Integer-only forward pass and sampling</td></tr></tbody></table></div><h3 class="subhead">A. int_math.h</h3><details class="code-details"><summary><span>src/int_math.h</span><span class="code-meta">c · 99 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="src/int_math.h, 99 lines"><code>#ifndef ONLY_GATES_AI_INT_MATH_H
+#define ONLY_GATES_AI_INT_MATH_H
+
+#include &lt;stdint.h>
+
+/*
+ * Integer-only fixed-point helpers shared by the attention test bed and the
+ * tiny GPT inference path.
+ *
+ * The inference code keeps the activation stream in Q16 (value * 65536) and
+ * probabilities in Q15 (value * 32768). Products that would overflow 32 bits
+ * are accumulated in int64. No floating point is used here.
+ */
+
+#define INT_Q16_ONE 65536
+#define INT_Q15_ONE 32768
+#define INT_Q12_ONE 4096
+
+static inline int32_t int_clamp_i32(int32_t value, int32_t low, int32_t high) {
+  if (value &lt; low) {
+    return low;
+  }
+  if (value > high) {
+    return high;
+  }
+  return value;
+}
+
+/* Rounds a / b to nearest, with b > 0. */
+static inline int64_t int_div_round(int64_t a, int64_t b) {
+  if (b &lt;= 0) {
+    return 0;
+  }
+  if (a >= 0) {
+    return (a + b / 2) / b;
+  }
+  return -((-a + b / 2) / b);
+}
+
+/* Rounds a / 2^shift to nearest. */
+static inline int64_t int_shift_round(int64_t a, int shift) {
+  if (shift &lt;= 0) {
+    return a;
+  }
+  return (a + ((int64_t)1 &lt;&lt; (shift - 1))) >> shift;
+}
+
+/* Floor of sqrt(n), integer-only. */
+static inline uint64_t int_isqrt_u64(uint64_t n) {
+  uint64_t result = 0;
+  uint64_t bit = (uint64_t)1 &lt;&lt; 62;
+  while (bit > n) {
+    bit >>= 2;
+  }
+  while (bit != 0) {
+    if (n >= result + bit) {
+      n -= result + bit;
+      result = (result >> 1) + bit;
+    } else {
+      result >>= 1;
+    }
+    bit >>= 2;
+  }
+  return result;
+}
+
+/* round(32768 * 2^(-k/32)), k = 0..32. */
+static const int32_t INT_TWO_POW_NEG_Q15[33] = {
+    32768, 32066, 31379, 30706, 30048, 29405, 28774, 28158, 27554, 26964,
+    26386, 25821, 25268, 24726, 24196, 23678, 23170, 22674, 22188, 21713,
+    21247, 20792, 20347, 19911, 19484, 19066, 18658, 18258, 17867, 17484,
+    17109, 16743, 16384,
+};
+
+/*
+ * exp(-x) in Q15 for x >= 0 in Q12 (1/4096 nat resolution).
+ *
+ * The exponent is clamped to 20 nats by the callers (the paper's DI-Exp
+ * clipping range). Values beyond the Q15 resolution return 0.
+ */
+static inline int32_t int_exp_neg_q15_q12(int32_t x_q12) {
+  if (x_q12 &lt;= 0) {
+    return INT_Q15_ONE;
+  }
+  const int32_t y_q12 = (int32_t)(((int64_t)x_q12 * 5909) >> 12);
+  const int32_t integer_part = y_q12 >> 12;
+  if (integer_part >= 15) {
+    return 0;
+  }
+  const int32_t fraction = y_q12 &amp; 4095;
+  const int32_t index = fraction >> 7;
+  const int32_t remainder = fraction &amp; 127;
+  const int32_t a = INT_TWO_POW_NEG_Q15[index];
+  const int32_t b = INT_TWO_POW_NEG_Q15[index + 1];
+  const int32_t value = a - (((a - b) * remainder) >> 7);
+  return value >> integer_part;
+}
+
+#endif
+</code></pre></details><h3 class="subhead">B. tiny_gpt.h</h3><details class="code-details"><summary><span>src/tiny_gpt.h</span><span class="code-meta">c · 139 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="src/tiny_gpt.h, 139 lines"><code>#ifndef ONLY_GATES_AI_TINY_GPT_H
+#define ONLY_GATES_AI_TINY_GPT_H
+
+#include &lt;stdint.h>
+
+/*
+ * Integer-only inference for the tiny GPT demo.
+ *
+ * Weight and activation storage:
+ *   - matrices are int8 with one Q16 dequantization scale per output column
+ *     (weight value = q8 * scale_q16 / 65536);
+ *   - the residual / activation stream is Q16 int32 (value * 65536);
+ *   - attention and output probabilities are Q15 int32 (value * 32768).
+ *
+ * This header deliberately mentions no floating-point type. The conversion
+ * from the float32 checkpoint lives in tiny_gpt_quantize.c; the forward pass
+ * in tiny_gpt_infer.c is integer-only.
+ */
+
+/* GELU lookup table shared by the quantizer and the integer forward pass. */
+#define TINY_GPT_GELU_POINTS 1025
+#define TINY_GPT_GELU_MIN_Q16 (-1048576) /* -16.0 */
+#define TINY_GPT_GELU_MAX_Q16 1048576    /* 16.0 */
+#define TINY_GPT_GELU_STEP_Q16 2048      /* 1/32 */
+
+/* DI-Exp clipping range: exp arguments are clamped to 20 nats. */
+#define TINY_GPT_SOFTMAX_CLIP_Q12 81920
+
+typedef struct {
+  int vocab_size;
+  int context;
+  int dim;
+  int layers;
+  int heads;
+  int mlp;
+} TinyGptConfig;
+
+typedef struct {
+  int8_t *wqkv;         /* dim x (3 * dim), row-major */
+  int32_t *wqkv_scale;  /* 3 * dim */
+  int8_t *wo;           /* dim x dim */
+  int32_t *wo_scale;    /* dim */
+  int8_t *w1;           /* dim x mlp */
+  int32_t *w1_scale;    /* mlp */
+  int8_t *w2;           /* mlp x dim */
+  int32_t *w2_scale;    /* dim */
+  int32_t *g1;          /* dim, Q16 */
+  int32_t *g2;          /* dim, Q16 */
+} TinyGptLayer;
+
+typedef struct {
+  TinyGptConfig config;
+
+  int8_t *token_emb;        /* vocab x dim, one scale per row */
+  int32_t *token_emb_scale; /* vocab, Q16 */
+  int8_t *pos_emb;          /* context x dim, one scale per row */
+  int32_t *pos_emb_scale;   /* context, Q16 */
+  int8_t *head;             /* dim x vocab, one scale per column/token */
+  int32_t *head_scale;      /* vocab, Q16 */
+  int32_t *g_final;         /* dim, Q16 */
+  TinyGptLayer *layers;
+
+  int32_t inv_sqrt_head_dim_q16;
+
+  /* Scratch, sized once at creation. */
+  int32_t *x;         /* context * dim */
+  int32_t *x1;        /* context * dim */
+  int32_t *h;         /* context * dim */
+  int32_t *qkv;       /* context * dim * 3 */
+  int32_t *attn;      /* context * dim */
+  int32_t *y;         /* context * dim */
+  int32_t *z;         /* context * mlp */
+  int32_t *gz;        /* context * mlp */
+  int32_t *m;         /* context * dim */
+  int32_t *logits;    /* context * vocab, Q16 */
+  int32_t *probs;     /* vocab, Q15 (also used as score scratch) */
+  int8_t *q8;         /* max column count */
+  int8_t *k8;         /* context * head_dim */
+  int8_t *v8;         /* context * head_dim */
+  int32_t *k_scale;   /* context, Q16 */
+  int32_t *v_scale;   /* context, Q16 */
+  int32_t *scores;    /* context, Q12 nats */
+  int32_t *attn_prob; /* context, Q15 */
+  int32_t *top_ids;   /* vocab */
+  int32_t *top_vals;  /* vocab */
+  int32_t *gelu_lut;  /* fixed-point GELU table */
+  uint32_t rng;
+} TinyGpt;
+
+/* Error codes shared by the creation and inference entry points. */
+enum {
+  TINY_GPT_OK = 0,
+  TINY_GPT_ERROR_ARGUMENT = 1,
+  TINY_GPT_ERROR_ALLOC = 2,
+  TINY_GPT_ERROR_CONFIG = 3,
+};
+
+extern int tiny_gpt_error_code;
+
+/* Runs the integer forward pass. `tokens` must contain config.context ids. */
+void tiny_gpt_forward(TinyGpt *model, const int32_t *tokens);
+
+/* Q16 logits for all context positions, row-major context x vocab. */
+const int32_t *tiny_gpt_logits(TinyGpt *model);
+
+/* Debug/tests: exposes an internal Q16 buffer after the last forward pass. */
+enum {
+  TINY_GPT_BUFFER_X = 0,
+  TINY_GPT_BUFFER_X1,
+  TINY_GPT_BUFFER_H,
+  TINY_GPT_BUFFER_QKV,
+  TINY_GPT_BUFFER_ATTN,
+  TINY_GPT_BUFFER_Y,
+  TINY_GPT_BUFFER_Z,
+  TINY_GPT_BUFFER_GZ,
+  TINY_GPT_BUFFER_M,
+  TINY_GPT_BUFFER_LOGITS,
+};
+const int32_t *tiny_gpt_buffer(TinyGpt *model, int which);
+
+/*
+ * Integer softmax over the last position's logits, divided by a Q16
+ * temperature. Writes `vocab_size` Q16 probabilities (sum ~= 65536).
+ */
+void tiny_gpt_probabilities(TinyGpt *model, int32_t temperature_q16,
+                            int32_t *out);
+
+/* Seeds the xorshift32 sampler. A zero seed is replaced by a default. */
+void tiny_gpt_set_seed(TinyGpt *model, uint32_t seed);
+
+/* Samples from the integer distribution over the top-k tokens. */
+int32_t tiny_gpt_sample(TinyGpt *model, int32_t temperature_q16, int32_t top_k);
+
+int tiny_gpt_vocab_size(const TinyGpt *model);
+int tiny_gpt_context(const TinyGpt *model);
+int tiny_gpt_last_error(void);
+void tiny_gpt_destroy(TinyGpt *model);
+
+#endif
+</code></pre></details><h3 class="subhead">C. tiny_gpt_quantize.c</h3><details class="code-details"><summary><span>src/tiny_gpt_quantize.c</span><span class="code-meta">c · 301 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="src/tiny_gpt_quantize.c, 301 lines"><code>#include "tiny_gpt_quantize.h"
+
+#include "int_math.h"
+
+#include &lt;math.h>
+#include &lt;stddef.h>
+#include &lt;stdlib.h>
+#include &lt;string.h>
+
+/*
+ * Load-time checkpoint conversion. Floating point is confined to this file:
+ * it turns the trained float32 weights into int8 matrices with Q16 scales,
+ * Q16 norm gains and a Q16 GELU lookup table. tiny_gpt_infer.c only sees the
+ * resulting integers.
+ */
+
+static int32_t q16_from_float(float value) {
+  const float scaled = roundf(value * 65536.0f);
+  if (scaled > 2147483647.0f) {
+    return 2147483647;
+  }
+  if (scaled &lt; -2147483648.0f) {
+    return (-2147483647 - 1);
+  }
+  return (int32_t)scaled;
+}
+
+static int32_t scale_q16_from_float(float scale) {
+  if (!(scale > 0.0f)) {
+    return 0;
+  }
+  const float scaled = roundf(scale * 65536.0f);
+  if (scaled &lt; 1.0f) {
+    return 1;
+  }
+  if (scaled > 2147483647.0f) {
+    return 2147483647;
+  }
+  return (int32_t)scaled;
+}
+
+static int8_t quantize_value(float value, float inverse) {
+  float scaled = roundf(value * inverse);
+  if (scaled > 127.0f) {
+    scaled = 127.0f;
+  } else if (scaled &lt; -127.0f) {
+    scaled = -127.0f;
+  }
+  return (int8_t)scaled;
+}
+
+/* One int8 scale per row (embedding lookup tables). */
+static void quantize_rows(const float *src, int rows, int cols, int8_t *dst,
+                          int32_t *scales) {
+  for (int row = 0; row &lt; rows; ++row) {
+    const float *source = src + (size_t)row * cols;
+    int8_t *target = dst + (size_t)row * cols;
+    float max_abs = 0.0f;
+    for (int col = 0; col &lt; cols; ++col) {
+      const float magnitude = fabsf(source[col]);
+      if (magnitude > max_abs) {
+        max_abs = magnitude;
+      }
+    }
+    if (max_abs &lt;= 0.0f) {
+      memset(target, 0, (size_t)cols);
+      scales[row] = 0;
+      continue;
+    }
+    scales[row] = scale_q16_from_float(max_abs / 127.0f);
+    const float inverse = 127.0f / max_abs;
+    for (int col = 0; col &lt; cols; ++col) {
+      target[col] = quantize_value(source[col], inverse);
+    }
+  }
+}
+
+/* One int8 scale per output column (linear projections). */
+static void quantize_columns(const float *src, int rows, int cols, int8_t *dst,
+                             int32_t *scales) {
+  for (int col = 0; col &lt; cols; ++col) {
+    float max_abs = 0.0f;
+    for (int row = 0; row &lt; rows; ++row) {
+      const float magnitude = fabsf(src[(size_t)row * cols + col]);
+      if (magnitude > max_abs) {
+        max_abs = magnitude;
+      }
+    }
+    if (max_abs &lt;= 0.0f) {
+      scales[col] = 0;
+      for (int row = 0; row &lt; rows; ++row) {
+        dst[(size_t)row * cols + col] = 0;
+      }
+      continue;
+    }
+    scales[col] = scale_q16_from_float(max_abs / 127.0f);
+    const float inverse = 127.0f / max_abs;
+    for (int row = 0; row &lt; rows; ++row) {
+      const size_t index = (size_t)row * cols + col;
+      dst[index] = quantize_value(src[index], inverse);
+    }
+  }
+}
+
+static void quantize_gain(const float *src, int length, int32_t *dst) {
+  for (int i = 0; i &lt; length; ++i) {
+    dst[i] = q16_from_float(src[i]);
+  }
+}
+
+static void build_gelu_lut(int32_t *lut) {
+  for (int i = 0; i &lt; TINY_GPT_GELU_POINTS; ++i) {
+    const float x = -16.0f + (float)i / 32.0f;
+    const float inner = 0.7978845608028654f * (x + 0.044715f * x * x * x);
+    const float value = 0.5f * x * (1.0f + tanhf(inner));
+    lut[i] = q16_from_float(value);
+  }
+}
+
+static void *allocate_zero(size_t count, size_t size) {
+  return calloc(count == 0 ? 1 : count, size);
+}
+
+static int32_t inverse_sqrt_q16(int value) {
+  if (value &lt;= 0) {
+    return INT_Q16_ONE;
+  }
+  const uint64_t root = int_isqrt_u64(((uint64_t)value) &lt;&lt; 32);
+  if (root == 0) {
+    return INT_Q16_ONE;
+  }
+  return (int32_t)(((uint64_t)INT_Q16_ONE * INT_Q16_ONE) / root);
+}
+
+static int allocate_layer_weights(TinyGptLayer *layer, int dim, int mlp,
+                                  const float **cursor) {
+  const float *g1 = *cursor;
+  *cursor += dim;
+  const float *wqkv = *cursor;
+  *cursor += (size_t)dim * dim * 3;
+  const float *wo = *cursor;
+  *cursor += (size_t)dim * dim;
+  const float *g2 = *cursor;
+  *cursor += dim;
+  const float *w1 = *cursor;
+  *cursor += (size_t)dim * mlp;
+  const float *w2 = *cursor;
+  *cursor += (size_t)mlp * dim;
+
+  layer->wqkv = allocate_zero((size_t)dim * dim * 3, sizeof(int8_t));
+  layer->wqkv_scale = allocate_zero((size_t)dim * 3, sizeof(int32_t));
+  layer->wo = allocate_zero((size_t)dim * dim, sizeof(int8_t));
+  layer->wo_scale = allocate_zero((size_t)dim, sizeof(int32_t));
+  layer->w1 = allocate_zero((size_t)dim * mlp, sizeof(int8_t));
+  layer->w1_scale = allocate_zero((size_t)mlp, sizeof(int32_t));
+  layer->w2 = allocate_zero((size_t)mlp * dim, sizeof(int8_t));
+  layer->w2_scale = allocate_zero((size_t)dim, sizeof(int32_t));
+  layer->g1 = allocate_zero((size_t)dim, sizeof(int32_t));
+  layer->g2 = allocate_zero((size_t)dim, sizeof(int32_t));
+
+  if (layer->wqkv == NULL || layer->wqkv_scale == NULL || layer->wo == NULL ||
+      layer->wo_scale == NULL || layer->w1 == NULL || layer->w1_scale == NULL ||
+      layer->w2 == NULL || layer->w2_scale == NULL || layer->g1 == NULL ||
+      layer->g2 == NULL) {
+    return 0;
+  }
+
+  quantize_columns(wqkv, dim, dim * 3, layer->wqkv, layer->wqkv_scale);
+  quantize_columns(wo, dim, dim, layer->wo, layer->wo_scale);
+  quantize_columns(w1, dim, mlp, layer->w1, layer->w1_scale);
+  quantize_columns(w2, mlp, dim, layer->w2, layer->w2_scale);
+  quantize_gain(g1, dim, layer->g1);
+  quantize_gain(g2, dim, layer->g2);
+  return 1;
+}
+
+static int allocate_scratch(TinyGpt *model) {
+  const int context = model->config.context;
+  const int dim = model->config.dim;
+  const int mlp = model->config.mlp;
+  const int vocab = model->config.vocab_size;
+  const int head_dim = dim / model->config.heads;
+
+  model->x = allocate_zero((size_t)context * dim, sizeof(int32_t));
+  model->x1 = allocate_zero((size_t)context * dim, sizeof(int32_t));
+  model->h = allocate_zero((size_t)context * dim, sizeof(int32_t));
+  model->qkv = allocate_zero((size_t)context * dim * 3, sizeof(int32_t));
+  model->attn = allocate_zero((size_t)context * dim, sizeof(int32_t));
+  model->y = allocate_zero((size_t)context * dim, sizeof(int32_t));
+  model->z = allocate_zero((size_t)context * mlp, sizeof(int32_t));
+  model->gz = allocate_zero((size_t)context * mlp, sizeof(int32_t));
+  model->m = allocate_zero((size_t)context * dim, sizeof(int32_t));
+  model->logits = allocate_zero((size_t)context * vocab, sizeof(int32_t));
+  model->probs = allocate_zero((size_t)vocab, sizeof(int32_t));
+  model->q8 = allocate_zero((size_t)dim * 3, sizeof(int8_t));
+  model->k8 = allocate_zero((size_t)context * head_dim, sizeof(int8_t));
+  model->v8 = allocate_zero((size_t)context * head_dim, sizeof(int8_t));
+  model->k_scale = allocate_zero((size_t)context, sizeof(int32_t));
+  model->v_scale = allocate_zero((size_t)context, sizeof(int32_t));
+  model->scores = allocate_zero((size_t)context, sizeof(int32_t));
+  model->attn_prob = allocate_zero((size_t)context, sizeof(int32_t));
+  model->top_ids = allocate_zero((size_t)vocab, sizeof(int32_t));
+  model->top_vals = allocate_zero((size_t)vocab, sizeof(int32_t));
+  model->gelu_lut =
+      allocate_zero(TINY_GPT_GELU_POINTS, sizeof(int32_t));
+
+  return model->x != NULL &amp;&amp; model->x1 != NULL &amp;&amp; model->h != NULL &amp;&amp;
+         model->qkv != NULL &amp;&amp; model->attn != NULL &amp;&amp; model->y != NULL &amp;&amp;
+         model->z != NULL &amp;&amp; model->gz != NULL &amp;&amp; model->m != NULL &amp;&amp;
+         model->logits != NULL &amp;&amp; model->probs != NULL &amp;&amp; model->q8 != NULL &amp;&amp;
+         model->k8 != NULL &amp;&amp; model->v8 != NULL &amp;&amp; model->k_scale != NULL &amp;&amp;
+         model->v_scale != NULL &amp;&amp; model->scores != NULL &amp;&amp;
+         model->attn_prob != NULL &amp;&amp; model->top_ids != NULL &amp;&amp;
+         model->top_vals != NULL &amp;&amp; model->gelu_lut != NULL;
+}
+
+TinyGpt *tiny_gpt_create(int vocab_size, int context, int dim, int layers,
+                         int heads, int mlp, const float *packed_weights) {
+  tiny_gpt_error_code = TINY_GPT_OK;
+  if (vocab_size &lt;= 0 || context &lt;= 0 || dim &lt;= 0 || layers &lt;= 0 ||
+      heads &lt;= 0 || mlp &lt;= 0 || packed_weights == NULL || dim % heads != 0) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_CONFIG;
+    return NULL;
+  }
+
+  TinyGpt *model = calloc(1, sizeof(*model));
+  if (model == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ALLOC;
+    return NULL;
+  }
+
+  model->config.vocab_size = vocab_size;
+  model->config.context = context;
+  model->config.dim = dim;
+  model->config.layers = layers;
+  model->config.heads = heads;
+  model->config.mlp = mlp;
+  model->inv_sqrt_head_dim_q16 = inverse_sqrt_q16(dim / heads);
+  model->rng = 0x9e3779b9u;
+
+  const float *cursor = packed_weights;
+  const float *token_emb = cursor;
+  cursor += (size_t)vocab_size * dim;
+  const float *pos_emb = cursor;
+  cursor += (size_t)context * dim;
+  const float *g_final = cursor;
+  cursor += dim;
+
+  model->token_emb = allocate_zero((size_t)vocab_size * dim, sizeof(int8_t));
+  model->token_emb_scale = allocate_zero((size_t)vocab_size, sizeof(int32_t));
+  model->pos_emb = allocate_zero((size_t)context * dim, sizeof(int8_t));
+  model->pos_emb_scale = allocate_zero((size_t)context, sizeof(int32_t));
+  model->head = allocate_zero((size_t)dim * vocab_size, sizeof(int8_t));
+  model->head_scale = allocate_zero((size_t)vocab_size, sizeof(int32_t));
+  model->g_final = allocate_zero((size_t)dim, sizeof(int32_t));
+  model->layers = allocate_zero((size_t)layers, sizeof(TinyGptLayer));
+
+  if (model->token_emb == NULL || model->token_emb_scale == NULL ||
+      model->pos_emb == NULL || model->pos_emb_scale == NULL ||
+      model->head == NULL || model->head_scale == NULL ||
+      model->g_final == NULL || model->layers == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ALLOC;
+    tiny_gpt_destroy(model);
+    return NULL;
+  }
+
+  quantize_rows(token_emb, vocab_size, dim, model->token_emb,
+                model->token_emb_scale);
+  quantize_rows(pos_emb, context, dim, model->pos_emb, model->pos_emb_scale);
+  quantize_gain(g_final, dim, model->g_final);
+
+  /*
+   * The output head is the tied token embedding, transposed to dim x vocab.
+   * Reuse the row-quantized values and scales so the two paths stay identical.
+   */
+  for (int token = 0; token &lt; vocab_size; ++token) {
+    model->head_scale[token] = model->token_emb_scale[token];
+    for (int d = 0; d &lt; dim; ++d) {
+      model->head[(size_t)d * vocab_size + token] =
+          model->token_emb[(size_t)token * dim + d];
+    }
+  }
+
+  for (int layer = 0; layer &lt; layers; ++layer) {
+    if (!allocate_layer_weights(&amp;model->layers[layer], dim, mlp, &amp;cursor)) {
+      tiny_gpt_error_code = TINY_GPT_ERROR_ALLOC;
+      tiny_gpt_destroy(model);
+      return NULL;
+    }
+  }
+
+  if (!allocate_scratch(model)) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ALLOC;
+    tiny_gpt_destroy(model);
+    return NULL;
+  }
+
+  build_gelu_lut(model->gelu_lut);
+
+  return model;
+}
+</code></pre></details><h3 class="subhead">D. tiny_gpt_infer.c</h3><details class="code-details"><summary><span>src/tiny_gpt_infer.c</span><span class="code-meta">c · 547 lines</span></summary><pre class="snippet-code" tabindex="0" role="region" aria-label="src/tiny_gpt_infer.c, 547 lines"><code>#include "tiny_gpt.h"
+
+#include "int_math.h"
+
+#include &lt;stddef.h>
+#include &lt;stdlib.h>
+#include &lt;string.h>
+
+/*
+ * Integer-only forward pass for the tiny GPT.
+ *
+ * Everything below uses int8/int32/int64 arithmetic. The float checkpoint is
+ * converted once in tiny_gpt_quantize.c; no floating-point type, literal or
+ * math.h function appears in this file.
+ */
+
+int tiny_gpt_error_code = TINY_GPT_OK;
+
+static uint32_t next_random(uint32_t *state) {
+  uint32_t value = *state;
+  value ^= value &lt;&lt; 13;
+  value ^= value >> 17;
+  value ^= value &lt;&lt; 5;
+  *state = value;
+  return value;
+}
+
+/*
+ * Dynamically quantizes one activation row (Q16) to int8. The returned scale
+ * is in Q16 units, so `value ~= q8 * scale / 65536`.
+ */
+static void quantize_activation_row(const int32_t *src, int count, int8_t *dst,
+                                    int32_t *scale_out) {
+  int32_t max_abs = 0;
+  for (int i = 0; i &lt; count; ++i) {
+    const int32_t value = src[i];
+    const int32_t magnitude = value &lt; 0 ? -value : value;
+    if (magnitude > max_abs) {
+      max_abs = magnitude;
+    }
+  }
+
+  if (max_abs == 0) {
+    *scale_out = 0;
+    memset(dst, 0, (size_t)count);
+    return;
+  }
+  if (max_abs &lt;= 127) {
+    *scale_out = 1;
+    for (int i = 0; i &lt; count; ++i) {
+      dst[i] = (int8_t)src[i];
+    }
+    return;
+  }
+
+  *scale_out = (max_abs + 63) / 127;
+  for (int i = 0; i &lt; count; ++i) {
+    int64_t quantized = int_div_round((int64_t)src[i] * 127, max_abs);
+    if (quantized > 127) {
+      quantized = 127;
+    } else if (quantized &lt; -127) {
+      quantized = -127;
+    }
+    dst[i] = (int8_t)quantized;
+  }
+}
+
+/*
+ * DI-MatMul: per-token int8 activations, int8 weights with per-column Q16
+ * scales, int32 accumulation, single int64 requantization to Q16 output.
+ */
+static void matmul_q16(const int32_t *x, int rows, int cols,
+                       const int8_t *weights, const int32_t *weight_scale,
+                       int out_cols, int8_t *scratch, int32_t *out) {
+  for (int row = 0; row &lt; rows; ++row) {
+    int32_t activation_scale = 0;
+    quantize_activation_row(x + (size_t)row * cols, cols, scratch,
+                            &amp;activation_scale);
+    int32_t *target = out + (size_t)row * out_cols;
+    for (int j = 0; j &lt; out_cols; ++j) {
+      int32_t accumulator = 0;
+      for (int k = 0; k &lt; cols; ++k) {
+        accumulator +=
+            (int32_t)scratch[k] * (int32_t)weights[(size_t)k * out_cols + j];
+      }
+      const int64_t product =
+          (int64_t)accumulator * activation_scale * weight_scale[j];
+      target[j] = (int32_t)int_shift_round(product, 16);
+    }
+  }
+}
+
+/* DI-Norm: int64 sum of squares, integer sqrt, Q16 reciprocal and gain. */
+static void rmsnorm_q16(const int32_t *x, int rows, int cols,
+                        const int32_t *gain, int32_t *out) {
+  /* round(1e-5 * 2^32), matching the float path's epsilon. */
+  const int64_t epsilon_q32 = 42950;
+  for (int row = 0; row &lt; rows; ++row) {
+    const int32_t *source = x + (size_t)row * cols;
+    int32_t *target = out + (size_t)row * cols;
+    int64_t sum_squares = 0;
+    for (int i = 0; i &lt; cols; ++i) {
+      const int64_t value = source[i];
+      sum_squares += value * value;
+    }
+    const int64_t mean_q32 = sum_squares / cols + epsilon_q32;
+    int64_t rms_q16 = (int64_t)int_isqrt_u64((uint64_t)mean_q32);
+    if (rms_q16 == 0) {
+      rms_q16 = 1;
+    }
+    for (int i = 0; i &lt; cols; ++i) {
+      const int64_t scaled = (int64_t)source[i] * gain[i];
+      target[i] = (int32_t)int_div_round(scaled, rms_q16);
+    }
+  }
+}
+
+/* Integer GELU: Q16 lookup table with linear interpolation. */
+static int32_t gelu_q16(const TinyGpt *model, int32_t x) {
+  if (x &lt;= TINY_GPT_GELU_MIN_Q16) {
+    return 0;
+  }
+  if (x >= TINY_GPT_GELU_MAX_Q16) {
+    return x;
+  }
+  const int32_t offset = x - TINY_GPT_GELU_MIN_Q16;
+  const int index = offset / TINY_GPT_GELU_STEP_Q16;
+  const int32_t remainder = offset &amp; (TINY_GPT_GELU_STEP_Q16 - 1);
+  const int32_t a = model->gelu_lut[index];
+  const int32_t b = model->gelu_lut[index + 1];
+  /* STEP_Q16 is 2048 = 1 &lt;&lt; 11, so the interpolation shift is 11. */
+  return a + (int32_t)(((int64_t)(b - a) * remainder) >> 11);
+}
+
+/*
+ * Integer attention. Q/K/V are quantized per head and per token, scores use
+ * int8 dot products, DI-Exp with clipping produces Q15 probabilities, and the
+ * value aggregation uses the corrected P * V indexing (sum over keys).
+ */
+static void attention_q16(TinyGpt *model, const int32_t *qkv) {
+  const TinyGptConfig *config = &amp;model->config;
+  const int context = config->context;
+  const int dim = config->dim;
+  const int heads = config->heads;
+  const int head_dim = dim / heads;
+  const int qkv_stride = dim * 3;
+
+  for (int head = 0; head &lt; heads; ++head) {
+    const int head_offset = head * head_dim;
+
+    for (int j = 0; j &lt; context; ++j) {
+      const int32_t *key =
+          qkv + (size_t)j * qkv_stride + dim + head_offset;
+      const int32_t *value =
+          qkv + (size_t)j * qkv_stride + dim * 2 + head_offset;
+      quantize_activation_row(key, head_dim, model->k8 + (size_t)j * head_dim,
+                              &amp;model->k_scale[j]);
+      quantize_activation_row(value, head_dim, model->v8 + (size_t)j * head_dim,
+                              &amp;model->v_scale[j]);
+    }
+
+    for (int t = 0; t &lt; context; ++t) {
+      const int32_t *query = qkv + (size_t)t * qkv_stride + head_offset;
+      int32_t query_scale = 0;
+      quantize_activation_row(query, head_dim, model->q8, &amp;query_scale);
+
+      int32_t row_max = -2147483647;
+      for (int j = 0; j &lt;= t; ++j) {
+        int32_t dot = 0;
+        for (int d = 0; d &lt; head_dim; ++d) {
+          dot += (int32_t)model->q8[d] *
+                 (int32_t)model->k8[(size_t)j * head_dim + d];
+        }
+        /*
+         * product = dot * qscale * kscale * inv_sqrt_q16. With qscale and
+         * kscale in Q16, the real score is product / 2^48. Shift by 36 to
+         * land in Q12 (1/4096 nat), which keeps the softmax error well below
+         * the Q8 variant's ~1e-3.
+         */
+        const int64_t product = (int64_t)dot * query_scale *
+                                model->k_scale[j] *
+                                model->inv_sqrt_head_dim_q16;
+        int64_t score = int_shift_round(product, 36);
+        if (score > TINY_GPT_SOFTMAX_CLIP_Q12) {
+          score = TINY_GPT_SOFTMAX_CLIP_Q12;
+        } else if (score &lt; -TINY_GPT_SOFTMAX_CLIP_Q12) {
+          score = -TINY_GPT_SOFTMAX_CLIP_Q12;
+        }
+        model->scores[j] = (int32_t)score;
+        if (model->scores[j] > row_max) {
+          row_max = model->scores[j];
+        }
+      }
+
+      int32_t total = 0;
+      for (int j = 0; j &lt;= t; ++j) {
+        int32_t delta = row_max - model->scores[j];
+        if (delta &lt; 0) {
+          delta = 0;
+        } else if (delta > TINY_GPT_SOFTMAX_CLIP_Q12) {
+          delta = TINY_GPT_SOFTMAX_CLIP_Q12;
+        }
+        const int32_t weight = int_exp_neg_q15_q12(delta);
+        model->attn_prob[j] = weight;
+        total += weight;
+      }
+      for (int j = t + 1; j &lt; context; ++j) {
+        model->attn_prob[j] = 0;
+      }
+
+      if (total > 0) {
+        for (int j = 0; j &lt;= t; ++j) {
+          model->attn_prob[j] = (int32_t)int_div_round(
+              (int64_t)model->attn_prob[j] * INT_Q15_ONE, total);
+        }
+      } else {
+        const int32_t uniform = INT_Q15_ONE / (t + 1);
+        for (int j = 0; j &lt;= t; ++j) {
+          model->attn_prob[j] = uniform;
+        }
+      }
+
+      for (int d = 0; d &lt; head_dim; ++d) {
+        int64_t accumulator = 0;
+        for (int j = 0; j &lt;= t; ++j) {
+          accumulator += (int64_t)model->attn_prob[j] *
+                         (int64_t)model->v8[(size_t)j * head_dim + d] *
+                         model->v_scale[j];
+        }
+        model->attn[(size_t)t * dim + head_offset + d] =
+            (int32_t)int_shift_round(accumulator, 15);
+      }
+    }
+  }
+}
+
+/* Integer softmax over the last position. Writes vocab Q15 probabilities. */
+static void softmax_last_q15(TinyGpt *model, int32_t temperature_q16,
+                             int32_t *out_q15) {
+  const int vocab = model->config.vocab_size;
+  const int offset = (model->config.context - 1) * vocab;
+  const int32_t *logits = model->logits + offset;
+
+  if (temperature_q16 &lt;= 0) {
+    temperature_q16 = 655; /* 0.01 */
+  } else if (temperature_q16 &lt; 655) {
+    temperature_q16 = 655;
+  }
+
+  int32_t maximum = -2147483647;
+  for (int i = 0; i &lt; vocab; ++i) {
+    const int64_t scaled =
+        int_div_round((int64_t)logits[i] * INT_Q16_ONE, temperature_q16);
+    /* Q16 (logit / temperature) -> Q12 nats for DI-Exp. */
+    const int32_t score = (int32_t)(scaled >> 4);
+    model->probs[i] = score;
+    if (score > maximum) {
+      maximum = score;
+    }
+  }
+
+  int32_t total = 0;
+  for (int i = 0; i &lt; vocab; ++i) {
+    int32_t delta = maximum - model->probs[i];
+    if (delta &lt; 0) {
+      delta = 0;
+    } else if (delta > TINY_GPT_SOFTMAX_CLIP_Q12) {
+      delta = TINY_GPT_SOFTMAX_CLIP_Q12;
+    }
+    const int32_t weight = int_exp_neg_q15_q12(delta);
+    model->probs[i] = weight;
+    total += weight;
+  }
+
+  if (total &lt;= 0) {
+    const int32_t uniform = INT_Q15_ONE / vocab;
+    for (int i = 0; i &lt; vocab; ++i) {
+      out_q15[i] = uniform;
+    }
+    return;
+  }
+
+  for (int i = 0; i &lt; vocab; ++i) {
+    out_q15[i] = (int32_t)int_div_round(
+        (int64_t)model->probs[i] * INT_Q15_ONE, total);
+  }
+}
+
+void tiny_gpt_forward(TinyGpt *model, const int32_t *tokens) {
+  if (model == NULL || tokens == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+
+  const TinyGptConfig *config = &amp;model->config;
+  const int context = config->context;
+  const int dim = config->dim;
+  const int mlp = config->mlp;
+  const int vocab = config->vocab_size;
+
+  /* Embeddings: token and position tables are int8 with Q16 row scales. */
+  for (int t = 0; t &lt; context; ++t) {
+    int token = tokens[t];
+    if (token &lt; 0 || token >= vocab) {
+      token = 0;
+    }
+    const int8_t *token_row = model->token_emb + (size_t)token * dim;
+    const int32_t token_scale = model->token_emb_scale[token];
+    const int8_t *position_row = model->pos_emb + (size_t)t * dim;
+    const int32_t position_scale = model->pos_emb_scale[t];
+    for (int d = 0; d &lt; dim; ++d) {
+      int64_t value = (int64_t)token_row[d] * token_scale +
+                      (int64_t)position_row[d] * position_scale;
+      if (value > 2147483647) {
+        value = 2147483647;
+      } else if (value &lt; -2147483647) {
+        value = -2147483647;
+      }
+      model->x[(size_t)t * dim + d] = (int32_t)value;
+    }
+  }
+
+  for (int layer = 0; layer &lt; config->layers; ++layer) {
+    const TinyGptLayer *weights = &amp;model->layers[layer];
+
+    rmsnorm_q16(model->x, context, dim, weights->g1, model->h);
+    matmul_q16(model->h, context, dim, weights->wqkv, weights->wqkv_scale,
+               dim * 3, model->q8, model->qkv);
+    attention_q16(model, model->qkv);
+    matmul_q16(model->attn, context, dim, weights->wo, weights->wo_scale, dim,
+               model->q8, model->y);
+
+    for (int i = 0; i &lt; context * dim; ++i) {
+      model->x1[i] = model->x[i] + model->y[i];
+    }
+
+    rmsnorm_q16(model->x1, context, dim, weights->g2, model->h);
+    matmul_q16(model->h, context, dim, weights->w1, weights->w1_scale, mlp,
+               model->q8, model->z);
+
+    for (int i = 0; i &lt; context * mlp; ++i) {
+      model->gz[i] = gelu_q16(model, model->z[i]);
+    }
+
+    matmul_q16(model->gz, context, mlp, weights->w2, weights->w2_scale, dim,
+               model->q8, model->m);
+
+    for (int i = 0; i &lt; context * dim; ++i) {
+      model->x[i] = model->x1[i] + model->m[i];
+    }
+  }
+
+  rmsnorm_q16(model->x, context, dim, model->g_final, model->h);
+  matmul_q16(model->h, context, dim, model->head, model->head_scale, vocab,
+             model->q8, model->logits);
+
+  tiny_gpt_error_code = TINY_GPT_OK;
+}
+
+const int32_t *tiny_gpt_logits(TinyGpt *model) {
+  return model == NULL ? NULL : model->logits;
+}
+
+const int32_t *tiny_gpt_buffer(TinyGpt *model, int which) {
+  if (model == NULL) {
+    return NULL;
+  }
+  switch (which) {
+    case TINY_GPT_BUFFER_X:
+      return model->x;
+    case TINY_GPT_BUFFER_X1:
+      return model->x1;
+    case TINY_GPT_BUFFER_H:
+      return model->h;
+    case TINY_GPT_BUFFER_QKV:
+      return model->qkv;
+    case TINY_GPT_BUFFER_ATTN:
+      return model->attn;
+    case TINY_GPT_BUFFER_Y:
+      return model->y;
+    case TINY_GPT_BUFFER_Z:
+      return model->z;
+    case TINY_GPT_BUFFER_GZ:
+      return model->gz;
+    case TINY_GPT_BUFFER_M:
+      return model->m;
+    case TINY_GPT_BUFFER_LOGITS:
+      return model->logits;
+    default:
+      return NULL;
+  }
+}
+
+void tiny_gpt_probabilities(TinyGpt *model, int32_t temperature_q16,
+                            int32_t *out) {
+  if (model == NULL || out == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+  softmax_last_q15(model, temperature_q16, model->probs);
+  for (int i = 0; i &lt; model->config.vocab_size; ++i) {
+    out[i] = model->probs[i] * 2;
+  }
+}
+
+void tiny_gpt_set_seed(TinyGpt *model, uint32_t seed) {
+  if (model == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+  model->rng = seed == 0 ? 0x9e3779b9u : seed;
+}
+
+int32_t tiny_gpt_sample(TinyGpt *model, int32_t temperature_q16,
+                        int32_t top_k) {
+  if (model == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return -1;
+  }
+
+  const int vocab = model->config.vocab_size;
+  softmax_last_q15(model, temperature_q16, model->probs);
+
+  if (top_k &lt; 1) {
+    top_k = 1;
+  } else if (top_k > vocab) {
+    top_k = vocab;
+  }
+
+  /*
+   * Partial insertion sort: keep the top-k probabilities in descending order.
+   * k is small (typically 40), so O(vocab * k) is fine.
+   */
+  int count = 0;
+  for (int id = 0; id &lt; vocab; ++id) {
+    const int32_t value = model->probs[id];
+    if (value &lt;= 0) {
+      continue;
+    }
+    if (count &lt; top_k) {
+      int position = count;
+      while (position > 0 &amp;&amp; model->top_vals[position - 1] &lt; value) {
+        model->top_vals[position] = model->top_vals[position - 1];
+        model->top_ids[position] = model->top_ids[position - 1];
+        --position;
+      }
+      model->top_vals[position] = value;
+      model->top_ids[position] = id;
+      ++count;
+    } else if (value > model->top_vals[top_k - 1]) {
+      int position = top_k - 1;
+      while (position > 0 &amp;&amp; model->top_vals[position - 1] &lt; value) {
+        model->top_vals[position] = model->top_vals[position - 1];
+        model->top_ids[position] = model->top_ids[position - 1];
+        --position;
+      }
+      model->top_vals[position] = value;
+      model->top_ids[position] = id;
+    }
+  }
+
+  if (count &lt;= 0) {
+    return 0;
+  }
+
+  int64_t total = 0;
+  for (int i = 0; i &lt; count; ++i) {
+    total += model->top_vals[i];
+  }
+  if (total &lt;= 0) {
+    return model->top_ids[0];
+  }
+
+  const uint32_t random = next_random(&amp;model->rng);
+  const uint64_t target = ((uint64_t)random * (uint64_t)total) >> 32;
+  uint64_t cumulative = 0;
+  for (int i = 0; i &lt; count; ++i) {
+    cumulative += (uint64_t)model->top_vals[i];
+    if (target &lt; cumulative) {
+      return model->top_ids[i];
+    }
+  }
+  return model->top_ids[count - 1];
+}
+
+int tiny_gpt_vocab_size(const TinyGpt *model) {
+  return model == NULL ? 0 : model->config.vocab_size;
+}
+
+int tiny_gpt_context(const TinyGpt *model) {
+  return model == NULL ? 0 : model->config.context;
+}
+
+int tiny_gpt_last_error(void) {
+  return tiny_gpt_error_code;
+}
+
+void tiny_gpt_destroy(TinyGpt *model) {
+  if (model == NULL) {
+    return;
+  }
+  if (model->layers != NULL) {
+    for (int layer = 0; layer &lt; model->config.layers; ++layer) {
+      TinyGptLayer *weights = &amp;model->layers[layer];
+      free(weights->wqkv);
+      free(weights->wqkv_scale);
+      free(weights->wo);
+      free(weights->wo_scale);
+      free(weights->w1);
+      free(weights->w1_scale);
+      free(weights->w2);
+      free(weights->w2_scale);
+      free(weights->g1);
+      free(weights->g2);
+    }
+    free(model->layers);
+  }
+  free(model->token_emb);
+  free(model->token_emb_scale);
+  free(model->pos_emb);
+  free(model->pos_emb_scale);
+  free(model->head);
+  free(model->head_scale);
+  free(model->g_final);
+  free(model->x);
+  free(model->x1);
+  free(model->h);
+  free(model->qkv);
+  free(model->attn);
+  free(model->y);
+  free(model->z);
+  free(model->gz);
+  free(model->m);
+  free(model->logits);
+  free(model->probs);
+  free(model->q8);
+  free(model->k8);
+  free(model->v8);
+  free(model->k_scale);
+  free(model->v_scale);
+  free(model->scores);
+  free(model->attn_prob);
+  free(model->top_ids);
+  free(model->top_vals);
+  free(model->gelu_lut);
+  free(model);
+}
+</code></pre></details><h3 class="subhead">E. Build and run the real engine</h3><p>The companion harness in <code>examples/integer-gpt/</code> compiles the production C files directly. It is not a second implementation.</p><figure class="snippet"><figcaption class="snippet-head"><span>Companion commands</span><span class="code-meta">sh</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="Companion commands, 11 lines"><code>cd examples/integer-gpt
+
+# Build, check for float in the inference file, and run the selftest
+make check
+
+# Inspect a real checkpoint. Config order is V,T,D,L,H,M.
+./integer-gpt \
+  --weights ../../apps/only-gates-ai/public/models/tiny-gpt-solid2/weights.bin \
+  --config 4096,256,48,3,4,96 \
+  --tokens 1,2,3,4,5,6,7,8 \
+  --steps 8 --temperature 0.7 --top-k 40 --seed 12345</code></pre></figure><p>The repository&#8217;s own tests use the same engine through CMake:</p><figure class="snippet"><figcaption class="snippet-head"><span>Repository checks</span><span class="code-meta">sh</span></figcaption><pre class="snippet-code" tabindex="0" role="region" aria-label="Repository checks, 3 lines"><code>pnpm test                 # C tests, including tiny GPT
+pnpm typecheck:app        # TypeScript app
+pnpm build:site           # SPA + field notes + deep dive</code></pre></figure><h3 class="subhead">F. Glossary</h3><div class="table-wrap"><table><caption>The vocabulary used in this tutorial</caption><thead><tr><th scope="col">Term</th><th scope="col">Meaning</th></tr></thead><tbody><tr><th scope="row">Q16</th><td>Fixed-point value with 16 fractional bits; 65536 means 1.0.</td></tr><tr><th scope="row">Q15</th><td>Fixed-point value with 15 fractional bits; 32768 means 1.0.</td></tr><tr><th scope="row">Q12</th><td>Fixed-point value with 12 fractional bits; 4096 means 1.0.</td></tr><tr><th scope="row">Requantize</th><td>Convert an accumulator back to a fixed-point scale with a rounded shift.</td></tr><tr><th scope="row">Accumulator</th><td>The integer sum of many products before scaling.</td></tr><tr><th scope="row">Tied embeddings</th><td>The output head is the token embedding matrix, transposed.</td></tr><tr><th scope="row">Causal mask</th><td>Position t may only attend to positions j &lt;= t.</td></tr><tr><th scope="row">Logits</th><td>Unnormalized scores over the vocabulary.</td></tr><tr><th scope="row">Top-k</th><td>Keep only the k highest-probability candidates before sampling.</td></tr><tr><th scope="row">DI-Exp</th><td>A table-driven integer approximation of exp(-x).</td></tr><tr><th scope="row">KV cache</th><td>Reusing past keys and values instead of recomputing the whole context.</td></tr><tr><th scope="row">GELU</th><td>The Gaussian error linear unit; here the tanh approximation.</td></tr></tbody></table></div><h3 class="subhead">G. The ten-point checklist</h3><ol class="steps compact"><li>Weights are packed in the exact order, with every linear matrix transposed.</li><li>Weight scales are Q16 fractions; activation scales are Q16-unit integers.</li><li>Every dot product accumulates in int32 and requantizes in int64.</li><li>Matmul shifts by 16; attention scores shift by 36; V sums shift by 15.</li><li>RMSNorm uses a Q32 epsilon and an integer square root.</li><li>GELU uses 1025 Q16 entries over [-16, 16] with a shift of 11.</li><li>Attention only computes <code>j &lt;= t</code>.</li><li>Softmax subtracts the max and clamps deltas to 20 nats.</li><li>Q15 probabilities sum to 32768; the host API converts to Q16 by doubling.</li><li>Sampling is seeded, deterministic, and independent of the host RNG.</li></ol><aside class="note-box" aria-label="Note"><strong>The claim to keep.</strong> This page teaches integer-only inference. It does not claim bit-identical output to float, a KV cache, or an FPGA implementation. Those are separate milestones, and the field notes track them honestly.</aside><aside class="checkpoint" aria-label="You are done when…"><strong>You are done when…</strong><p>You can change one weight, requantize, run the forward pass, and explain why the logits moved. You can point at every shift in the engine and say what scale it converts. And you can reproduce the selftest from a clean checkout.</p></aside><p class="source-line">Repository: <a href="https://github.com/clinuxrulz/only-gates-ai">github.com/clinuxrulz/only-gates-ai</a></p></section></main></div><footer class="footer"><p><strong>only-gates-ai</strong> &#8212; integer inference today, gate lowering next. The engine source on this page is the shipping C/WASM path. The TypeScript float path exists for comparison, not as the integer reference.</p><p><a href="https://github.com/clinuxrulz/only-gates-ai">Source</a><span class="dot">·</span><a href="https://github.com/clinuxrulz/only-gates-ai/tree/main/src">Engine</a><span class="dot">·</span><a href="https://github.com/clinuxrulz/only-gates-ai/tree/main/examples/integer-gpt">Example</a><span class="dot">·</span><a href="../">Field notes</a><span class="dot">·</span><a href="#top">Back to top</a></p></footer>
+  </body>
+</html>
