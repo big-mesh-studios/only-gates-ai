@@ -19,6 +19,7 @@ import {
 } from "./content";
 
 const demoHref = import.meta.env.DEV ? "http://localhost:5174/" : "../";
+const deepDiveHref = import.meta.env.DEV ? "/deep-dive/" : "deep-dive/";
 const repo = "https://github.com/clinuxrulz/only-gates-ai";
 
 function Nav() {
@@ -32,6 +33,7 @@ function Nav() {
         <For each={NAV}>
           {(item) => <a href={item.href}>{item.label}</a>}
         </For>
+        <a href={deepDiveHref}>Deep dive</a>
       </nav>
       <a class="nav-cta" href={demoHref}>Open the demo</a>
     </header>
@@ -55,6 +57,7 @@ function Hero() {
         </p>
         <div class="actions">
           <a class="button" href="#help">Help train the next model</a>
+          <a class="button ghost" href={deepDiveHref}>Build it yourself</a>
           <a class="button ghost" href={demoHref}>Try the integer demo</a>
         </div>
         <ul class="chips" aria-label="Project status">
@@ -176,7 +179,10 @@ function Anatomy() {
         Parameter count is <code>V·D + T·D + D + L·(2D + 4D² + 2D·M)</code>.
         For the Solid 2 target that is 264,528 values. At float32 that is about
         1 MB of weights; at int8 plus scales it is a few hundred kilobytes,
-        small enough to sit in on-chip memory on a modest FPGA.
+        small enough to sit in on-chip memory on a modest FPGA. The trained
+        Solid 2 weights and tokenizer ship in{" "}
+        <code>apps/only-gates-ai/public/models/tiny-gpt-solid2/</code>, so the
+        demo runs the real checkpoint rather than a placeholder.
       </p>
       <figure class="figure">
         <BlockDiagram />
@@ -709,6 +715,8 @@ function Footer() {
         <a href={`${repo}/blob/main/docs/COMPUTE.md`}>Compute guide</a>
         <span class="dot">·</span>
         <a href={demoHref}>Demo</a>
+        <span class="dot">·</span>
+        <a href={deepDiveHref}>Deep dive</a>
         <span class="dot">·</span>
         <a href="#top">Back to top</a>
       </p>

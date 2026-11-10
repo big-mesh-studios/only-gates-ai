@@ -270,6 +270,18 @@ export default function IntegerGptPanel() {
         </p>
 
         <p class="hint">
+          <a
+            href={
+              import.meta.env.DEV
+                ? "http://localhost:5175/deep-dive/"
+                : "learn/deep-dive/"
+            }
+          >
+            Build the integer engine from scratch →
+          </a>
+        </p>
+
+        <p class="hint">
           <Show when={example() === "alice"}>
             Tiny transformer trained on Chapters I &amp; II of Alice's Adventures in Wonderland (word-level). Float32 is used only to quantize at load; inference modes show float/int8/fully-integer WASM behavior.
           </Show>
