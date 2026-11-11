@@ -7,6 +7,11 @@ Place these files here (produced by the Colab trainer):
 - `tokenizer.json`
 - `weights.bin` (packed float32, `tiny_gpt_create` order)
 
+These three files are tracked on purpose: the GitHub Pages build publishes
+`apps/only-gates-ai/dist`, and Vite copies `public/models/tiny-gpt-solid2/`
+into it. Large training-state files (`latest.pt`, `best-qa.pt`, etc.) remain
+gitignored.
+
 ## Train from scratch (Termux + Colab CLI)
 
 The repo includes a self-contained trainer: `scripts/train_tiny_gpt_solid2_colab.py`.

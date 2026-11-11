@@ -47,6 +47,19 @@ jobs:
       - name: Build the app and the learn site
         run: pnpm build:site
 
+      # The model binaries are large and have been ignored by mistake before.
+      # Fail the deploy instead of publishing a site without the checkpoint.
+      - name: Verify the trained model is in the Pages output
+        run: |
+          model_dir=apps/only-gates-ai/dist/models/tiny-gpt-solid2
+          for file in checkpoint.json tokenizer.json weights.bin; do
+            if [ ! -s "$model_dir/$file" ]; then
+              echo "::error::missing $model_dir/$file"
+              exit 1
+            fi
+          done
+          ls -lh "$model_dir"
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
