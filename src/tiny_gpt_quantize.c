@@ -192,7 +192,15 @@ static int allocate_scratch(TinyGpt *model) {
   model->m = allocate_zero((size_t)context * dim, sizeof(int32_t));
   model->logits = allocate_zero((size_t)context * vocab, sizeof(int32_t));
   model->probs = allocate_zero((size_t)vocab, sizeof(int32_t));
-  model->q8 = allocate_zero((size_t)dim * 3, sizeof(int8_t));
+  /*
+   * Scratch activations are reused by every matrix multiply. The QKV
+   * projection needs dim * 3 bytes; the MLP down-projection needs mlp bytes.
+   * Size for the larger of the two so a model with mlp > dim * 3 does not
+   * write past the end of the buffer.
+   */
+  const size_t activation_scratch =
+      (size_t)dim * 3 > (size_t)mlp ? (size_t)dim * 3 : (size_t)mlp;
+  model->q8 = allocate_zero(activation_scratch, sizeof(int8_t));
   model->k8 = allocate_zero((size_t)context * head_dim, sizeof(int8_t));
   model->v8 = allocate_zero((size_t)context * head_dim, sizeof(int8_t));
   model->k_scale = allocate_zero((size_t)context, sizeof(int32_t));

@@ -592,7 +592,13 @@ def make_qa_examples(tokenizer: BpeTokenizer, qa, ctx: int):
             question = question[-budget:] if budget > 0 else []
         seq = [USER_ID] + question + [ASSISTANT_ID] + answer + [END_ID]
         prompt_len = len(seq) - len(answer) - 1
-        labels = [(-100 if i < prompt_len else seq[i]) for i in range(len(seq))]
+        # The model computes same-position cross-entropy, so position i must be
+        # trained to predict seq[i + 1]. Start at the assistant token so the
+        # model learns to emit the first answer token, and end at the last token
+        # before <|end|> so it learns to stop.
+        labels = [-100] * len(seq)
+        for i in range(prompt_len - 1, len(seq) - 1):
+            labels[i] = seq[i + 1]
         # pad
         pad = ctx - len(seq)
         if pad > 0:

@@ -179,6 +179,51 @@ static void test_create_forward(void) {
   free(weights);
 }
 
+/*
+ * Regression: the MLP up/down projections reuse the same int8 activation
+ * scratch as the QKV projection. A model with mlp > dim * 3 used to write past
+ * the end of that scratch buffer, corrupting the heap.
+ */
+static void test_mlp_larger_than_qkv_scratch(void) {
+  const int vocab = 64, context = 8, dim = 32, layers = 1, heads = 2, mlp = 128;
+  const size_t count =
+      (size_t)vocab * dim + (size_t)context * dim + dim +
+      (size_t)layers *
+          (dim + (size_t)dim * dim * 3 + (size_t)dim * dim + dim +
+           (size_t)dim * mlp + (size_t)mlp * dim);
+  float *weights = calloc(count, sizeof(float));
+  expect_true("allocate large-mlp weights", weights != NULL);
+  if (weights == NULL) {
+    return;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    weights[i] = (float)((int)(i % 13) - 6) * 0.02f;
+  }
+
+  TinyGpt *model =
+      tiny_gpt_create(vocab, context, dim, layers, heads, mlp, weights);
+  expect_true("create large-mlp model", model != NULL);
+  if (model != NULL) {
+    int32_t tokens[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+    tiny_gpt_forward(model, tokens);
+    expect_true("large-mlp forward error is ok",
+                tiny_gpt_last_error() == TINY_GPT_OK);
+    const int32_t *logits = tiny_gpt_logits(model);
+    expect_true("large-mlp logits available", logits != NULL);
+    if (logits != NULL) {
+      int nonzero = 0;
+      for (int i = 0; i < context * vocab; ++i) {
+        if (logits[i] != 0) {
+          ++nonzero;
+        }
+      }
+      expect_true("large-mlp logits are nonzero", nonzero > 0);
+    }
+    tiny_gpt_destroy(model);
+  }
+  free(weights);
+}
+
 static void test_invalid_config(void) {
   float weights[16] = {0.0f};
   expect_true("reject zero vocab",
@@ -202,6 +247,7 @@ static void test_invalid_config(void) {
 int main(void) {
   test_int_math();
   test_create_forward();
+  test_mlp_larger_than_qkv_scratch();
   test_invalid_config();
   return test_report();
 }

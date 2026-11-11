@@ -53,4 +53,8 @@ refuses to resume if they changed. Use `--fresh` to start a new run. See
 Then copy/replace the three exported files in this folder and reload the web app.
 `latest.pt` and `best-qa.pt` are training state and do not need to be copied.
 
-Default config (sized to the small corpus): `vocab=4096, ctx=256, dim=48, layers=3, heads=4, mlp=96` (264,528 params). The integer-only WASM engine loads any config packed in this format.
+Trainer default (sized to the small corpus): `vocab=4096, ctx=256, dim=48,
+layers=3, heads=4, mlp=96` (264,528 params). The bundled checkpoint uses
+`vocab=4096, ctx=256, dim=128, layers=4, heads=4, mlp=512` (1,344,640 params)
+for better answer quality. The integer-only WASM engine loads any config packed
+in this format.

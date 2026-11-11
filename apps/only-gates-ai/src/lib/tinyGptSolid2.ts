@@ -45,10 +45,17 @@ export interface Solid2Generation {
 const BOS = 1; // <|user|> is a reasonable start sentinel if we don't have <bos>; but our format starts with <|user|>
 const PAD = 0;
 
-function windowTokens(ids: readonly number[], context: number, padId: number): number[] {
-  const w = ids.slice(-context);
-  while (w.length < context) w.unshift(padId);
-  return w;
+function windowTokens(
+  ids: readonly number[],
+  context: number,
+  padId: number,
+): { window: number[]; position: number } {
+  // Training right-pads and the model uses causal attention, so pads only need
+  // to come after the prompt. Sample from the last real prompt token.
+  const window = ids.slice(-context);
+  const position = window.length - 1;
+  while (window.length < context) window.push(padId);
+  return { window, position };
 }
 
 /** Load the Solid 2 ~1M BPE model for integer-only WASM inference. */
@@ -89,12 +96,11 @@ function mulberry32(seed: number): () => number {
 function sampleWithRepetitionPenalty(
   m: Solid2WasmModel,
   ids: readonly number[],
-  opts: { temperature: number; topK: number; repetitionPenalty: number; repWindow: number; rand: () => number },
+  opts: { temperature: number; topK: number; repetitionPenalty: number; repWindow: number; rand: () => number; position: number },
 ): number {
   const V = m.config.vocabSize;
-  const ctx = m.config.context;
   const all = m.model.logits();
-  const base = (ctx - 1) * V;
+  const base = opts.position * V;
   const temp = Math.max(opts.temperature, 1e-4);
   const scores = new Float64Array(V);
   for (let j = 0; j < V; j++) {
@@ -148,10 +154,16 @@ export function generateSolid2Wasm(
   const gen: number[] = [];
   let stopped = false;
   for (let i = 0; i < maxTokens; i++) {
-    m.model.forward(windowTokens(ids, m.config.context, padId));
-    const next = repetitionPenalty > 1
-      ? sampleWithRepetitionPenalty(m, ids, { temperature, topK, repetitionPenalty, repWindow, rand })
-      : m.model.sample(temperature, topK);
+    const { window, position } = windowTokens(ids, m.config.context, padId);
+    m.model.forward(window);
+    const next = sampleWithRepetitionPenalty(m, ids, {
+      temperature,
+      topK,
+      repetitionPenalty,
+      repWindow,
+      rand,
+      position,
+    });
     if (isStopToken(m.tokenizer, next)) { stopped = true; break; }
     gen.push(next);
     ids.push(next);

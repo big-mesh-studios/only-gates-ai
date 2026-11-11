@@ -12,15 +12,15 @@ const repo = "https://github.com/clinuxrulz/only-gates-ai";
 
 const generationLoop = `function windowTokens(ids, context, padId) {
   const window = ids.slice(-context);
-  while (window.length < context) window.unshift(padId);
-  return window;
+  const position = window.length - 1;
+  while (window.length < context) window.push(padId);
+  return { window, position };
 }
 
 for (let step = 0; step < maxTokens; step++) {
-  model.forward(windowTokens(ids, config.context, padId));
-  const next = repetitionPenalty > 1
-    ? sampleWithRepetitionPenalty(...)
-    : model.sample(temperature, topK);
+  const { window, position } = windowTokens(ids, config.context, padId);
+  model.forward(window);
+  const next = sampleWithRepetitionPenalty(..., position);
   if (isStopToken(tokenizer, next)) break;
   ids.push(next);
   output.push(next);

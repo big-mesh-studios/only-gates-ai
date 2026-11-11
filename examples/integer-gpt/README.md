@@ -40,7 +40,7 @@ The repository ships Solid 2 in
 ```sh
 ./integer-gpt \
   --weights ../../apps/only-gates-ai/public/models/tiny-gpt-solid2/weights.bin \
-  --config 4096,256,48,3,4,96 \
+  --config 4096,256,128,4,4,512 \
   --tokens 1,2,3,4,5,6,7,8 \
   --steps 8 --temperature 0.7 --top-k 40 --seed 12345
 ```
@@ -71,17 +71,17 @@ encode it first with the checkpoint's tokenizer:
 side. The command above intentionally uses arbitrary ids to demonstrate the
 engine boundary; it is not a meaningful prompt.
 
-The window is left-padded with 0 and keeps the **last** `context` ids. Position
-embeddings are indexed inside the window, matching the host wrappers. Note that
-the trainer right-pads fixed-length examples, so this inference convention is a
-simplification rather than an exact match.
+The window keeps the **last** `context` ids and right-pads with 0 when the
+sequence is shorter. Training also right-pads, so causal attention means the
+pads never affect the real tokens. Logits are read at the last real prompt
+position rather than at the end of the padded window.
 
 ## Inspect an intermediate buffer
 
 ```sh
 ./integer-gpt \
   --weights ../../apps/only-gates-ai/public/models/tiny-gpt-solid2/weights.bin \
-  --config 4096,256,48,3,4,96 \
+  --config 4096,256,128,4,4,512 \
   --tokens 1,2,3,4,5,6,7,8 \
   --dump-buffer qkv
 ```
