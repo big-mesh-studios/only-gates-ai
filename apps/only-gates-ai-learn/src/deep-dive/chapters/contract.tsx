@@ -20,6 +20,12 @@ export function Contract() {
         shifts, comparisons, and table lookups. This page teaches that sequence
         from the checkpoint down to the sampled token.
       </p>
+      <p>
+        If you have never built a GPT before, do not skip the next nine
+        chapters. They answer three questions in order: what a GPT computes,
+        what each part is for, and how to implement the float version yourself.
+        The integer chapters only make sense once that dataflow is familiar.
+      </p>
 
       <figure class="figure">
         <PipelineDiagram />
@@ -95,6 +101,35 @@ export function Contract() {
         float literal, or <code>math.h</code> call.
       </Note>
 
+      <h3 class="subhead">Why integer inference at all?</h3>
+      <ul>
+        <li>
+          <strong>Size.</strong> An int8 weight is one byte instead of four. The
+          model fits in smaller memory and moves less data.
+        </li>
+        <li>
+          <strong>Determinism.</strong> Integer operations have exact results.
+          The same input and seed produce the same output on every machine,
+          which is useful for tests and for hardware.
+        </li>
+        <li>
+          <strong>Portability.</strong> The engine needs only integer add,
+          multiply, shift, compare, and table lookup. Those exist on a CPU, a
+          GPU, a microcontroller, an FPGA, and eventually a gate-level circuit.
+        </li>
+        <li>
+          <strong>Understanding.</strong> Quantization forces you to name every
+          scale and every shift. That makes the arithmetic auditable instead of
+          hidden inside a float library.
+        </li>
+      </ul>
+      <p>
+        The cost is accuracy and engineering effort. Quantization changes the
+        probabilities, and every operation needs a scale and overflow argument.
+        This page treats those costs honestly: the goal is the same decisions,
+        not bit-identical output.
+      </p>
+
       <h3 class="subhead">The files you will read</h3>
       <DataTable
         caption="Production map"
@@ -116,9 +151,34 @@ export function Contract() {
       <p>
         You should be comfortable reading C and a little linear algebra. You do
         not need to know fixed-point arithmetic, quantization, or transformer
-        internals in advance; chapters 1–3 build those up. The code is C17, but
-        every idea ports to Rust, Go, C#, or TypeScript with 64-bit integers.
+        internals in advance; chapters 01–09 build those up from scratch,
+        chapter 11 is the float reference, and chapter 12 introduces fixed
+        point. The code is C17, but every idea ports to Rust, Go, C#, or
+        TypeScript with 64-bit integers.
       </p>
+
+      <h3 class="subhead">Choose your path</h3>
+      <DataTable
+        caption="Three ways through the page"
+        head={["If you…", "Start at", "Then"]}
+        rows={[
+          [
+            "have never seen a GPT",
+            "01 The math you need",
+            "Read 01–09 in order, run the NumPy reference, then continue to 10",
+          ],
+          [
+            "know transformers but not quantization",
+            "10 The model",
+            "Read 10–14, then follow one function through 15–19",
+          ],
+          [
+            "only want to rebuild the engine",
+            "09 Implement the forward pass",
+            "Read 09, 12–19, and use the appendix as the source index",
+          ],
+        ]}
+      />
 
       <h3 class="subhead">The ten operations you are going to build</h3>
       <ol class="steps compact">

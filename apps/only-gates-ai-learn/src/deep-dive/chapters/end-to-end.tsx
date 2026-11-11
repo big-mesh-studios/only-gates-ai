@@ -40,7 +40,7 @@ export function GenerationChapter() {
   return (
     <Chapter
       id="generation"
-      number="11"
+      number="20"
       kicker="End-to-end decode"
       title="A tokenizer, a sliding window, and one integer forward pass per token"
     >
@@ -50,6 +50,11 @@ export function GenerationChapter() {
         returns logits. Everything about prompts, chat templates, and stop
         tokens lives in the host wrapper. Keeping that boundary clean is what
         lets the same C engine run Alice, Solid 2, or a future checkpoint.
+      </p>
+      <p>
+        If tokenization is new, chapter 03 explains the vocabulary, embedding
+        lookup, and position table. This chapter is about the host loop that
+        sits above the engine.
       </p>
 
       <h3 class="subhead">Two tokenizers, one engine</h3>
@@ -90,6 +95,12 @@ export function GenerationChapter() {
       <Code code={generationLoop} lang="ts" file="tinyGptSolid2.ts" />
 
       <h3 class="subhead">What crosses the WASM boundary</h3>
+      <p>
+        The engine is compiled to WebAssembly (WASM), the portable bytecode the
+        browser runs. The browser can pass numbers and memory buffers to it, but
+        those values are still just integers. The host wrapper owns the
+        conversion to and from JavaScript.
+      </p>
       <ul>
         <li>
           <code>forward</code>: a pointer to <code>T</code> int32 token ids.
@@ -160,7 +171,7 @@ export function TrainingChapter() {
   return (
     <Chapter
       id="training"
-      number="12"
+      number="21"
       kicker="Where the weights come from"
       title="Train the float model, export the contract, then quantize"
     >
@@ -169,6 +180,11 @@ export function TrainingChapter() {
         minimum you need to produce one that the engine can load: the data
         pipeline, the two training stages, the tokenizer artifact, and the exact
         export format.
+      </p>
+      <p>
+        For the underlying ideas — loss, gradients, backpropagation, optimizers,
+        and why training must stay in float — read chapter 08 first. This
+        chapter is the concrete recipe used by this repository.
       </p>
 
       <h3 class="subhead">The Solid 2 recipe</h3>
@@ -179,8 +195,8 @@ export function TrainingChapter() {
           ["vocab", "4,096", "Byte-level BPE over docs, Q&A, and stories"],
           ["context", "256", "Long enough for a doc section; small enough for the demo"],
           ["dim / layers / heads / mlp", "48 / 3 / 4 / 96", "264,528 parameters"],
-          ["LM stage", "5,000 steps", "Learn the corpus distribution"],
-          ["QA stage", "100 epochs", "Fit chat-formatted question/answer pairs"],
+          ["LM stage", "5,000 steps", "Language-model stage: learn the corpus distribution"],
+          ["QA stage", "100 epochs", "Question-answer stage: fit chat-formatted pairs"],
           ["optimizer", "AdamW + warmup cosine", "Stable small-model training"],
           ["dropout", "0.1 during training, 0 at inference", "The C engine has no dropout"],
         ]}
@@ -215,7 +231,7 @@ export function TrainingChapter() {
       <p>
         Training ends with <code>pack_weights(model)</code>, which transposes
         every linear matrix, concatenates the buffer in the order from chapter
-        1, and writes little-endian float32. <code>checkpoint.json</code> records
+        10, and writes little-endian float32. <code>checkpoint.json</code> records
         the config, parameter count, tokenizer filename, and training metadata.
         The integer engine reads <code>weights.bin</code> and the config; the
         tokenizer stays on the host.
@@ -281,7 +297,7 @@ export function VerifyChapter() {
   return (
     <Chapter
       id="verify"
-      number="13"
+      number="22"
       kicker="Make the difference visible"
       title="Verify against float, then debug by buffer, not by vibe"
     >
@@ -407,7 +423,7 @@ export function BeyondChapter() {
   return (
     <Chapter
       id="beyond"
-      number="14"
+      number="23"
       kicker="What comes next"
       title="Performance, KV cache, and the road to gates"
     >
@@ -472,12 +488,14 @@ export function BeyondChapter() {
           per-tile scales, or a small divider pipeline.
         </li>
         <li>
-          The GELU and DI-Exp tables map naturally to block RAM; the address
-          generation and interpolation are the work.
+          The GELU and DI-Exp tables map naturally to block RAM (BRAM); the
+          address generation and interpolation are the work.
         </li>
         <li>
           Attention is a systolic or tiled array problem; the causal mask lets
-          you skip work, but the schedule must not stall.
+          you skip work, but the schedule must not stall. A systolic array is a
+          grid of processing elements that passes data between neighbours, which
+          suits repeated matrix multiplication.
         </li>
         <li>
           The model is fixed at synthesis time. Changing weights means

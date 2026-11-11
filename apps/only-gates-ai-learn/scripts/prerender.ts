@@ -57,7 +57,7 @@ const learnDescription =
 
 const deepDiveTitle = "Build Integer GPT from scratch — only-gates-ai";
 const deepDiveDescription =
-  "A low-level tutorial: int8 quantization, Q16 activations, integer matmul, RMSNorm, a GELU lookup table, causal attention, DI-Exp softmax, sampling, and the float-to-integer export contract.";
+  "A from-zero tutorial: what a GPT is, what each transformer part is for, how to implement the float forward pass, then how to replace it with integer-only inference: int8 quantization, Q16 activations, integer matmul, RMSNorm, a GELU lookup table, causal attention, DI-Exp softmax, sampling, and the float-to-integer export contract.";
 
 const pages = [
   {

@@ -6,21 +6,30 @@ export interface NavItem {
 
 export const NAV: NavItem[] = [
   { href: "#contract", label: "Read this first", number: "00" },
-  { href: "#model", label: "The model", number: "01" },
-  { href: "#float", label: "Float reference", number: "02" },
-  { href: "#fixed", label: "Fixed point", number: "03" },
-  { href: "#quantize", label: "Quantize at load", number: "04" },
-  { href: "#matmul", label: "Integer matmul", number: "05" },
-  { href: "#norm", label: "RMSNorm", number: "06" },
-  { href: "#gelu", label: "GELU table", number: "07" },
-  { href: "#attention", label: "Attention", number: "08" },
-  { href: "#forward", label: "Forward pass", number: "09" },
-  { href: "#sampling", label: "Sampling", number: "10" },
-  { href: "#generation", label: "Generation", number: "11" },
-  { href: "#training", label: "Train and export", number: "12" },
-  { href: "#verify", label: "Verify and debug", number: "13" },
-  { href: "#beyond", label: "Performance and gates", number: "14" },
-  { href: "#appendix", label: "Appendix", number: "15" },
+  { href: "#math", label: "The math you need", number: "01" },
+  { href: "#what", label: "What a GPT is", number: "02" },
+  { href: "#tokens", label: "Tokens and embeddings", number: "03" },
+  { href: "#block", label: "The transformer block", number: "04" },
+  { href: "#attention-primer", label: "Attention from scratch", number: "05" },
+  { href: "#mlp", label: "MLP and GELU", number: "06" },
+  { href: "#output-primer", label: "Logits and sampling", number: "07" },
+  { href: "#training-primer", label: "How training works", number: "08" },
+  { href: "#reference", label: "Implement the forward pass", number: "09" },
+  { href: "#model", label: "The model", number: "10" },
+  { href: "#float", label: "Float reference", number: "11" },
+  { href: "#fixed", label: "Fixed point", number: "12" },
+  { href: "#quantize", label: "Quantize at load", number: "13" },
+  { href: "#matmul", label: "Integer matmul", number: "14" },
+  { href: "#norm", label: "RMSNorm", number: "15" },
+  { href: "#gelu", label: "GELU table", number: "16" },
+  { href: "#attention", label: "Attention", number: "17" },
+  { href: "#forward", label: "Forward pass", number: "18" },
+  { href: "#sampling", label: "Sampling", number: "19" },
+  { href: "#generation", label: "Generation", number: "20" },
+  { href: "#training", label: "Train and export", number: "21" },
+  { href: "#verify", label: "Verify and debug", number: "22" },
+  { href: "#beyond", label: "Performance and gates", number: "23" },
+  { href: "#appendix", label: "Appendix", number: "24" },
 ];
 
 export interface ModelConfig {
@@ -224,6 +233,221 @@ export interface GlossaryRow {
 
 export const GLOSSARY: GlossaryRow[] = [
   {
+    term: "Autoregressive",
+    meaning:
+      "Generating one token at a time and feeding each new token back into the model as part of the next input.",
+  },
+  {
+    term: "Checkpoint",
+    meaning:
+      "A saved set of trained weights plus the configuration needed to load them. The integer engine reads a packed checkpoint.",
+  },
+  {
+    term: "Bias",
+    meaning:
+      "A learned offset added after a matrix multiply. This model deliberately has no biases.",
+  },
+  {
+    term: "Dropout",
+    meaning:
+      "Randomly zeroing activations during training to reduce overfitting. It is disabled at inference.",
+  },
+  {
+    term: "AdamW",
+    meaning:
+      "The optimizer used by the trainer. It adapts the step size per parameter and applies weight decay.",
+  },
+  {
+    term: "Validation set",
+    meaning:
+      "Held-out examples used to detect overfitting. Validation loss should fall alongside training loss, at least for a while.",
+  },
+  {
+    term: "GPT",
+    meaning:
+      "Generative pre-trained transformer. A decoder-only model trained to predict the next token, then used to generate text one token at a time.",
+  },
+  {
+    term: "Token",
+    meaning:
+      "A chunk of text (word, subword, or byte) represented by an integer id. The model never sees raw characters.",
+  },
+  {
+    term: "Vocabulary",
+    meaning:
+      "The fixed set of tokens a model knows. Its size is V. A checkpoint and its tokenizer are a pair.",
+  },
+  {
+    term: "Tokenizer",
+    meaning:
+      "The separate program that converts text to token ids and back. It is not part of the C inference engine.",
+  },
+  {
+    term: "BPE",
+    meaning:
+      "Byte-pair encoding. A tokenizer that starts from bytes and repeatedly merges frequent adjacent pairs.",
+  },
+  {
+    term: "Token id",
+    meaning:
+      "An index into the embedding table. Id 400 is not 'twice' id 200; the number has no arithmetic meaning.",
+  },
+  {
+    term: "Embedding",
+    meaning:
+      "A learned vector that represents a token (or a position). The embedding table is a lookup table of shape [V, D].",
+  },
+  {
+    term: "Position embedding",
+    meaning:
+      "A learned vector added to each token embedding so the model can tell positions apart.",
+  },
+  {
+    term: "Model dimension (D)",
+    meaning:
+      "The number of values in each token's vector. Also called the model width or hidden size.",
+  },
+  {
+    term: "Context window (T)",
+    meaning:
+      "The fixed number of token positions the model reads in one forward pass. Older tokens fall out of the window.",
+  },
+  {
+    term: "Logits",
+    meaning:
+      "Unnormalized scores over the vocabulary. Softmax turns logits into probabilities.",
+  },
+  {
+    term: "Softmax",
+    meaning:
+      "The function exp(z[i]) / sum(exp(z[j])). It turns arbitrary scores into positive values that sum to one.",
+  },
+  {
+    term: "Temperature",
+    meaning:
+      "A divisor applied to logits before softmax. Lower values sharpen the distribution; higher values flatten it.",
+  },
+  {
+    term: "Top-k",
+    meaning:
+      "Keep only the k highest-probability candidates before sampling, then renormalize.",
+  },
+  {
+    term: "Greedy decoding",
+    meaning:
+      "Always choose the highest-probability token. Deterministic, but often repetitive.",
+  },
+  {
+    term: "Attention",
+    meaning:
+      "A mechanism that lets each position read information from allowed earlier positions using query/key similarity and a weighted sum of values.",
+  },
+  {
+    term: "Query, key, value (Q/K/V)",
+    meaning:
+      "Three learned projections of a token vector. The query asks what is needed, the key advertises what is available, and the value carries the content.",
+  },
+  {
+    term: "Head",
+    meaning:
+      "One independent attention computation on a slice of the model dimension. Multi-head attention runs several in parallel.",
+  },
+  {
+    term: "Causal mask",
+    meaning:
+      "The rule that position t may only attend to positions j <= t. It prevents the model from seeing the future during training.",
+  },
+  {
+    term: "Residual stream",
+    meaning:
+      "The [T, D] matrix that runs through the whole model. Each sublayer adds its output to it instead of replacing it.",
+  },
+  {
+    term: "Residual connection",
+    meaning:
+      "The x = x + sublayer(x) pattern. It preserves information and gives gradients a short path during training.",
+  },
+  {
+    term: "RMSNorm",
+    meaning:
+      "Root-mean-square normalization. Divides a row by the RMS of its values and multiplies by a learned gain.",
+  },
+  {
+    term: "MLP",
+    meaning:
+      "Multi-layer perceptron, also called the feed-forward network. Expands each position to width M, applies GELU, and projects back to D.",
+  },
+  {
+    term: "GELU",
+    meaning:
+      "Gaussian error linear unit. A smooth nonlinearity; here the tanh approximation, implemented as a lookup table.",
+  },
+  {
+    term: "Parameter",
+    meaning:
+      "A learned number in a weight matrix, gain, or embedding table. Training adjusts parameters; inference only reads them.",
+  },
+  {
+    term: "Tied embeddings",
+    meaning:
+      "Using the token embedding matrix, transposed, as the output head. It saves parameters and aligns input and output token spaces.",
+  },
+  {
+    term: "Training",
+    meaning:
+      "The phase that measures prediction error and adjusts every parameter with gradients. It needs floating point.",
+  },
+  {
+    term: "Inference",
+    meaning:
+      "Running a fixed trained model on new input. It is deterministic and can be integer-only.",
+  },
+  {
+    term: "Loss",
+    meaning:
+      "A single number measuring how wrong the model is. Language models use cross-entropy on the correct next token.",
+  },
+  {
+    term: "Cross-entropy",
+    meaning:
+      "The loss -log(p[target]). Confident correct predictions have low loss; unlikely correct predictions have high loss.",
+  },
+  {
+    term: "Perplexity",
+    meaning:
+      "exp(loss). Roughly the number of equally likely tokens the model is choosing among.",
+  },
+  {
+    term: "Gradient",
+    meaning:
+      "The derivative of the loss with respect to a parameter: which way, and how strongly, to change it.",
+  },
+  {
+    term: "Backpropagation",
+    meaning:
+      "Applying the chain rule backwards through the network to compute every gradient efficiently.",
+  },
+  {
+    term: "Optimizer",
+    meaning:
+      "The rule that turns gradients into weight updates. This project uses AdamW.",
+  },
+  {
+    term: "Learning rate",
+    meaning:
+      "The size of an optimizer step. Too large diverges; too small learns slowly.",
+  },
+  {
+    term: "Step / batch / epoch",
+    meaning:
+      "One update / the examples behind one update / one pass over the training set.",
+  },
+  {
+    term: "Overfitting",
+    meaning:
+      "Memorizing training data so training loss falls while validation loss rises.",
+  },
+  {
     term: "Q16",
     meaning: "Fixed-point value with 16 fractional bits; 65536 means 1.0.",
   },
@@ -236,39 +460,38 @@ export const GLOSSARY: GlossaryRow[] = [
     meaning: "Fixed-point value with 12 fractional bits; 4096 means 1.0.",
   },
   {
+    term: "Quantization",
+    meaning:
+      "Storing a real value as a small integer code plus a scale. Real ≈ code × scale / 65536 for Q16 scales.",
+  },
+  {
+    term: "Scale",
+    meaning:
+      "The multiplier that maps an int8 code back to a real value. Weights use per-column scales; embeddings use per-row scales.",
+  },
+  {
     term: "Requantize",
-    meaning: "Convert an accumulator back to a fixed-point scale with a rounded shift.",
+    meaning:
+      "Convert an accumulator back to a fixed-point scale with a rounded shift.",
   },
   {
     term: "Accumulator",
-    meaning: "The integer sum of many products before scaling.",
-  },
-  {
-    term: "Tied embeddings",
-    meaning: "The output head is the token embedding matrix, transposed.",
-  },
-  {
-    term: "Causal mask",
-    meaning: "Position t may only attend to positions j <= t.",
-  },
-  {
-    term: "Logits",
-    meaning: "Unnormalized scores over the vocabulary.",
-  },
-  {
-    term: "Top-k",
-    meaning: "Keep only the k highest-probability candidates before sampling.",
+    meaning:
+      "The integer sum of many products before scaling. Here it is int32 for int8 dot products.",
   },
   {
     term: "DI-Exp",
-    meaning: "A table-driven integer approximation of exp(-x).",
+    meaning:
+      "A table-driven integer approximation of exp(-x), used for attention and softmax.",
   },
   {
     term: "KV cache",
-    meaning: "Reusing past keys and values instead of recomputing the whole context.",
+    meaning:
+      "Reusing past keys and values instead of recomputing the whole context for every generated token.",
   },
   {
-    term: "GELU",
-    meaning: "The Gaussian error linear unit; here the tanh approximation.",
+    term: "Deterministic",
+    meaning:
+      "Given the same input, weights, and seed, the engine returns exactly the same output. The sampler is deterministic in this sense.",
   },
 ];

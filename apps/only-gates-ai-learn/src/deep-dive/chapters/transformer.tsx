@@ -15,7 +15,7 @@ export function AttentionChapter() {
   return (
     <Chapter
       id="attention"
-      number="08"
+      number="17"
       kicker="Where the precision changes"
       title="Causal attention with Q12 scores and Q15 probabilities"
     >
@@ -25,6 +25,12 @@ export function AttentionChapter() {
         fixed-point normalization. The data flow is still the familiar one:
         project Q, K, and V; score every allowed key against the query; softmax
         the scores; mix the values.
+      </p>
+      <p>
+        If any of those words are unfamiliar, read{" "}
+        <a href="#attention-primer">chapter 05</a> first. It builds attention
+        with ordinary floats and a two-token example. This chapter assumes that
+        picture and explains how each operation is represented in integers.
       </p>
 
       <figure class="figure">
@@ -120,7 +126,7 @@ export function ForwardChapter() {
   return (
     <Chapter
       id="forward"
-      number="09"
+      number="18"
       kicker="Putting it together"
       title="The full integer forward pass"
     >
@@ -128,6 +134,14 @@ export function ForwardChapter() {
         The forward pass is deliberately boring once the pieces exist. Embed,
         then repeat a pre-norm attention block and a pre-norm MLP block, then
         normalize one last time and project onto the vocabulary.
+      </p>
+      <p>
+        If you ran the NumPy reference in chapter 09, you have already written
+        this function. The C version is the same sequence with three changes:
+        every matrix multiply is quantized, every norm uses an integer square
+        root, and GELU is a table lookup. The order of operations and the
+        residual adds are identical, which is exactly why the integer version
+        can be verified against the float one.
       </p>
 
       <DataTable
@@ -205,7 +219,8 @@ export function ForwardChapter() {
           Run the forward pass with synthetic weights and assert that logits are
           non-degenerate, that every buffer is populated, and that the same
           tokens produce identical logits on a second call. Then compare the
-          final row with the float reference from chapter 2.
+          final row with the NumPy reference from chapter 09 or the float
+          reference from chapter 11.
         </p>
       </Checkpoint>
     </Chapter>
@@ -216,7 +231,7 @@ export function SamplingChapter() {
   return (
     <Chapter
       id="sampling"
-      number="10"
+      number="19"
       kicker="From logits to a token"
       title="Softmax, temperature, top-k, and xorshift32"
     >
@@ -225,14 +240,19 @@ export function SamplingChapter() {
         distribution over the vocabulary, a temperature, a top-k cut, and a
         random draw. Every step is integer-only.
       </p>
+      <p>
+        Chapter 07 explains what softmax, temperature, top-k, and sampling mean
+        with ordinary floats. This chapter is the same pipeline with Q15
+        probabilities, a DI-Exp table, and an integer random generator.
+      </p>
 
       <h3 class="subhead">Logits to Q15</h3>
       <p>
-        The last position’s logits are divided by a Q16 temperature. A Q16
-        logit divided by a Q16 temperature is a Q16 ratio; shifting by 4 gives
-        Q12 nats for the same DI-Exp table used by attention. The maximum is
-        subtracted, each delta is clipped to 20 nats, and the weights are
-        normalized to Q15.
+        The last position’s logits are divided by a Q16 temperature. The code
+        forms <code>(logit_q16 · 65536) / temperature_q16</code>, which is the
+        real ratio stored in Q16, then shifts right by 4 to produce Q12 nats for
+        the same DI-Exp table used by attention. The maximum is subtracted, each
+        delta is clipped to 20 nats, and the weights are normalized to Q15.
       </p>
 
       <Code code={snippets.softmax} lang="c" file="softmax_last_q15" collapsible />

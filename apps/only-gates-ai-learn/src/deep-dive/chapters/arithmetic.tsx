@@ -16,7 +16,7 @@ export function FixedChapter() {
   return (
     <Chapter
       id="fixed"
-      number="03"
+      number="12"
       kicker="Fixed-point foundations"
       title="Q formats, rounding, and the overflow budget"
     >
@@ -25,6 +25,33 @@ export function FixedChapter() {
         binary point sits. Q16 means “divide by 65536 to get the real value.”
         Q15 means “divide by 32768.” Q12 means “divide by 4096.” There is no
         exponent, no NaN, and no denormal. The contract is the whole type.
+      </p>
+      <p>
+        Think of money. If every price is stored in cents, a value of{" "}
+        <code>1234</code> means <code>$12.34</code> and the “scale” is 100. Q16
+        is the same idea with a scale of 65536: the integer{" "}
+        <code>65536</code> means <code>1.0</code>, <code>32768</code> means{" "}
+        <code>0.5</code>, and <code>-16384</code> means <code>-0.25</code>.
+        Addition and subtraction work directly on the stored integers. A
+        multiply produces twice as many fractional bits, so it needs a shift to
+        return to the original scale.
+      </p>
+      <pre class="math-block"><code>{`real value = stored integer / 2¹⁶
+
+1.0    →  65536
+0.5    →  32768
+0.25   →  16384
+-0.25  → -16384
+
+0.5 + 0.25 = 32768 + 16384 = 49152 = 0.75
+0.5 · 0.25 = (32768 · 16384) >> 16 = 8192 = 0.125`}</code></pre>
+      <p>
+        Why not use floats everywhere? A float stores an exponent, a mantissa,
+        and special cases; an integer multiply is simpler, smaller, and easier
+        to map to hardware. The cost is that the range and precision are fixed
+        in advance, so every operation must be checked against an overflow
+        budget. This chapter does that checking once, so the rest of the engine
+        can use plain integer operations.
       </p>
 
       <DataTable
@@ -161,7 +188,7 @@ export function QuantizeChapter() {
   return (
     <Chapter
       id="quantize"
-      number="04"
+      number="13"
       kicker="The one float file"
       title="Turn a checkpoint into int8 codes and Q16 scales"
     >
@@ -171,6 +198,21 @@ export function QuantizeChapter() {
         <code>real ≈ code · scale / 65536</code>. The scale is chosen from the
         largest magnitude in a group, so the code uses the full{" "}
         <code>-127 … 127</code> range without overflowing.
+      </p>
+      <pre class="math-block"><code>{`real values:  [ 0.50, -0.25,  0.10 ]
+max |value|:   0.50
+scale       =  ceil(0.50 · 65536 / 127) = 259
+codes       =  round(real · 65536 / scale)
+            =  [ 127, -63,  25 ]
+
+restore: code · 259 / 65536
+       =  [ 0.502, -0.249,  0.099 ]`}</code></pre>
+      <p>
+        The restored values are close but not identical. The maximum error is
+        about half a code, or <code>scale / 2 / 65536 ≈ 0.002</code>. That is the
+        trade: one byte per value in exchange for a small, bounded rounding
+        error. With one scale per column or per row, a single large value cannot
+        force every other value in the matrix to round to zero.
       </p>
 
       <figure class="figure">
@@ -294,7 +336,7 @@ export function MatmulChapter() {
   return (
     <Chapter
       id="matmul"
-      number="05"
+      number="14"
       kicker="The heart of the engine"
       title="int8 dot products, int32 accumulation, int64 requantization"
     >
@@ -351,6 +393,42 @@ y_q16 = y · 2¹⁶ = acc · sx·sw / 2¹⁶`}</code></pre>
       <h3 class="subhead">The matmul</h3>
       <Code code={snippets.matmul} lang="c" file="matmul_q16" />
 
+      <h3 class="subhead">What the two functions do, line by line</h3>
+      <ol class="steps compact">
+        <li>
+          <strong>Find the largest magnitude in the row.</strong> This one
+          number decides the scale. A zero row returns scale 0 and all-zero
+          codes.
+        </li>
+        <li>
+          <strong>Choose a regime.</strong> If the maximum is at most 127, the
+          Q16 values already fit in an int8 and the scale is 1. Otherwise the
+          scale is <code>ceil(max_abs / 127)</code>, which is the smallest
+          integer that maps the maximum to 127.
+        </li>
+        <li>
+          <strong>Quantize each value.</strong> Multiply by 127, divide by the
+          maximum with rounding, and clamp to <code>-127 … 127</code>.
+        </li>
+        <li>
+          <strong>For each output column, walk the input row.</strong> The
+          accumulator is an int32 sum of int8 products. The weight index is{" "}
+          <code>k * out_cols + j</code> because the matrix is stored{" "}
+          <code>[in, out]</code>.
+        </li>
+        <li>
+          <strong>Requantize once.</strong> Convert the accumulator to int64,
+          multiply by the activation scale and the weight scale, and shift by
+          16 with rounding. That produces one Q16 output value.
+        </li>
+      </ol>
+      <p>
+        There is exactly one shift per output, not one per product. That is the
+        efficiency win: the inner loop stays in 32-bit integer arithmetic and
+        only the scale correction needs 64 bits. It is also the part a hardware
+        implementation can pipeline cleanly.
+      </p>
+
       <h3 class="subhead">A worked example</h3>
       <p>
         Take a Q16 activation row <code>[65536, 32768]</code>, which is{" "}
@@ -395,7 +473,7 @@ export function NormChapter() {
   return (
     <Chapter
       id="norm"
-      number="06"
+      number="15"
       kicker="Normalization"
       title="RMSNorm without a square-root instruction"
     >
@@ -461,7 +539,7 @@ export function GeluChapter() {
   return (
     <Chapter
       id="gelu"
-      number="07"
+      number="16"
       kicker="The nonlinearity"
       title="GELU as a 4 KB lookup table"
     >

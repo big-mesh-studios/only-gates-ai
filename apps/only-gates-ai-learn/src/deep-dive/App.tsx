@@ -2,6 +2,17 @@ import { For } from "solid-js";
 
 import { NAV } from "./content";
 import { Contract } from "./chapters/contract";
+import { MathChapter, WhatGptChapter, TokensChapter } from "./chapters/primer";
+import {
+  BlockChapter,
+  AttentionPrimerChapter,
+  MlpPrimerChapter,
+  OutputPrimerChapter,
+} from "./chapters/parts";
+import {
+  TrainingPrimerChapter,
+  ReferenceChapter,
+} from "./chapters/learning";
 import { ModelChapter, FloatChapter } from "./chapters/model";
 import {
   FixedChapter,
@@ -56,20 +67,23 @@ function Hero() {
         <span class="accent"> with integers only.</span>
       </h1>
       <p class="lede">
-        This is the long version. It starts with the float checkpoint and ends
-        with an integer-only forward pass you can rebuild from the listings on
-        this page: int8 weights, Q16 activations, int32 accumulation, integer
-        RMSNorm, a GELU table, DI-Exp softmax, and deterministic sampling.
+        This is the long version, and it assumes no prior knowledge of GPTs. It
+        starts with the math and the purpose of every part, builds a float
+        reference you can run, and then replaces every operation with the
+        integer-only version used in production: int8 weights, Q16
+        activations, int32 accumulation, integer RMSNorm, a GELU table, DI-Exp
+        softmax, and deterministic sampling.
       </p>
       <div class="actions">
-        <a class="button" href="#contract">Start reading</a>
-        <a class="button ghost" href="#appendix">Jump to the full source</a>
+        <a class="button" href="#math">Start from zero</a>
+        <a class="button ghost" href="#reference">Skip to the implementation</a>
+        <a class="button ghost" href="#appendix">Full source</a>
         <a class="button ghost" href={demoHref}>Try the demo</a>
       </div>
       <ul class="chips" aria-label="What this page covers">
-        <li class="chip ready">Integer inference · working</li>
-        <li class="chip prototype">Full source · on this page</li>
-        <li class="chip roadmap">Runnable C example</li>
+        <li class="chip ready">Beginner primer · what and why</li>
+        <li class="chip prototype">Integer inference · working</li>
+        <li class="chip roadmap">Runnable reference · NumPy and C</li>
       </ul>
     </section>
   );
@@ -91,8 +105,10 @@ function Sidebar() {
       </nav>
       <div class="toc-note">
         <p>
-          The page reads top to bottom. Each chapter ends with a test you can
-          run and the exact production function it explains.
+          The page reads top to bottom. Chapters 01–09 assume no prior GPT
+          knowledge; chapters 10–24 turn the same ideas into the shipping
+          integer engine. Each chapter ends with a test you can run and the
+          exact production function it explains.
         </p>
         <p>
           <a href={notesHref}>Read the shorter field notes →</a>
@@ -138,6 +154,15 @@ export function DeepDiveApp() {
         <Sidebar />
         <main class="deep-article" id="main">
           <Contract />
+          <MathChapter />
+          <WhatGptChapter />
+          <TokensChapter />
+          <BlockChapter />
+          <AttentionPrimerChapter />
+          <MlpPrimerChapter />
+          <OutputPrimerChapter />
+          <TrainingPrimerChapter />
+          <ReferenceChapter />
           <ModelChapter />
           <FloatChapter />
           <FixedChapter />

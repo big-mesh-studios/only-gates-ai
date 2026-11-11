@@ -37,6 +37,10 @@ engine from the page, the full source listings, and the runnable example.
 
 ## Page structure
 
+The table below is the original 16-chapter plan. The beginner expansion adds
+chapters 01–09 and renumbers the existing chapters to 10–24; see "Beginner
+primer expansion" below for the new chapters.
+
 | # | Chapter | Content |
 | --- | --- | --- |
 | 0 | Read this first | Float-to-integer contract, repository map, three inference lanes |
@@ -134,6 +138,45 @@ The field-notes page now states that the Solid 2 weights and tokenizer ship in
 `apps/only-gates-ai/public/models/tiny-gpt-solid2/`, rather than leaving the
 artifacts implicit. A stale note about missing artifacts was not present in the
 current source.
+
+## Beginner primer expansion
+
+Status: implemented on top of the original deep dive.
+
+The original page assumed the reader already knew what a GPT is and why a
+transformer block contains attention, an MLP, norms, and residuals. The
+expansion adds a nine-chapter foundations track before the existing model
+chapters, so the page can be read by a developer with no prior GPT knowledge.
+
+New chapters:
+
+| # | Chapter | Purpose |
+| --- | --- | --- |
+| 01 | The math you need | Vectors, dot products, matrix multiply, softmax, RMS, logarithms, derivatives |
+| 02 | What a GPT is | Next-token prediction, the generation loop, parameters, context, training vs inference |
+| 03 | Tokens and embeddings | Tokenizers, vocabulary, ids, embedding lookup, position embeddings, the context window |
+| 04 | The transformer block | Residual stream, RMSNorm, attention, MLP, residual adds, pre-norm, parameter budget |
+| 05 | Attention from scratch | Q/K/V intuition, scaling, causal mask, multi-head shapes, a two-token worked example |
+| 06 | MLP and GELU | Why expansion and nonlinearity are needed, GELU shape, parameter count |
+| 07 | Logits and sampling | Tied head, softmax, temperature, top-k, greedy vs sampling, the generation loop |
+| 08 | How training works | Windows and targets, cross-entropy, gradients, backpropagation, AdamW, epochs, overfitting |
+| 09 | Implement the forward pass | A complete runnable NumPy reference, PyTorch weight loading, verification path to C |
+
+The existing chapters were renumbered 10–24 and expanded with plain-language
+explanations, line-by-line reading guides, and numeric examples. The navigation,
+cross-references, glossary, appendix learning path, and prerender description
+were updated to match.
+
+Verified for the expansion:
+
+```text
+pnpm --filter @only-gates-ai/learn typecheck   pass
+pnpm --filter @only-gates-ai/learn build       pass
+```
+
+The rendered deep-dive page contains 25 chapters, no client-side `<script>`
+tags, and no duplicate element ids. The new SVG diagrams use `role="img"`,
+`<title>`, and `<desc>`.
 
 ## Implementation status
 

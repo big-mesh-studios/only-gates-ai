@@ -14,7 +14,7 @@ export function Appendix() {
   return (
     <Chapter
       id="appendix"
-      number="15"
+      number="24"
       kicker="Appendix"
       title="The full source, the runnable harness, and the checklist"
     >
@@ -106,18 +106,65 @@ pnpm build:site           # SPA + field notes + deep dive`}
         rows={GLOSSARY.map((g) => [g.term, g.meaning])}
       />
 
-      <h3 class="subhead">G. The ten-point checklist</h3>
+      <h3 class="subhead">G. How the chapters fit together</h3>
+      <DataTable
+        caption="The three layers of the tutorial"
+        head={["Chapters", "Question answered", "What you produce"]}
+        rows={[
+          [
+            "01–09",
+            "What is a GPT, why does each part exist, and how do I build the float version?",
+            "A working NumPy forward pass and a mental model of the dataflow",
+          ],
+          [
+            "10–14",
+            "What are the exact shapes, the float checkpoint, fixed point, quantization, and the integer matmul?",
+            "The contract between the trainer and the C engine, plus the core kernel",
+          ],
+          [
+            "15–24",
+            "How do RMSNorm, GELU, attention, the forward pass, and sampling work in integers?",
+            "The shipping engine, a way to verify it, and the path to gates",
+          ],
+        ]}
+      />
+
+      <h3 class="subhead">H. The integer contract at a glance</h3>
+      <DataTable
+        caption="Every operation and the exact integer rule it uses"
+        head={["Operation", "Float idea", "Integer rule", "Scale"]}
+        rows={[
+          ["Embedding", "lookup token row and add position", "code × Q16 scale, add, saturate", "Q16 output"],
+          ["Linear layer", "matrix multiply", "int8 × int8 → int32 accumulator", "int32"],
+          ["Requantize", "apply both scales", "(int64)acc × act_scale × weight_scale", "shift 16 → Q16"],
+          ["RMSNorm", "x / sqrt(mean(x²)+ε) · gain", "Q32 sum of squares, isqrt, rounded divide", "Q16 output"],
+          ["GELU", "tanh approximation", "1025-entry Q16 table, linear interpolation", "step 2048, shift 11"],
+          ["Attention scores", "q·k / sqrt(d)", "int8 dot, scales, inv_sqrt", "shift 36 → Q12"],
+          ["Attention softmax", "exp / sum", "DI-Exp table, max subtraction, Q15 normalize", "Q15, sum 32768"],
+          ["Value sum", "Σ p·v", "int64 sum of Q15 × int8 × scale", "shift 15 → Q16"],
+          ["Output probabilities", "softmax over logits / temperature", "same DI-Exp path, then double", "Q15 → Q16"],
+          ["Sampling", "draw from cumulative distribution", "xorshift32, target = (r × total) >> 32", "integer"],
+          ["Generation", "one forward pass per token", "recompute the full context; no KV cache", "n/a"],
+        ]}
+      />
+
+      <h3 class="subhead">I. The fifteen-point checklist</h3>
       <ol class="steps compact">
+        <li>Text becomes ids with the exact tokenizer that was trained with the checkpoint.</li>
+        <li>Token embeddings and position embeddings are added, not concatenated.</li>
+        <li>Every block has the same shape: norm, attention, add, norm, MLP, add.</li>
+        <li>The causal mask only allows <code>j ≤ t</code>; the future is never computed.</li>
         <li>Weights are packed in the exact order, with every linear matrix transposed.</li>
         <li>Weight scales are Q16 fractions; activation scales are Q16-unit integers.</li>
         <li>Every dot product accumulates in int32 and requantizes in int64.</li>
         <li>Matmul shifts by 16; attention scores shift by 36; V sums shift by 15.</li>
         <li>RMSNorm uses a Q32 epsilon and an integer square root.</li>
         <li>GELU uses 1025 Q16 entries over [-16, 16] with a shift of 11.</li>
-        <li>Attention only computes <code>j &lt;= t</code>.</li>
+        <li>Attention only computes <code>j ≤ t</code>.</li>
         <li>Softmax subtracts the max and clamps deltas to 20 nats.</li>
         <li>Q15 probabilities sum to 32768; the host API converts to Q16 by doubling.</li>
         <li>Sampling is seeded, deterministic, and independent of the host RNG.</li>
+        <li>The float reference and the integer engine agree on top-1 and top-5 for your test prompts.</li>
       </ol>
 
       <Note>

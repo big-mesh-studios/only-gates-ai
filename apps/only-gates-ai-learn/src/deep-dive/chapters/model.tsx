@@ -135,7 +135,7 @@ export function ModelChapter() {
   return (
     <Chapter
       id="model"
-      number="01"
+      number="10"
       kicker="The shape of the thing"
       title="A decoder-only transformer small enough to hold in your head"
     >
@@ -146,6 +146,40 @@ export function ModelChapter() {
         are no biases, no LayerNorm, no learned position table beyond the small
         embedding, and no operator that lacks an integer implementation.
       </p>
+      <p>
+        Before reading the table, keep one picture in mind: the model holds a
+        matrix with one row per token position and one column per feature. That
+        matrix is called the residual stream. Every layer reads it and writes an
+        update back into it. The six numbers below are the only dimensions you
+        need to follow that matrix through the engine.
+      </p>
+      <ul>
+        <li>
+          <strong>V</strong> is the vocabulary size: how many different token
+          ids exist. It is the number of rows in the embedding table and the
+          number of outputs from the final head.
+        </li>
+        <li>
+          <strong>T</strong> is the context length: how many positions the model
+          reads at once. Every activation matrix has T rows.
+        </li>
+        <li>
+          <strong>D</strong> is the model width: how many numbers represent one
+          token at one position. It stays constant through every block.
+        </li>
+        <li>
+          <strong>L</strong> is the number of identical transformer blocks
+          stacked after the embedding.
+        </li>
+        <li>
+          <strong>H</strong> is the number of attention heads. Each head works
+          on <code>D/H</code> numbers.
+        </li>
+        <li>
+          <strong>M</strong> is the hidden width inside the MLP. It is usually
+          wider than D so the model can combine features before projecting back.
+        </li>
+      </ul>
 
       <div class="table-wrap">
         <table>
@@ -191,6 +225,23 @@ export function ModelChapter() {
         <code>D×D</code> output matrix, a <code>D×M</code> up-projection, and an{" "}
         <code>M×D</code> down-projection. For Solid 2 that is 264,528 values, or
         about 1.06 MB as float32.
+      </p>
+      <p>
+        Read the formula as four separate purchases. The embedding table costs{" "}
+        <code>V·D</code> because every token needs a D-number vector. Positions
+        cost <code>T·D</code> for the same reason. Each block spends{" "}
+        <code>2D</code> on its two norm gains, <code>4D²</code> on attention
+        (three input projections plus one output projection), and{" "}
+        <code>2DM</code> on the MLP. Nothing is hidden: the parameter count is
+        exactly the sum of the matrix shapes you will allocate.
+      </p>
+      <p>
+        A <strong>bias</strong> is an extra learned vector added after a matrix
+        multiply, one value per output. This model has none. That removes an add
+        and a second set of parameters from every linear layer, and it means a
+        layer is exactly “multiply by a matrix” with no hidden offset. It is a
+        deliberate simplification for the integer engine, not a requirement of
+        transformers in general.
       </p>
 
       <figure class="figure">
@@ -238,7 +289,7 @@ export function ModelChapter() {
       </p>
       <Note>
         The current engine recomputes the entire context for every generated
-        token. That is deliberately simple. Chapter 14 sketches the KV-cache
+        token. That is deliberately simple. Chapter 23 sketches the KV-cache
         change and explains why it is not in the shipping path yet.
       </Note>
 
@@ -259,7 +310,7 @@ export function FloatChapter() {
     <Chapter
       id="float"
       kicker="Build the reference first"
-      number="02"
+      number="11"
       title="Train in float, then export a buffer the integer engine can read"
     >
       <p>
@@ -282,6 +333,32 @@ export function FloatChapter() {
         file="scripts/train_tiny_gpt_solid2_colab.py"
         collapsible
       />
+
+      <h3 class="subhead">Reading the PyTorch listing line by line</h3>
+      <DataTable
+        caption="What each part of the float model does"
+        head={["Line or block", "What it means", "Why it is there"]}
+        rows={[
+          ["RMSNorm.forward", "Divide by the root mean square, then multiply by gain", "Keeps every row at a stable scale before a learned layer"],
+          ["wqkv = nn.Linear(dim, dim * 3, bias=False)", "One matrix produces Q, K, and V together", "Three projections in one matmul; easier to quantize as one weight"],
+          [".view(B, T, 3, heads, head_dim)", "Split the last axis into three projections and H heads", "Gives every head its own slice of the vector"],
+          ["q @ k.transpose(-2, -1)", "Compare every query with every key", "Produces one score per (position, key) pair"],
+          ["/ math.sqrt(self.head_dim)", "Scale the scores down", "Prevents softmax from saturating as head width grows"],
+          ["torch.triu(...).masked_fill(..., -inf)", "Zero out future positions", "Position t may only use the past"],
+          ["softmax(scores, -1) @ v", "Weighted average of values", "Moves information between positions"],
+          ["x = x + self.wo(...)", "Residual add around attention", "Preserves the stream and learns an update"],
+          ["x = x + self.w2(F.gelu(self.w1(h)))", "Residual add around the MLP", "Adds a per-position nonlinear computation"],
+          ["logits = g_final(x) @ token_emb.weight.T", "Tied output head", "Scores every vocabulary token without a second matrix"],
+        ]}
+      />
+      <p>
+        The variable <code>B</code> is the batch size, <code>T</code> is the
+        sequence length, and <code>D</code> is the model width. The C engine
+        processes one sequence at a time, so it drops the batch dimension; every
+        tensor it stores is exactly one slice of the PyTorch tensor. The
+        trainer’s <code>dropout</code> layers exist only during training and do
+        not appear in the export.
+      </p>
 
       <h3 class="subhead">Why the forward pass is shaped this way</h3>
       <ul>

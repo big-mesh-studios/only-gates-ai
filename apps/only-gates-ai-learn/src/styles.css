@@ -561,6 +561,12 @@ figcaption {
   stroke-width: 2.2;
 }
 
+.d-plus {
+  fill: #0b0e13;
+  stroke: rgba(126, 231, 135, 0.55);
+  stroke-width: 2;
+}
+
 /* Steps ------------------------------------------------------------------ */
 
 .steps {

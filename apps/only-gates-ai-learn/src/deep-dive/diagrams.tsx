@@ -375,3 +375,273 @@ export function PackingDiagram() {
     </svg>
   );
 }
+
+export function NextTokenDiagram() {
+  return (
+    <svg class="diagram" viewBox="0 0 920 300" role="img" aria-labelledby="dd7t dd7d">
+      <title id="dd7t">The autoregressive generation loop</title>
+      <desc id="dd7d">
+        A prompt is tokenized into ids. The model reads a fixed window of ids and
+        produces one probability per vocabulary token. The host samples one
+        token, appends it, and calls the model again until a stop token appears.
+      </desc>
+
+      <rect class="d-box d-blue-box" x="16" y="28" width="150" height="84" rx="10" />
+      <text class="d-text" x="91" y="58" text-anchor="middle">prompt</text>
+      <text class="d-muted" x="91" y="80" text-anchor="middle">raw text</text>
+      <text class="d-muted" x="91" y="98" text-anchor="middle">“the sky is”</text>
+
+      <rect class="d-box" x="196" y="28" width="140" height="84" rx="10" />
+      <text class="d-text" x="266" y="58" text-anchor="middle">tokenizer</text>
+      <text class="d-muted" x="266" y="80" text-anchor="middle">text → ids</text>
+      <text class="d-muted" x="266" y="98" text-anchor="middle">host side</text>
+
+      <rect class="d-box" x="366" y="28" width="120" height="84" rx="10" />
+      <text class="d-text" x="426" y="58" text-anchor="middle">ids</text>
+      <text class="d-muted" x="426" y="80" text-anchor="middle">[17, 42, 91]</text>
+      <text class="d-muted" x="426" y="98" text-anchor="middle">length T</text>
+
+      <rect class="d-box d-accent-box" x="516" y="28" width="160" height="84" rx="10" />
+      <text class="d-text" x="596" y="58" text-anchor="middle">the model</text>
+      <text class="d-muted" x="596" y="80" text-anchor="middle">L transformer</text>
+      <text class="d-muted" x="596" y="98" text-anchor="middle">blocks</text>
+
+      <rect class="d-box" x="706" y="28" width="198" height="84" rx="10" />
+      <text class="d-text" x="805" y="58" text-anchor="middle">next-token probabilities</text>
+      <text class="d-muted" x="805" y="80" text-anchor="middle">one value per id</text>
+      <text class="d-muted" x="805" y="98" text-anchor="middle">sums to 1.0</text>
+
+      <path class="d-line" d="M166 70 L192 70" />
+      <path class="d-arrow" d="M186 64 L196 70 L186 76 Z" />
+      <path class="d-line" d="M336 70 L362 70" />
+      <path class="d-arrow" d="M356 64 L366 70 L356 76 Z" />
+      <path class="d-line" d="M486 70 L512 70" />
+      <path class="d-arrow" d="M506 64 L516 70 L506 76 Z" />
+      <path class="d-line" d="M676 70 L702 70" />
+      <path class="d-arrow" d="M696 64 L706 70 L696 76 Z" />
+
+      <rect class="d-panel" x="16" y="146" width="888" height="130" rx="14" />
+      <text class="d-title" x="40" y="176">the host closes the loop</text>
+
+      <rect class="d-box" x="44" y="196" width="210" height="56" rx="8" />
+      <text class="d-text" x="149" y="220" text-anchor="middle">sample or argmax</text>
+      <text class="d-muted" x="149" y="238" text-anchor="middle">temperature · top-k · seed</text>
+
+      <rect class="d-box" x="318" y="196" width="210" height="56" rx="8" />
+      <text class="d-text" x="423" y="220" text-anchor="middle">append the new id</text>
+      <text class="d-muted" x="423" y="238" text-anchor="middle">keep the last T ids</text>
+
+      <rect class="d-box d-blue-box" x="592" y="196" width="284" height="56" rx="8" />
+      <text class="d-text" x="734" y="220" text-anchor="middle">call the model again</text>
+      <text class="d-muted" x="734" y="238" text-anchor="middle">stop on &lt;end&gt; or &lt;pad&gt;</text>
+
+      <path class="d-line" d="M254 224 L314 224" />
+      <path class="d-arrow" d="M308 218 L318 224 L308 230 Z" />
+      <path class="d-line" d="M528 224 L588 224" />
+      <path class="d-arrow" d="M582 218 L592 224 L582 230 Z" />
+
+      <path class="d-line" d="M734 196 C734 166 426 166 426 196" />
+      <path class="d-arrow" d="M420 186 L426 196 L432 186 Z" />
+      <text class="d-muted" x="580" y="160" text-anchor="middle">repeat</text>
+    </svg>
+  );
+}
+
+export function BlockPurposeDiagram() {
+  return (
+    <svg class="diagram" viewBox="0 0 920 400" role="img" aria-labelledby="dd8t dd8d">
+      <title id="dd8t">The purpose of each part of a transformer block</title>
+      <desc id="dd8d">
+        A residual stream runs through the block. RMSNorm produces a stable copy,
+        attention mixes information between positions, and an add writes the
+        result back. A second RMSNorm feeds an MLP that expands, applies GELU,
+        and contracts before another add.
+      </desc>
+
+      <path class="d-line d-line-wide" d="M108 34 L108 366" />
+      <text class="d-title" x="24" y="30">residual stream</text>
+      <text class="d-muted" x="24" y="52">x · [T, D]</text>
+      <text class="d-muted" x="24" y="70">shared by every part</text>
+
+      <path class="d-line" d="M108 92 L170 92" />
+      <path class="d-arrow" d="M164 86 L174 92 L164 98 Z" />
+      <rect class="d-box" x="180" y="66" width="150" height="52" rx="8" />
+      <text class="d-text" x="255" y="88" text-anchor="middle">RMSNorm</text>
+      <text class="d-muted" x="255" y="106" text-anchor="middle">stable scale</text>
+
+      <path class="d-line" d="M330 92 L386 92" />
+      <path class="d-arrow" d="M380 86 L390 92 L380 98 Z" />
+      <rect class="d-box d-accent-box" x="396" y="66" width="210" height="52" rx="8" />
+      <text class="d-text" x="501" y="88" text-anchor="middle">attention</text>
+      <text class="d-muted" x="501" y="106" text-anchor="middle">move info between positions</text>
+
+      <path class="d-line" d="M606 92 L686 92" />
+      <path class="d-arrow" d="M680 86 L690 92 L680 98 Z" />
+      <circle class="d-plus" cx="716" cy="92" r="20" />
+      <text class="d-text" x="716" y="98" text-anchor="middle">+</text>
+      <path class="d-line" d="M736 92 L776 92 L776 180 L108 180" />
+      <path class="d-arrow" d="M118 174 L108 180 L118 186 Z" />
+      <text class="d-muted" x="430" y="174" text-anchor="middle">write the update back</text>
+
+      <path class="d-line" d="M108 244 L170 244" />
+      <path class="d-arrow" d="M164 238 L174 244 L164 250 Z" />
+      <rect class="d-box" x="180" y="218" width="150" height="52" rx="8" />
+      <text class="d-text" x="255" y="240" text-anchor="middle">RMSNorm</text>
+      <text class="d-muted" x="255" y="258" text-anchor="middle">stable scale</text>
+
+      <path class="d-line" d="M330 244 L386 244" />
+      <path class="d-arrow" d="M380 238 L390 244 L380 250 Z" />
+      <rect class="d-box" x="396" y="218" width="210" height="52" rx="8" />
+      <text class="d-text" x="501" y="240" text-anchor="middle">MLP · D → M → D</text>
+      <text class="d-muted" x="501" y="258" text-anchor="middle">GELU computes within a position</text>
+
+      <path class="d-line" d="M606 244 L686 244" />
+      <path class="d-arrow" d="M680 238 L690 244 L680 250 Z" />
+      <circle class="d-plus" cx="716" cy="244" r="20" />
+      <text class="d-text" x="716" y="250" text-anchor="middle">+</text>
+      <path class="d-line" d="M736 244 L776 244 L776 330 L108 330" />
+      <path class="d-arrow" d="M118 324 L108 330 L118 336 Z" />
+      <text class="d-muted" x="430" y="324" text-anchor="middle">next block, or the final norm</text>
+
+      <text class="d-muted" x="108" y="382" text-anchor="middle">one block · same shapes in and out</text>
+    </svg>
+  );
+}
+
+export function AttentionPrimerDiagram() {
+  return (
+    <svg class="diagram" viewBox="0 0 920 390" role="img" aria-labelledby="dd9t dd9d">
+      <title id="dd9t">Attention from queries, keys, and values</title>
+      <desc id="dd9d">
+        A normalized input row is projected into queries, keys, and values. Each
+        query is compared with allowed keys, softmax turns the scores into
+        weights, and the weights mix the values into one output per position.
+      </desc>
+
+      <rect class="d-box d-blue-box" x="16" y="30" width="130" height="74" rx="9" />
+      <text class="d-text" x="81" y="58" text-anchor="middle">h</text>
+      <text class="d-muted" x="81" y="78" text-anchor="middle">[T, D]</text>
+      <text class="d-muted" x="81" y="96" text-anchor="middle">normalized</text>
+
+      <rect class="d-box" x="178" y="30" width="150" height="74" rx="9" />
+      <text class="d-text" x="253" y="58" text-anchor="middle">Wqkv</text>
+      <text class="d-muted" x="253" y="78" text-anchor="middle">[D, 3D]</text>
+      <text class="d-muted" x="253" y="96" text-anchor="middle">learned</text>
+
+      <rect class="d-box" x="360" y="30" width="150" height="74" rx="9" />
+      <text class="d-text" x="435" y="52" text-anchor="middle">Q · K · V</text>
+      <text class="d-muted" x="435" y="72" text-anchor="middle">[T, D] each</text>
+      <text class="d-muted" x="435" y="92" text-anchor="middle">query · key · value</text>
+
+      <rect class="d-box" x="542" y="30" width="150" height="74" rx="9" />
+      <text class="d-text" x="617" y="52" text-anchor="middle">scores</text>
+      <text class="d-muted" x="617" y="72" text-anchor="middle">Q · Kᵀ / √d</text>
+      <text class="d-muted" x="617" y="92" text-anchor="middle">[H, T, T]</text>
+
+      <rect class="d-box d-accent-box" x="724" y="30" width="180" height="74" rx="9" />
+      <text class="d-text" x="814" y="52" text-anchor="middle">softmax + P · V</text>
+      <text class="d-muted" x="814" y="72" text-anchor="middle">weights · [H, T, T]</text>
+      <text class="d-muted" x="814" y="92" text-anchor="middle">output · [T, D]</text>
+
+      <path class="d-line" d="M146 67 L174 67" />
+      <path class="d-arrow" d="M168 61 L178 67 L168 73 Z" />
+      <path class="d-line" d="M328 67 L356 67" />
+      <path class="d-arrow" d="M350 61 L360 67 L350 73 Z" />
+      <path class="d-line" d="M510 67 L538 67" />
+      <path class="d-arrow" d="M532 61 L542 67 L532 73 Z" />
+      <path class="d-line" d="M692 67 L720 67" />
+      <path class="d-arrow" d="M714 61 L724 67 L714 73 Z" />
+
+      <rect class="d-panel" x="16" y="136" width="888" height="238" rx="14" />
+      <text class="d-title" x="40" y="166">causal attention for three positions</text>
+
+      <g transform="translate(44 190)">
+        <rect class="d-box d-accent-box" x="0" y="0" width="30" height="30" rx="3" />
+        <rect class="d-box d-panel" x="32" y="0" width="30" height="30" rx="3" />
+        <rect class="d-box d-panel" x="64" y="0" width="30" height="30" rx="3" />
+        <rect class="d-box d-accent-box" x="0" y="32" width="30" height="30" rx="3" />
+        <rect class="d-box d-accent-box" x="32" y="32" width="30" height="30" rx="3" />
+        <rect class="d-box d-panel" x="64" y="32" width="30" height="30" rx="3" />
+        <rect class="d-box d-accent-box" x="0" y="64" width="30" height="30" rx="3" />
+        <rect class="d-box d-accent-box" x="32" y="64" width="30" height="30" rx="3" />
+        <rect class="d-box d-accent-box" x="64" y="64" width="30" height="30" rx="3" />
+        <text class="d-muted" x="47" y="118" text-anchor="middle">allowed</text>
+        <text class="d-muted" x="79" y="118" text-anchor="middle">future</text>
+      </g>
+
+      <text class="d-muted" x="230" y="206">row t is the query; columns are keys.</text>
+      <text class="d-muted" x="230" y="228">only j ≤ t contributes; future weights are zero.</text>
+      <text class="d-muted" x="230" y="250">softmax is applied per row, not over the whole matrix.</text>
+      <text class="d-muted" x="230" y="272">each head has its own Wq, Wk, Wv slice.</text>
+      <text class="d-muted" x="230" y="294">output rows are concatenated and passed through Wo.</text>
+
+      <text class="d-muted" x="460" y="352" text-anchor="middle">
+        attention moves information · the MLP transforms it
+      </text>
+    </svg>
+  );
+}
+
+export function TrainingLoopDiagram() {
+  return (
+    <svg class="diagram" viewBox="0 0 920 320" role="img" aria-labelledby="dd10t dd10d">
+      <title id="dd10t">The training loop</title>
+      <desc id="dd10d">
+        A batch of token windows goes through the float forward pass. The loss
+        compares the predicted next-token probabilities with the true tokens.
+        Backpropagation produces gradients, the optimizer updates the weights,
+        and the loop repeats.
+      </desc>
+
+      <rect class="d-box d-blue-box" x="18" y="36" width="150" height="84" rx="10" />
+      <text class="d-text" x="93" y="66" text-anchor="middle">corpus</text>
+      <text class="d-muted" x="93" y="88" text-anchor="middle">token windows</text>
+      <text class="d-muted" x="93" y="106" text-anchor="middle">input + target</text>
+
+      <rect class="d-box" x="198" y="36" width="150" height="84" rx="10" />
+      <text class="d-text" x="273" y="66" text-anchor="middle">forward</text>
+      <text class="d-muted" x="273" y="88" text-anchor="middle">float32</text>
+      <text class="d-muted" x="273" y="106" text-anchor="middle">T × V logits</text>
+
+      <rect class="d-box" x="378" y="36" width="150" height="84" rx="10" />
+      <text class="d-text" x="453" y="66" text-anchor="middle">loss</text>
+      <text class="d-muted" x="453" y="88" text-anchor="middle">cross-entropy</text>
+      <text class="d-muted" x="453" y="106" text-anchor="middle">−log p[target]</text>
+
+      <rect class="d-box" x="558" y="36" width="150" height="84" rx="10" />
+      <text class="d-text" x="633" y="66" text-anchor="middle">backward</text>
+      <text class="d-muted" x="633" y="88" text-anchor="middle">chain rule</text>
+      <text class="d-muted" x="633" y="106" text-anchor="middle">one gradient per weight</text>
+
+      <rect class="d-box d-accent-box" x="738" y="36" width="164" height="84" rx="10" />
+      <text class="d-text" x="820" y="66" text-anchor="middle">optimizer</text>
+      <text class="d-muted" x="820" y="88" text-anchor="middle">AdamW · lr</text>
+      <text class="d-muted" x="820" y="106" text-anchor="middle">update weights</text>
+
+      <path class="d-line" d="M168 78 L194 78" />
+      <path class="d-arrow" d="M188 72 L198 78 L188 84 Z" />
+      <path class="d-line" d="M348 78 L374 78" />
+      <path class="d-arrow" d="M368 72 L378 78 L368 84 Z" />
+      <path class="d-line" d="M528 78 L554 78" />
+      <path class="d-arrow" d="M548 72 L558 78 L548 84 Z" />
+      <path class="d-line" d="M708 78 L734 78" />
+      <path class="d-arrow" d="M728 72 L738 78 L728 84 Z" />
+
+      <rect class="d-panel" x="18" y="164" width="884" height="128" rx="14" />
+      <text class="d-title" x="42" y="194">the loop</text>
+      <text class="d-muted" x="42" y="222">
+        one step = one gradient update. one epoch = one pass over the training set.
+      </text>
+      <text class="d-muted" x="42" y="246">
+        inference keeps the forward pass and the trained weights; it discards the loss, backward pass, and optimizer.
+      </text>
+      <text class="d-muted" x="42" y="270">
+        the exported checkpoint is the only artifact the integer engine needs.
+      </text>
+
+      <path class="d-line" d="M820 120 L820 152 L273 152 L273 124" />
+      <path class="d-arrow" d="M267 134 L273 124 L279 134 Z" />
+      <text class="d-muted" x="546" y="146" text-anchor="middle">next batch</text>
+    </svg>
+  );
+}
