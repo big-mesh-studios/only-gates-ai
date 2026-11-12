@@ -32,6 +32,7 @@ import {
   type Solid2Generation,
   type Solid2Decoder,
 } from "../lib/tinyGptSolid2";
+import { SOLID2_MODEL_BASE } from "../lib/solid2Config";
 
 type ExampleId = "alice" | "solid2";
 type AliceMode = TinyGptMode | "wasm";
@@ -52,9 +53,6 @@ function parameterCount(config: {
     layers * (2 * dim + 4 * dim * dim + 2 * dim * mlp)
   );
 }
-
-// Base-relative URL works under Vite dev and the repo's relative `base: "./"` build.
-const SOLID2_MODEL_BASE = `${import.meta.env.BASE_URL}models/tiny-gpt-solid2/`;
 
 export default function IntegerGptPanel() {
   const [example, setExample] = createSignal<ExampleId>("alice");
@@ -77,10 +75,15 @@ export default function IntegerGptPanel() {
 
   // --- Solid 2 (BPE, ~1M params, WASM-primary) ---
   const [solid2, setSolid2] = createSignal<Solid2WasmModel | null>(null);
+  const [customSolid2, setCustomSolid2] = createSignal<Solid2WasmModel | null>(
+    null,
+  );
   const [solid2Loading, setSolid2Loading] = createSignal(false);
   const [solid2Error, setSolid2Error] = createSignal<string | null>(null);
   const [solid2Gen, setSolid2Gen] = createSignal<Solid2Generation | null>(null);
   const [solid2Streaming, setSolid2Streaming] = createSignal(false);
+  let bundledSolid2: Solid2WasmModel | null = null;
+  let bundledSolid2Loading = false;
   let solid2Decoder: Solid2Decoder | null = null;
   let solid2Timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -131,18 +134,36 @@ export default function IntegerGptPanel() {
     },
   );
 
-  // Lazily load Solid 2 WASM model.
+  // Lazily load the bundled Solid 2 WASM model, or use a browser-trained one.
   createEffect(
-    example,
-    (ex) => {
-      if (ex !== "solid2") stopSolid2(true);
-      if (ex !== "solid2" || solid2() || solid2Loading()) return;
-      // switch prompt to a Solid 2 question when first entering
+    () => ({ example: example(), custom: customSolid2() }),
+    (source) => {
+      if (source.example !== "solid2") {
+        stopSolid2(true);
+        return;
+      }
+      if (source.custom) {
+        setSolid2(source.custom);
+        setSolid2Error(null);
+        setSolid2Loading(false);
+        return;
+      }
+      if (bundledSolid2) {
+        setSolid2(bundledSolid2);
+        return;
+      }
+      if (bundledSolid2Loading) return;
+
+      // Switch the prompt to a Solid 2 question when first entering.
       setPrompt((p) => (p === "Alice was" ? "What are split effects?" : p));
+      bundledSolid2Loading = true;
       setSolid2Loading(true);
       setSolid2Error(null);
       loadSolid2Wasm(SOLID2_MODEL_BASE)
-        .then((m) => setSolid2(m))
+        .then((m) => {
+          bundledSolid2 = m;
+          if (!customSolid2()) setSolid2(m);
+        })
         .catch((e) =>
           setSolid2Error(
             `Could not load Solid 2 model from ${SOLID2_MODEL_BASE}: ${(e as Error).message}. ` +
@@ -150,7 +171,10 @@ export default function IntegerGptPanel() {
               `then copy weights.bin, tokenizer.json, checkpoint.json to apps/only-gates-ai/public/models/tiny-gpt-solid2/ and rebuild.`,
           ),
         )
-        .finally(() => setSolid2Loading(false));
+        .finally(() => {
+          bundledSolid2Loading = false;
+          setSolid2Loading(false);
+        });
     },
   );
 
@@ -188,6 +212,26 @@ export default function IntegerGptPanel() {
     setComparison(null);
     setWasmGeneration(null);
     setWasmComparison(null);
+  };
+
+  const handleUseSolid2Model = (model: Solid2WasmModel): void => {
+    stopSolid2(true);
+    setCustomSolid2(model);
+    setSolid2(model);
+    setSolid2Error(null);
+    setSolid2Gen(null);
+    setPrompt(model.checkpoint.prompts?.[0] ?? "What are split effects?");
+    setExample("solid2");
+    setStatus(null);
+  };
+
+  const handleResetSolid2 = (): void => {
+    stopSolid2(true);
+    setCustomSolid2(null);
+    setSolid2(null);
+    setSolid2Gen(null);
+    setSolid2Error(null);
+    setPrompt("What are split effects?");
   };
 
   const activeConfig = createMemo(() => {
@@ -395,6 +439,14 @@ export default function IntegerGptPanel() {
             </span>
           </div>
         </Show>
+        <Show when={example() === "solid2" && customSolid2() !== null}>
+          <div class="banner success">
+            <span>
+              Using a Solid 2 checkpoint trained in this browser. It was
+              quantized to int8/Q16 for the integer-only WASM path.
+            </span>
+          </div>
+        </Show>
         <Show when={example() === "alice" && aliceMode() === "wasm" && wasmLoading()}><div class="banner info"><span>Loading WebAssembly integer kernels...</span></div></Show>
         <Show when={example() === "alice" && aliceMode() === "wasm" && wasmError()}><div class="banner warning"><span>{wasmError()}</span></div></Show>
         <Show when={example() === "solid2" && solid2Loading()}><div class="banner info"><span>Loading Solid 2 model (weights.bin + tokenizer + WASM quantization)...</span></div></Show>
@@ -478,9 +530,18 @@ export default function IntegerGptPanel() {
 
       <Show when={example() === "alice"}>
         <BrowserTrainingPanel
+          variant="alice"
           isCustomCheckpoint={isCustomCheckpoint()}
           onUseCheckpoint={handleUseCheckpoint}
           onResetCheckpoint={handleResetCheckpoint}
+        />
+      </Show>
+      <Show when={example() === "solid2"}>
+        <BrowserTrainingPanel
+          variant="solid2"
+          isCustomCheckpoint={customSolid2() !== null}
+          onUseSolid2Model={handleUseSolid2Model}
+          onResetCheckpoint={handleResetSolid2}
         />
       </Show>
     </main>

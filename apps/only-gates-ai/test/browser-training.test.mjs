@@ -157,3 +157,127 @@ test("browser training tokenizes, trains, exports, and resumes", async () => {
     await server.close();
   }
 });
+
+test("generic token training exports Solid 2-shaped checkpoints and resumes", async () => {
+  const server = await createServer({
+    root: appRoot,
+    appType: "custom",
+    logLevel: "silent",
+    server: { middlewareMode: true },
+    optimizeDeps: { noDiscovery: true },
+  });
+
+  try {
+    const trainer = await server.ssrLoadModule("/src/lib/trainTinyGpt.ts");
+    const wasm = await server.ssrLoadModule("/src/lib/tinyGptWasm.ts");
+    const solid2 = await server.ssrLoadModule("/src/lib/tinyGptSolid2.ts");
+
+    const vocab = Array.from({ length: 24 }, (_, index) => `token${index}`);
+    const trainingTokens = Uint16Array.from(
+      { length: 64 },
+      (_, index) => (index * 7) % vocab.length,
+    );
+    const validationTokens = Uint16Array.from(
+      { length: 24 },
+      (_, index) => (index * 5) % vocab.length,
+    );
+    const config = {
+      context: 4,
+      dim: 8,
+      layers: 1,
+      heads: 2,
+      mlp: 16,
+    };
+    const data = {
+      vocab,
+      trainingTokens,
+      validationTokens,
+      corpusHash: trainer.hashString("solid2-browser-test"),
+      corpusSize: trainingTokens.length,
+      corpusLabel: "corpusTokens",
+    };
+    const options = {
+      data,
+      defaultConfig: config,
+      steps: 3,
+      batch: 2,
+      lr: 0.003,
+      dropout: 0.1,
+      seed: 11,
+      backend: "cpu",
+      yieldEvery: 1,
+      saveEvery: 1,
+      kind: "solid2",
+      modelMeta: {
+        name: "solid2-browser-test",
+        source: "test corpus",
+        license: "test",
+      },
+    };
+
+    const first = await trainer.trainTokenGpt(options);
+
+    assert.equal(first.backend, "cpu");
+    assert.equal(first.state.kind, "solid2");
+    assert.equal(first.state.step, 3);
+    assert.equal(first.checkpoint.config.vocabSize, vocab.length);
+    assert.equal(first.checkpoint.meta.name, "solid2-browser-test");
+    assert.equal(
+      first.checkpoint.meta.training.corpusTokens,
+      trainingTokens.length,
+    );
+    assert.ok(first.state.bestWeights !== null);
+
+    const expectedParameters =
+      vocab.length * config.dim +
+      config.context * config.dim +
+      config.dim +
+      config.layers *
+        (2 * config.dim +
+          4 * config.dim * config.dim +
+          2 * config.dim * config.mlp);
+    const packed = wasm.packTinyGptWeights(first.checkpoint);
+    assert.equal(packed.length, expectedParameters);
+
+    const checkpoint = {
+      format: "only-gates-tiny-gpt-solid2",
+      version: 1,
+      config: first.checkpoint.config,
+      parameterCount: expectedParameters,
+      tokenizer: "tokenizer.json",
+      meta: first.checkpoint.meta,
+      samples: [],
+      prompts: [],
+    };
+    const integer = await solid2.createSolid2WasmFromData(
+      checkpoint,
+      { idFor: () => 0 },
+      packed,
+    );
+    assert.equal(integer.config.vocabSize, vocab.length);
+    assert.equal(integer.parameterCount, expectedParameters);
+    integer.model.forward([1, 2, 3, 4]);
+    const logits = integer.model.logits();
+    assert.equal(logits.length, config.context * vocab.length);
+    assert.ok(logits.some((value) => value !== 0));
+    integer.model.destroy();
+
+    const resumed = await trainer.trainTokenGpt({
+      ...options,
+      steps: 5,
+      saveEvery: 5,
+      initialState: first.state,
+    });
+
+    assert.equal(resumed.state.kind, "solid2");
+    assert.equal(resumed.state.step, 5);
+    assert.equal(resumed.history.length, 5);
+    assert.deepEqual(
+      resumed.history.slice(0, 3).map((point) => point.step),
+      [1, 2, 3],
+    );
+    assert.equal(resumed.checkpoint.meta.name, "solid2-browser-test");
+  } finally {
+    await server.close();
+  }
+});

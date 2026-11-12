@@ -219,6 +219,44 @@ export function createSolid2Decoder(
   return new Solid2Decoder(model, prompt, options);
 }
 
+/**
+ * Builds the integer-only WASM model from an in-memory checkpoint.
+ *
+ * Browser training already has the packed float32 weights, so it can skip the
+ * checkpoint/base64 round trip and construct the quantized model directly.
+ */
+export async function createSolid2WasmFromData(
+  checkpoint: Solid2Checkpoint,
+  tokenizer: BpeTokenizer,
+  weights: Float32Array,
+): Promise<Solid2WasmModel> {
+  const c = checkpoint.config;
+  // Kept in sync with `solid2ParameterCount` in solid2Config.ts; this module
+  // avoids importing it so the standalone regression test can transpile it.
+  const expected =
+    c.vocabSize * c.dim +
+    c.context * c.dim +
+    c.dim +
+    c.layers *
+      (2 * c.dim + 4 * c.dim * c.dim + 2 * c.dim * c.mlp);
+  if (weights.length !== expected) {
+    throw new Error(
+      `weights length ${weights.length} != expected ${expected} (config mismatch or corrupt weights)`,
+    );
+  }
+  const { module, backend } = await loadOnlyGatesModuleAuto();
+  const model = createTinyGpt(module, { config: c, weights });
+  return {
+    config: c,
+    checkpoint,
+    tokenizer,
+    module,
+    model,
+    parameterCount: checkpoint.parameterCount ?? expected,
+    backend,
+  };
+}
+
 /** Load the Solid 2 ~1M BPE model for integer-only WASM inference. */
 export async function loadSolid2Wasm(baseUrl: string): Promise<Solid2WasmModel> {
   const base = baseUrl.replace(/\/?$/, "/");
@@ -232,16 +270,7 @@ export async function loadSolid2Wasm(baseUrl: string): Promise<Solid2WasmModel> 
   const checkpoint = (await ckRes.json()) as Solid2Checkpoint;
   const bin = await binRes.arrayBuffer();
   const weights = new Float32Array(bin);
-  // quick sanity: expected param count
-  const c = checkpoint.config;
-  const expected = c.vocabSize * c.dim + c.context * c.dim + c.dim +
-    c.layers * (c.dim + c.dim * c.dim * 3 + c.dim * c.dim + c.dim + c.dim * c.mlp + c.mlp * c.dim);
-  if (weights.length !== expected) {
-    throw new Error(`weights length ${weights.length} != expected ${expected} (config mismatch or corrupt weights.bin)`);
-  }
-  const { module, backend } = await loadOnlyGatesModuleAuto();
-  const model = createTinyGpt(module, { config: c, weights });
-  return { config: c, checkpoint, tokenizer: tok, module, model, parameterCount: checkpoint.parameterCount ?? expected, backend };
+  return createSolid2WasmFromData(checkpoint, tok, weights);
 }
 
 export function generateSolid2Wasm(

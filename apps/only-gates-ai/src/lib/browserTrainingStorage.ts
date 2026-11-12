@@ -11,7 +11,9 @@ import type { BrowserTrainingState, TrainingPoint } from "./trainTinyGpt";
 const DB_NAME = "gate-forest-browser-training";
 const DB_VERSION = 1;
 const STORE_NAME = "runs";
-const RUN_KEY = "current";
+const DEFAULT_RUN_KEY = "current";
+
+export type BrowserTrainingRunKey = "current" | "solid2";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -140,6 +142,7 @@ function parseState(value: unknown): BrowserTrainingState {
   return {
     format: "only-gates-browser-train",
     version: 1,
+    kind: value.kind === "solid2" ? "solid2" : "alice",
     config: value.config as unknown as BrowserTrainingState["config"],
     vocab: value.vocab.filter((entry): entry is string => typeof entry === "string"),
     step: typeof value.step === "number" ? value.step : 0,
@@ -165,18 +168,23 @@ function parseState(value: unknown): BrowserTrainingState {
 
 export async function saveBrowserTrainingState(
   state: BrowserTrainingState,
+  key: BrowserTrainingRunKey = DEFAULT_RUN_KEY,
 ): Promise<void> {
-  await withStore("readwrite", (store) => store.put(state, RUN_KEY));
+  await withStore("readwrite", (store) => store.put(state, key));
 }
 
-export async function loadBrowserTrainingState(): Promise<BrowserTrainingState | null> {
-  const value = await withStore("readonly", (store) => store.get(RUN_KEY));
+export async function loadBrowserTrainingState(
+  key: BrowserTrainingRunKey = DEFAULT_RUN_KEY,
+): Promise<BrowserTrainingState | null> {
+  const value = await withStore("readonly", (store) => store.get(key));
   if (value === undefined) {
     return null;
   }
   return parseState(value);
 }
 
-export async function deleteBrowserTrainingState(): Promise<void> {
-  await withStore("readwrite", (store) => store.delete(RUN_KEY));
+export async function deleteBrowserTrainingState(
+  key: BrowserTrainingRunKey = DEFAULT_RUN_KEY,
+): Promise<void> {
+  await withStore("readwrite", (store) => store.delete(key));
 }

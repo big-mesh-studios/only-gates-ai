@@ -48,9 +48,12 @@ export interface BrowserTrainingProgress extends TrainingPoint {
 
 export type SerializedTinyGptWeights = TinyGptCheckpoint["weights"];
 
+export type BrowserTrainingKind = "alice" | "solid2";
+
 export interface BrowserTrainingState {
   readonly format: "only-gates-browser-train";
   readonly version: 1;
+  readonly kind: BrowserTrainingKind;
   readonly config: TinyGptConfig;
   readonly vocab: readonly string[];
   readonly step: number;
@@ -99,6 +102,48 @@ export interface BrowserTrainingResult {
   readonly stopped: boolean;
   readonly elapsedMs: number;
   readonly history: readonly TrainingPoint[];
+}
+
+/**
+ * A pre-tokenized corpus. The generic trainer never looks at text, so callers
+ * can supply word-level ids, byte-level BPE ids, or any other token stream.
+ */
+export interface TokenTrainingData {
+  readonly vocab: readonly string[];
+  readonly trainingTokens: ArrayLike<number>;
+  readonly validationTokens: ArrayLike<number>;
+  readonly corpusHash: string;
+  /** Recorded in checkpoint metadata. Defaults to the training token count. */
+  readonly corpusSize?: number;
+  /** Metadata key for `corpusSize`. Defaults to "corpusTokens". */
+  readonly corpusLabel?: string;
+}
+
+export interface TokenTrainingModelMeta {
+  readonly name: string;
+  readonly source: string;
+  readonly license: string;
+}
+
+export interface TokenTrainingOptions {
+  readonly data: TokenTrainingData;
+  readonly config?: Partial<TinyGptConfig>;
+  readonly defaultConfig?: TinyGptConfig;
+  readonly steps?: number;
+  readonly batch?: number;
+  readonly lr?: number;
+  readonly seed?: number;
+  readonly dropout?: number;
+  readonly maxMinutes?: number;
+  readonly backend?: "auto" | BrowserTrainingBackend;
+  readonly initialState?: BrowserTrainingState | null;
+  readonly onProgress?: (progress: BrowserTrainingProgress) => void;
+  readonly onCheckpoint?: (state: BrowserTrainingState) => void;
+  readonly shouldCancel?: () => boolean;
+  readonly yieldEvery?: number;
+  readonly saveEvery?: number;
+  readonly kind?: BrowserTrainingKind;
+  readonly modelMeta: TokenTrainingModelMeta;
 }
 
 export interface WordCorpusData {
@@ -274,7 +319,7 @@ function mulberry32(seed: number): () => number {
 }
 
 function sampleBatch(
-  tokens: readonly number[],
+  tokens: ArrayLike<number>,
   context: number,
   batch: number,
   random: () => number,
@@ -296,7 +341,7 @@ function sampleBatch(
 }
 
 function buildWindows(
-  tokens: readonly number[],
+  tokens: ArrayLike<number>,
   context: number,
 ): WindowData {
   const count = Math.floor((tokens.length - 1) / context);
@@ -319,7 +364,7 @@ function buildWindows(
   return { input, target, count };
 }
 
-function yieldToBrowser(): Promise<void> {
+export function yieldToBrowser(): Promise<void> {
   if (typeof requestAnimationFrame === "function") {
     return new Promise((resolve) => requestAnimationFrame(() => resolve()));
   }
@@ -823,23 +868,22 @@ function makeCheckpoint(
   config: TinyGptConfig,
   vocab: readonly string[],
   weights: SerializedTinyGptWeights,
-  meta: {
+  meta: TokenTrainingModelMeta & {
     readonly steps: number;
     readonly batch: number;
     readonly loss: number;
-    readonly wordCount: number;
+    readonly corpusSize: number;
+    readonly corpusLabel: string;
   },
 ): TinyGptCheckpoint {
   return {
     config,
     meta: {
-      name: "tiny-gpt-alice-browser",
-      source:
-        "Lewis Carroll, Alice's Adventures in Wonderland (1865), Project Gutenberg #11. Public domain.",
-      license:
-        "Public domain text; model weights trained in the browser by this repository.",
+      name: meta.name,
+      source: meta.source,
+      license: meta.license,
       training: {
-        corpusWords: meta.wordCount,
+        [meta.corpusLabel]: meta.corpusSize,
         steps: meta.steps,
         batch: meta.batch,
         context: config.context,
@@ -859,6 +903,7 @@ function makeCheckpoint(
 function makeState(
   config: TinyGptConfig,
   vocab: readonly string[],
+  kind: BrowserTrainingKind,
   step: number,
   steps: number,
   batch: number,
@@ -877,6 +922,7 @@ function makeState(
   return {
     format: "only-gates-browser-train",
     version: 1,
+    kind,
     config,
     vocab: [...vocab],
     step,
@@ -901,36 +947,36 @@ function makeState(
 /* Training                                                           */
 /* ------------------------------------------------------------------ */
 
-export async function trainTinyGpt(
-  options: BrowserTrainingOptions,
+export async function trainTokenGpt(
+  options: TokenTrainingOptions,
 ): Promise<BrowserTrainingResult> {
-  const corpusHash = hashString(options.corpus);
+  const { data } = options;
+  const corpusHash = data.corpusHash;
   const initial = options.initialState ?? null;
+  const kind = options.kind ?? "alice";
   if (initial && initial.corpusHash !== corpusHash) {
     throw new Error(
       "The saved run was trained on a different corpus. Clear it before starting again.",
     );
   }
+  if (initial && (initial.kind ?? "alice") !== kind) {
+    throw new Error("The saved run belongs to a different browser trainer.");
+  }
 
-  const corpusData = buildWordCorpus(
-    options.corpus,
-    options.vocabLimit ?? initial?.config.vocabSize ?? 512,
-    initial?.vocab,
-  );
   const config: TinyGptConfig = initial
     ? { ...initial.config }
     : {
-        ...DEFAULT_BROWSER_TRAIN_CONFIG,
+        ...(options.defaultConfig ?? DEFAULT_BROWSER_TRAIN_CONFIG),
         ...options.config,
-        vocabSize: corpusData.vocab.length,
+        vocabSize: data.vocab.length,
       };
-  if (config.vocabSize !== corpusData.vocab.length) {
+  if (config.vocabSize !== data.vocab.length) {
     throw new Error("The saved vocabulary does not match the saved model config.");
   }
   if (config.dim % config.heads !== 0) {
     throw new Error("dim must be divisible by heads.");
   }
-  if (corpusData.trainingTokens.length < config.context + 2) {
+  if (data.trainingTokens.length < config.context + 2) {
     throw new Error("The training corpus is too short for this context size.");
   }
 
@@ -966,7 +1012,7 @@ export async function trainTinyGpt(
     const params = flattenModel(model);
     const history: TrainingPoint[] = initial ? [...initial.history] : [];
     const validationWindows = buildWindows(
-      corpusData.validationTokens,
+      data.validationTokens,
       config.context,
     );
     let smooth: number | null =
@@ -991,7 +1037,7 @@ export async function trainTinyGpt(
         (seed ^ Math.imul(step, 0x9e3779b9)) >>> 0,
       );
       const batchData = sampleBatch(
-        corpusData.trainingTokens,
+        data.trainingTokens,
         config.context,
         batch,
         random,
@@ -1103,7 +1149,8 @@ export async function trainTinyGpt(
         options.onCheckpoint?.(
           makeState(
             config,
-            corpusData.vocab,
+            data.vocab,
+            kind,
             step,
             totalSteps,
             batch,
@@ -1131,7 +1178,8 @@ export async function trainTinyGpt(
     const finalWeights = bestWeights ?? currentWeights;
     const state = makeState(
       config,
-      corpusData.vocab,
+      data.vocab,
+      kind,
       lastStep,
       totalSteps,
       batch,
@@ -1154,11 +1202,13 @@ export async function trainTinyGpt(
         ? history[history.length - 1]!.loss
         : Number.NaN;
     return {
-      checkpoint: makeCheckpoint(config, corpusData.vocab, finalWeights, {
+      checkpoint: makeCheckpoint(config, data.vocab, finalWeights, {
+        ...options.modelMeta,
         steps: lastStep,
         batch,
         loss: finalLoss,
-        wordCount: corpusData.words.length,
+        corpusSize: data.corpusSize ?? data.trainingTokens.length,
+        corpusLabel: data.corpusLabel ?? "corpusTokens",
       }),
       state,
       backend,
@@ -1174,4 +1224,48 @@ export async function trainTinyGpt(
       disposeModel(model);
     }
   }
+}
+
+/** Trains the word-level Alice model on the bundled public-domain corpus. */
+export async function trainTinyGpt(
+  options: BrowserTrainingOptions,
+): Promise<BrowserTrainingResult> {
+  const corpusData = buildWordCorpus(
+    options.corpus,
+    options.vocabLimit ?? options.initialState?.config.vocabSize ?? 512,
+    options.initialState?.vocab,
+  );
+  return trainTokenGpt({
+    data: {
+      vocab: corpusData.vocab,
+      trainingTokens: corpusData.trainingTokens,
+      validationTokens: corpusData.validationTokens,
+      corpusHash: hashString(options.corpus),
+      corpusSize: corpusData.words.length,
+      corpusLabel: "corpusWords",
+    },
+    config: options.config,
+    defaultConfig: DEFAULT_BROWSER_TRAIN_CONFIG,
+    steps: options.steps,
+    batch: options.batch,
+    lr: options.lr,
+    seed: options.seed,
+    dropout: options.dropout,
+    maxMinutes: options.maxMinutes,
+    backend: options.backend,
+    initialState: options.initialState,
+    onProgress: options.onProgress,
+    onCheckpoint: options.onCheckpoint,
+    shouldCancel: options.shouldCancel,
+    yieldEvery: options.yieldEvery,
+    saveEvery: options.saveEvery,
+    kind: "alice",
+    modelMeta: {
+      name: "tiny-gpt-alice-browser",
+      source:
+        "Lewis Carroll, Alice's Adventures in Wonderland (1865), Project Gutenberg #11. Public domain.",
+      license:
+        "Public domain text; model weights trained in the browser by this repository.",
+    },
+  });
 }
