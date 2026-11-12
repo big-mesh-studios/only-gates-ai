@@ -10,6 +10,7 @@ import {
   TinyGptMode,
   TinyGptComparison,
   TinyGptGeneration,
+  type TinyGptCheckpoint,
   loadTinyGpt,
   compareTinyGpt,
   generateTinyGpt,
@@ -23,6 +24,7 @@ import {
   compareTinyGptWasm,
 } from "../lib/tinyGptWasm";
 import { TINY_GPT_CHECKPOINT } from "../assets/tiny-gpt-weights";
+import BrowserTrainingPanel from "./BrowserTrainingPanel";
 import {
   loadSolid2Wasm,
   createSolid2Decoder,
@@ -58,6 +60,8 @@ export default function IntegerGptPanel() {
   const [example, setExample] = createSignal<ExampleId>("alice");
 
   // --- Alice (word-level, small) ---
+  const [checkpoint, setCheckpoint] =
+    createSignal<TinyGptCheckpoint>(TINY_GPT_CHECKPOINT);
   const [model, setModel] = createSignal<TinyGptModel | null>(null);
   const [aliceMode, setAliceMode] = createSignal<AliceMode>("int8");
   const [loading, setLoading] = createSignal(false);
@@ -94,18 +98,18 @@ export default function IntegerGptPanel() {
 
   const [prompt, setPrompt] = createSignal("Alice was");
 
-  // Auto-load Alice.
+  // Load (or reload) Alice whenever the active checkpoint changes.
   createEffect(
-    model,
+    checkpoint,
     (current) => {
-      if (current) return;
       setLoading(true);
       setStatus("Loading transformer weights...");
       try {
-        const loaded = loadTinyGpt(TINY_GPT_CHECKPOINT);
+        const loaded = loadTinyGpt(current);
         setModel(loaded);
         setStatus(null);
       } catch (e) {
+        setModel(null);
         setStatus(`Error loading model: ${(e as Error).message}`);
       } finally {
         setLoading(false);
@@ -115,12 +119,12 @@ export default function IntegerGptPanel() {
 
   // Lazily build Alice WASM model.
   createEffect(
-    () => ({ ex: example(), mode: aliceMode() }),
+    () => ({ ex: example(), mode: aliceMode(), cp: checkpoint() }),
     (s) => {
       if (s.ex !== "alice" || s.mode !== "wasm" || wasm() || wasmLoading()) return;
       setWasmLoading(true);
       setWasmError(null);
-      loadTinyGptWasm(TINY_GPT_CHECKPOINT)
+      loadTinyGptWasm(s.cp)
         .then((loaded) => setWasm(loaded))
         .catch((e) => setWasmError(`WASM error: ${(e as Error).message}`))
         .finally(() => setWasmLoading(false));
@@ -151,6 +155,40 @@ export default function IntegerGptPanel() {
   );
 
   const mode = (): PanelMode => (example() === "solid2" ? "solid2-wasm" : aliceMode());
+
+  const isCustomCheckpoint = createMemo(
+    () => checkpoint() !== TINY_GPT_CHECKPOINT,
+  );
+
+  const handleUseCheckpoint = (next: TinyGptCheckpoint): void => {
+    stopSolid2(true);
+    setExample("alice");
+    if (next === checkpoint()) {
+      // The trained checkpoint is already active. Avoid clearing the loaded
+      // model: setting the same signal value would not re-run the loader.
+      return;
+    }
+    setCheckpoint(next);
+    setModel(null);
+    setWasm(null);
+    setWasmError(null);
+    setGeneration(null);
+    setComparison(null);
+    setWasmGeneration(null);
+    setWasmComparison(null);
+  };
+
+  const handleResetCheckpoint = (): void => {
+    stopSolid2(true);
+    setCheckpoint(TINY_GPT_CHECKPOINT);
+    setModel(null);
+    setWasm(null);
+    setWasmError(null);
+    setGeneration(null);
+    setComparison(null);
+    setWasmGeneration(null);
+    setWasmComparison(null);
+  };
 
   const activeConfig = createMemo(() => {
     if (example() === "solid2") return solid2()?.config ?? null;
@@ -349,6 +387,14 @@ export default function IntegerGptPanel() {
         </p>
 
         <Show when={status()}><div class="banner info"><span>{status()}</span></div></Show>
+        <Show when={example() === "alice" && isCustomCheckpoint()}>
+          <div class="banner success">
+            <span>
+              Using a checkpoint trained in this browser. The demo quantized it
+              at load; inference is still int8 or integer-only WASM.
+            </span>
+          </div>
+        </Show>
         <Show when={example() === "alice" && aliceMode() === "wasm" && wasmLoading()}><div class="banner info"><span>Loading WebAssembly integer kernels...</span></div></Show>
         <Show when={example() === "alice" && aliceMode() === "wasm" && wasmError()}><div class="banner warning"><span>{wasmError()}</span></div></Show>
         <Show when={example() === "solid2" && solid2Loading()}><div class="banner info"><span>Loading Solid 2 model (weights.bin + tokenizer + WASM quantization)...</span></div></Show>
@@ -429,6 +475,14 @@ export default function IntegerGptPanel() {
           )}
         </Show>
       </section>
+
+      <Show when={example() === "alice"}>
+        <BrowserTrainingPanel
+          isCustomCheckpoint={isCustomCheckpoint()}
+          onUseCheckpoint={handleUseCheckpoint}
+          onResetCheckpoint={handleResetCheckpoint}
+        />
+      </Show>
     </main>
   );
 }

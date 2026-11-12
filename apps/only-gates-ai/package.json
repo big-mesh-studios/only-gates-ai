@@ -16,6 +16,8 @@
     "@only-gates-ai/compiler": "workspace:*",
     "@only-gates-ai/core": "workspace:*",
     "@solidjs/web": "2.0.0-rc.21",
+    "@tensorflow/tfjs": "4.22.0",
+    "@tensorflow/tfjs-backend-webgpu": "4.22.0",
     "solid-js": "2.0.0-rc.21"
   },
   "devDependencies": {

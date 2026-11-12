@@ -175,6 +175,15 @@ button {
   color: var(--danger);
 }
 
+.runtime-pill.warning {
+  color: var(--warning);
+}
+
+.runtime-pill.warning .runtime-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 4px rgba(242, 204, 96, 0.12);
+}
+
 .runtime-pill.error .runtime-dot {
   background: var(--danger);
   box-shadow: 0 0 0 4px rgba(255, 123, 114, 0.13);
@@ -312,6 +321,197 @@ button {
 
 .language-card .banner {
   margin-bottom: 0;
+}
+
+/* Browser training card */
+.training-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.training-card .card-heading {
+  margin-bottom: 0;
+}
+
+.training-card .banner {
+  margin-bottom: 0;
+}
+
+.training-card .hint {
+  margin: 0;
+}
+
+.training-card .button-row {
+  margin: 0;
+}
+
+.banner.warning {
+  border-color: rgba(242, 204, 96, 0.3);
+  background: rgba(242, 204, 96, 0.08);
+}
+
+.training-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.training-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.training-field input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  outline: none;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.training-field input:focus {
+  border-color: var(--border-strong);
+}
+
+.training-field input:disabled {
+  opacity: 0.55;
+}
+
+.training-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.training-stats b {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.loss-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.loss-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.loss-chart-empty {
+  display: grid;
+  place-items: center;
+  min-height: 140px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.loss-grid {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+
+.loss-label {
+  fill: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.loss-raw {
+  fill: none;
+  stroke: rgba(121, 192, 255, 0.35);
+  stroke-width: 1.2;
+}
+
+.loss-smooth {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.loss-val {
+  fill: none;
+  stroke: var(--warning);
+  stroke-width: 1.6;
+}
+
+.loss-val-dot {
+  fill: var(--warning);
+}
+
+.loss-best {
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.loss-legend {
+  display: flex;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.loss-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 2px;
+  margin-right: 5px;
+  vertical-align: middle;
+  border-radius: 999px;
+}
+
+.loss-legend-raw::before {
+  background: rgba(121, 192, 255, 0.7);
+}
+
+.loss-legend-smooth::before {
+  background: var(--accent);
+}
+
+.loss-legend-val::before {
+  background: var(--warning);
+}
+
+.training-sample {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(126, 231, 135, 0.2);
+  border-radius: 12px;
+  background: rgba(126, 231, 135, 0.05);
+}
+
+.training-sample p {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .text-area {
