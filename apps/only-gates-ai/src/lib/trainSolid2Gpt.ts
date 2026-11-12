@@ -70,6 +70,8 @@ export interface Solid2TrainingData {
 export interface Solid2DataOptions {
   readonly tokenizerUrl?: string;
   readonly dataBaseUrl?: string;
+  /** Base URL for the deployed checkpoint/tokenizer. Defaults to `SOLID2_MODEL_BASE`. */
+  readonly modelBaseUrl?: string;
   readonly onStatus?: (status: string) => void;
   readonly shouldCancel?: () => boolean;
 }
@@ -83,6 +85,11 @@ export interface Solid2TrainingOptions extends Solid2DataOptions {
   readonly maxMinutes?: number;
   readonly backend?: "auto" | BrowserTrainingBackend;
   readonly initialState?: BrowserTrainingState | null;
+  /**
+   * Initializes the model from the bundled Solid 2 checkpoint instead of random
+   * weights. Ignored when resuming a saved run (`initialState` wins).
+   */
+  readonly warmStart?: boolean;
   readonly onProgress?: (progress: BrowserTrainingProgress) => void;
   readonly onCheckpoint?: (state: BrowserTrainingState) => void;
   readonly yieldEvery?: number;
@@ -147,6 +154,35 @@ function parseQaRows(text: string, label: string): Solid2QaRow[] {
     throw new Error(`${label} is empty.`);
   }
   return rows;
+}
+
+interface BundledSolid2Model {
+  readonly checkpoint: Solid2Checkpoint;
+  readonly weights: Float32Array;
+}
+
+/** Reads the deployed checkpoint and packed weights for a warm start. */
+async function loadBundledSolid2Model(
+  base: string,
+): Promise<BundledSolid2Model> {
+  const [checkpointResponse, weightsResponse] = await Promise.all([
+    fetch(`${base}checkpoint.json`),
+    fetch(`${base}weights.bin`),
+  ]);
+  if (!checkpointResponse.ok) {
+    throw new Error(
+      `fetch failed: ${checkpointResponse.status} ${base}checkpoint.json`,
+    );
+  }
+  if (!weightsResponse.ok) {
+    throw new Error(
+      `fetch failed: ${weightsResponse.status} ${base}weights.bin`,
+    );
+  }
+  return {
+    checkpoint: (await checkpointResponse.json()) as Solid2Checkpoint,
+    weights: new Float32Array(await weightsResponse.arrayBuffer()),
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -285,11 +321,15 @@ async function writeTokenCache(entry: CachedTokenStream): Promise<void> {
 /* Data loading                                                       */
 /* ------------------------------------------------------------------ */
 
+function modelBase(options: Solid2DataOptions): string {
+  return (options.modelBaseUrl ?? SOLID2_MODEL_BASE).replace(/\/?$/, "/");
+}
+
 export async function loadSolid2TrainingData(
   options: Solid2DataOptions = {},
 ): Promise<Solid2TrainingData> {
   const tokenizerUrl =
-    options.tokenizerUrl ?? `${SOLID2_MODEL_BASE}tokenizer.json`;
+    options.tokenizerUrl ?? `${modelBase(options)}tokenizer.json`;
   const dataBase = (options.dataBaseUrl ?? SOLID2_DATA_BASE).replace(
     /\/?$/,
     "/",
@@ -400,13 +440,40 @@ export async function trainSolid2Gpt(
   options: Solid2TrainingOptions = {},
 ): Promise<Solid2TrainingResult> {
   const data = await loadSolid2TrainingData(options);
-  options.onStatus?.(
-    "Selecting the TensorFlow.js backend and starting training...",
-  );
+
+  let config = SOLID2_TRAIN_CONFIG;
+  let initialWeights: Float32Array | undefined;
+  if (options.warmStart && !options.initialState) {
+    options.onStatus?.(
+      "Loading the bundled Solid 2 checkpoint for a warm start...",
+    );
+    const bundled = await loadBundledSolid2Model(modelBase(options));
+    const expected = solid2ParameterCount(bundled.checkpoint.config);
+    if (bundled.weights.length !== expected) {
+      throw new Error(
+        `Bundled weights.bin has ${bundled.weights.length.toLocaleString()} values but ` +
+          `the checkpoint config needs ${expected.toLocaleString()}.`,
+      );
+    }
+    if (bundled.checkpoint.config.vocabSize !== data.trainingData.vocab.length) {
+      throw new Error(
+        "The bundled Solid 2 vocabulary does not match the BPE tokenizer.",
+      );
+    }
+    config = bundled.checkpoint.config;
+    initialWeights = bundled.weights;
+    options.onStatus?.(
+      `Warm-starting from the bundled model (${expected.toLocaleString()} params).`,
+    );
+  } else {
+    options.onStatus?.(
+      "Selecting the TensorFlow.js backend and starting training...",
+    );
+  }
 
   const result = await trainTokenGpt({
     data: data.trainingData,
-    config: SOLID2_TRAIN_CONFIG,
+    config,
     defaultConfig: SOLID2_TRAIN_CONFIG,
     steps: options.steps ?? 400,
     batch: options.batch ?? 4,
@@ -416,6 +483,7 @@ export async function trainSolid2Gpt(
     maxMinutes: options.maxMinutes ?? 30,
     backend: options.backend,
     initialState: options.initialState,
+    initialWeights,
     onProgress: options.onProgress,
     onCheckpoint: options.onCheckpoint,
     shouldCancel: options.shouldCancel,

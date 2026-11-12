@@ -388,6 +388,36 @@ button {
   opacity: 0.55;
 }
 
+.training-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.training-toggle input {
+  flex: none;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+.training-toggle b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.training-toggle small {
+  display: block;
+  font-size: 0.72rem;
+}
+
 .training-stats {
   display: flex;
   flex-wrap: wrap;

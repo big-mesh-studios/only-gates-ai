@@ -277,6 +277,21 @@ test("generic token training exports Solid 2-shaped checkpoints and resumes", as
       [1, 2, 3],
     );
     assert.equal(resumed.checkpoint.meta.name, "solid2-browser-test");
+
+    // A warm start restores packed weights verbatim and resets the run state.
+    const seedPacked = wasm.packTinyGptWeights(resumed.checkpoint);
+    const warmed = await trainer.trainTokenGpt({
+      ...options,
+      steps: 0,
+      initialWeights: seedPacked,
+    });
+    assert.equal(warmed.state.step, 0);
+    assert.equal(warmed.state.kind, "solid2");
+    assert.equal(warmed.history.length, 0);
+    assert.deepEqual(
+      Array.from(wasm.packTinyGptWeights(warmed.checkpoint)),
+      Array.from(seedPacked),
+    );
   } finally {
     await server.close();
   }

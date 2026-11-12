@@ -137,6 +137,12 @@ export interface TokenTrainingOptions {
   readonly maxMinutes?: number;
   readonly backend?: "auto" | BrowserTrainingBackend;
   readonly initialState?: BrowserTrainingState | null;
+  /**
+   * Packed float32 weights in `tiny_gpt_create` order. Only used when there is
+   * no `initialState`; this warm-starts the model while keeping a fresh
+   * optimizer, history, and step counter.
+   */
+  readonly initialWeights?: Float32Array;
   readonly onProgress?: (progress: BrowserTrainingProgress) => void;
   readonly onCheckpoint?: (state: BrowserTrainingState) => void;
   readonly shouldCancel?: () => boolean;
@@ -473,6 +479,33 @@ function restoreModel(
     const values = decodeFloat32(flat[index]!);
     const tensor = tf.tensor(values, spec.shape, "float32");
     return makeVariable(tf, spec.name, tensor);
+  });
+  return modelFromVariables(config, variables);
+}
+
+function restoreModelFromPacked(
+  tf: TfModule,
+  config: TinyGptConfig,
+  packed: Float32Array,
+): ModelVars {
+  const specs = paramSpecs(config);
+  const expected = specs.reduce(
+    (total, spec) => total + spec.shape.reduce((a, b) => a * b, 1),
+    0,
+  );
+  if (packed.length !== expected) {
+    throw new Error(
+      `Warm-start weights have ${packed.length.toLocaleString()} values but the config needs ` +
+        `${expected.toLocaleString()} (config mismatch or corrupt weights).`,
+    );
+  }
+  let offset = 0;
+  const variables = specs.map((spec) => {
+    const length = spec.shape.reduce((a, b) => a * b, 1);
+    // Copy each slice: some backends do not honour the byteOffset of a view.
+    const values = packed.slice(offset, offset + length);
+    offset += length;
+    return makeVariable(tf, spec.name, tf.tensor(values, spec.shape, "float32"));
   });
   return modelFromVariables(config, variables);
 }
@@ -1004,7 +1037,9 @@ export async function trainTokenGpt(
   try {
     model = initial
       ? restoreModel(tf, config, initial.weights)
-      : createModel(tf, config, seed);
+      : options.initialWeights
+        ? restoreModelFromPacked(tf, config, options.initialWeights)
+        : createModel(tf, config, seed);
     optimizer = initial
       ? restoreOptimizer(tf, config, model, initial.optimizer)
       : createOptimizer(tf, config, model);

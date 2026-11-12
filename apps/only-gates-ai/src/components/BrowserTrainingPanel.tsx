@@ -89,6 +89,7 @@ export default function BrowserTrainingPanel(
   const [dropout, setDropout] = createSignal(defaultDropout);
   const [seed, setSeed] = createSignal(1337);
   const [maxMinutes, setMaxMinutes] = createSignal(defaultMaxMinutes);
+  const [warmStart, setWarmStart] = createSignal(isSolid2());
 
   let cancelRequested = false;
   let saveChain: Promise<void> = Promise.resolve();
@@ -171,6 +172,7 @@ export default function BrowserTrainingPanel(
           dropout: dropout(),
           maxMinutes: maxMinutes(),
           initialState: initial,
+          warmStart: !resume && warmStart(),
           onStatus: (value) => setStatus(value),
           onProgress: (value) => {
             setBackend(value.backend);
@@ -376,7 +378,9 @@ export default function BrowserTrainingPanel(
           gradients. The training corpus is downloaded from the repository
           instead of being bundled; it is tokenized with the deployed BPE
           tokenizer and the token stream is cached in IndexedDB after the first
-          load. The integer path starts when you click <b>Use in Integer GPT</b>.
+          load. By default it warm-starts from the bundled checkpoint's weights;
+          uncheck the option to train from scratch. The integer path starts when
+          you click <b>Use in Integer GPT</b>.
         </p>
         <p class="hint">
           Solid 2 is roughly 20× the Alice model and uses a much larger context.
@@ -496,6 +500,25 @@ export default function BrowserTrainingPanel(
           />
         </label>
       </div>
+
+      <Show when={isSolid2()}>
+        <label class="training-toggle">
+          <input
+            type="checkbox"
+            checked={warmStart()}
+            disabled={busy()}
+            onChange={(event) => setWarmStart(event.currentTarget.checked)}
+          />
+          <span>
+            <b>Warm start from the bundled Solid 2 model</b>
+            <small>
+              Starts from the deployed checkpoint's weights and a fresh
+              optimizer instead of random initialization. Resuming a saved run
+              ignores this.
+            </small>
+          </span>
+        </label>
+      </Show>
 
       <div class="button-row">
         <button
