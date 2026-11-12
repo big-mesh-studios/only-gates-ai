@@ -78,12 +78,12 @@ export default function IntegerGptPanel() {
   const [solid2Gen, setSolid2Gen] = createSignal<Solid2Generation | null>(null);
   const [solid2Streaming, setSolid2Streaming] = createSignal(false);
   let solid2Decoder: Solid2Decoder | null = null;
-  let solid2Frame = 0;
+  let solid2Timer: ReturnType<typeof setTimeout> | null = null;
 
   const stopSolid2 = (finalize: boolean) => {
-    if (solid2Frame) {
-      cancelAnimationFrame(solid2Frame);
-      solid2Frame = 0;
+    if (solid2Timer !== null) {
+      clearTimeout(solid2Timer);
+      solid2Timer = null;
     }
     const decoder = solid2Decoder;
     solid2Decoder = null;
@@ -172,11 +172,13 @@ export default function IntegerGptPanel() {
         topK: 40,
       });
       solid2Decoder = decoder;
-      // Time-sliced decoding: generate for roughly one frame, paint, repeat, so
-      // tokens appear while the answer is still being produced.
+      // Run a tight integer-decode burst, then yield to the event loop. This is
+      // the same schedule the reference worker uses: 40 ms of compute per turn
+      // instead of one animation frame, so paint time no longer caps tok/s.
       const tick = () => {
+        solid2Timer = null;
         if (solid2Decoder !== decoder) return;
-        const deadline = performance.now() + 11;
+        const deadline = performance.now() + 40;
         let done = false;
         while (performance.now() < deadline) {
           if (decoder.step().done) {
@@ -187,14 +189,13 @@ export default function IntegerGptPanel() {
         setSolid2Gen(decoder.result());
         if (done) {
           solid2Decoder = null;
-          solid2Frame = 0;
           setSolid2Streaming(false);
           setGenerating(false);
           return;
         }
-        solid2Frame = requestAnimationFrame(tick);
+        solid2Timer = setTimeout(tick, 0);
       };
-      solid2Frame = requestAnimationFrame(tick);
+      solid2Timer = setTimeout(tick, 0);
       return;
     }
     if (aliceMode() === "wasm") {
@@ -396,7 +397,7 @@ export default function IntegerGptPanel() {
           {(c) => (
             <div class="chat-log" style="margin-top: 24px;">
               <div class="chat-message user"><div class="chat-bubble"><p><strong>You:</strong> {c().prompt}</p></div></div>
-              <div class="chat-message assistant"><div class="chat-bubble"><p style="white-space: pre-wrap;">{c().text || <span class="muted">(empty generation)</span>}</p><div class="chat-meta">{c().newTokenCount} tokens in {c().elapsedMs.toFixed(1)}ms · {(c().newTokenCount / Math.max(c().elapsedMs, 1) * 1000).toFixed(0)} tok/s (integer-only WASM, BPE){solid2Streaming() ? " · streaming" : ""}{c().stopped ? "" : " · max tokens"}</div></div></div>
+              <div class="chat-message assistant"><div class="chat-bubble"><p style="white-space: pre-wrap;">{c().text || <span class="muted">(empty generation)</span>}</p><div class="chat-meta">{c().newTokenCount} tokens in {c().elapsedMs.toFixed(1)}ms · {(c().newTokenCount / Math.max(c().elapsedMs, 1) * 1000).toFixed(0)} tok/s wall · {c().computeTokensPerSecond.toFixed(0)} tok/s WASM (integer-only, BPE){solid2Streaming() ? " · streaming" : ""}{c().stopped ? "" : " · max tokens"}</div></div></div>
             </div>
           )}
         </Show>

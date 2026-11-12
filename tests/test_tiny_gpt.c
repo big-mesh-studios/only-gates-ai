@@ -147,6 +147,39 @@ static void test_create_forward(void) {
   expect_true("sample is reproducible", first == second);
   expect_true("sample within vocab", first >= 0 && first < TEST_VOCAB);
 
+  /* Sampling at the last position is the same operation as `sample`. */
+  tiny_gpt_set_seed(model, 12345);
+  const int32_t at_last = tiny_gpt_sample_at(model, TEST_CONTEXT - 1,
+                                             (int32_t)(0.8 * 65536), 40);
+  expect_true("sample_at last position matches sample", first == at_last);
+
+  tiny_gpt_set_seed(model, 12345);
+  const int32_t unpenalized = tiny_gpt_sample_at_penalized(
+      model, TEST_CONTEXT - 1, (int32_t)(0.8 * 65536), 40, NULL, 0,
+      INT_Q16_ONE);
+  expect_true("sample_at_penalized without penalty matches", first == unpenalized);
+
+  /* Position-aware probabilities are the same as the last-row helper. */
+  int32_t probabilities_at[TEST_VOCAB];
+  tiny_gpt_probabilities_at(model, TEST_CONTEXT - 1, INT_Q16_ONE,
+                            probabilities_at);
+  int mismatched_probabilities = 0;
+  for (int i = 0; i < TEST_VOCAB; ++i) {
+    if (probabilities_at[i] != probabilities[i]) {
+      ++mismatched_probabilities;
+    }
+  }
+  expect_true("probabilities_at last position matches",
+              mismatched_probabilities == 0);
+
+  expect_true("sample_at rejects out-of-range position",
+              (tiny_gpt_sample_at(model, TEST_CONTEXT, INT_Q16_ONE, 1),
+               tiny_gpt_last_error() == TINY_GPT_ERROR_ARGUMENT));
+  expect_true("probabilities_at rejects out-of-range position",
+              (tiny_gpt_probabilities_at(model, -1, INT_Q16_ONE,
+                                         probabilities_at),
+               tiny_gpt_last_error() == TINY_GPT_ERROR_ARGUMENT));
+
   /* Debug buffers are wired up and hold the forward pass activations. */
   const int32_t *x = tiny_gpt_buffer(model, TINY_GPT_BUFFER_X);
   const int32_t *qkv = tiny_gpt_buffer(model, TINY_GPT_BUFFER_QKV);

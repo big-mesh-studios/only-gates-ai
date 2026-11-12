@@ -42,7 +42,12 @@ export interface Solid2Generation {
   tokenIds: number[];
   newTokenCount: number;
   stopped: boolean;
+  /** Wall time since the decoder was created, including cooperative yields. */
   elapsedMs: number;
+  /** Time spent inside the integer sampler/forward pass (prefill + decode). */
+  computeMs: number;
+  /** Decode rate excluding UI scheduling. */
+  computeTokensPerSecond: number;
 }
 
 const PAD = 0;
@@ -71,11 +76,12 @@ export class Solid2Decoder {
   readonly promptText: string;
   private readonly ids: number[];
   private readonly generated: number[] = [];
-  private readonly rand: () => number;
   private readonly startedAt = performance.now();
   private stopped = false;
   private finished = false;
   private steps = 0;
+  private prefillMs = 0;
+  private computeMs = 0;
 
   constructor(
     private readonly model: Solid2WasmModel,
@@ -103,13 +109,14 @@ export class Solid2Decoder {
     this.promptIds = this.ids.slice();
     this.promptText = prompt;
     model.model.setSeed(this.opts.seed);
-    this.rand = mulberry32(this.opts.seed ^ 0x9e3779b9);
+    const prefillStarted = performance.now();
     model.model.resetCache();
     if (this.ids.length > 0) {
       model.model.forwardRange(this.ids, 0, this.ids.length);
     } else {
       this.finished = true;
     }
+    this.prefillMs = performance.now() - prefillStarted;
   }
 
   /** Absolute position whose logits produce the next token. */
@@ -147,16 +154,21 @@ export class Solid2Decoder {
       return { token: null, done: true };
     }
 
-    const row = this.model.model.logitsRow(this.position);
-    const next = sampleWithRepetitionPenalty(this.model, this.ids, row, {
-      temperature: this.opts.temperature,
-      topK: this.opts.topK,
-      repetitionPenalty: this.opts.repetitionPenalty,
-      repWindow: this.opts.repWindow,
-      rand: this.rand,
-    });
+    const computeStarted = performance.now();
+    // The integer sampler runs inside WASM against exactly the row that
+    // `forwardRange` just wrote. Keeping the vocab-sized softmax and top-k out
+    // of JavaScript removes the dominant per-token overhead.
+    const next = this.model.model.sampleAtPenalized(
+      this.position,
+      this.ids,
+      this.opts.temperature,
+      this.opts.topK,
+      this.opts.repetitionPenalty,
+      this.opts.repWindow,
+    );
 
     if (isStopToken(this.model.tokenizer, next) || next === PAD) {
+      this.computeMs += performance.now() - computeStarted;
       this.stopped = true;
       this.finished = true;
       return { token: null, done: true };
@@ -165,9 +177,11 @@ export class Solid2Decoder {
     this.ids.push(next);
     this.generated.push(next);
     this.steps += 1;
-    if (this.ids.length - 1 < context) {
+    // Only pay for the next row if another step can actually use it.
+    if (this.steps < maxTokens && this.ids.length - 1 < context) {
       this.model.model.forwardRange(this.ids, this.ids.length - 1, 1);
     }
+    this.computeMs += performance.now() - computeStarted;
     return { token: next, done: false };
   }
 
@@ -180,13 +194,18 @@ export class Solid2Decoder {
   }
 
   result(): Solid2Generation {
+    const elapsedMs = performance.now() - this.startedAt;
+    const computeMs = this.prefillMs + this.computeMs;
     return {
       prompt: this.promptText,
       text: decodeGenerated(this.model.tokenizer, this.generated),
       tokenIds: this.ids.slice(),
       newTokenCount: this.generated.length,
       stopped: this.stopped,
-      elapsedMs: performance.now() - this.startedAt,
+      elapsedMs,
+      computeMs,
+      computeTokensPerSecond:
+        computeMs > 0 ? (this.generated.length * 1000) / computeMs : 0,
     };
   }
 }
@@ -223,55 +242,6 @@ export async function loadSolid2Wasm(baseUrl: string): Promise<Solid2WasmModel> 
   const { module, backend } = await loadOnlyGatesModuleAuto();
   const model = createTinyGpt(module, { config: c, weights });
   return { config: c, checkpoint, tokenizer: tok, module, model, parameterCount: checkpoint.parameterCount ?? expected, backend };
-}
-
-function mulberry32(seed: number): () => number {
-  let t = seed >>> 0;
-  return () => {
-    t += 0x6d2b79f5;
-    let r = Math.imul(t ^ (t >>> 15), 1 | t);
-    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
-    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function sampleWithRepetitionPenalty(
-  m: Solid2WasmModel,
-  ids: readonly number[],
-  row: Int32Array,
-  opts: { temperature: number; topK: number; repetitionPenalty: number; repWindow: number; rand: () => number },
-): number {
-  const V = m.config.vocabSize;
-  const temp = Math.max(opts.temperature, 1e-4);
-  const scores = new Float64Array(V);
-  for (let j = 0; j < V; j++) {
-    scores[j] = (row[j] ?? 0) / 65536 / temp;
-  }
-  if (opts.repetitionPenalty > 1) {
-    const recent = ids.slice(-opts.repWindow);
-    const seen = new Set<number>();
-    for (const t of recent) {
-      if (t < 0 || t >= V || seen.has(t)) continue;
-      seen.add(t);
-      const s = scores[t] ?? 0;
-      scores[t] = s > 0 ? s / opts.repetitionPenalty : s * opts.repetitionPenalty;
-    }
-  }
-  if (opts.topK > 0 && opts.topK < V) {
-    // partial selection via copy+sort of indices is fine for V=4096
-    const idx = Array.from({ length: V }, (_, i) => i);
-    idx.sort((a, b) => (scores[b] ?? 0) - (scores[a] ?? 0));
-    const kth = Math.min(opts.topK - 1, V - 1);
-    const thresh = scores[idx[kth] ?? 0] ?? -1e9;
-    for (let j = 0; j < V; j++) if ((scores[j] ?? -1e9) < thresh) scores[j] = -1e9;
-  }
-  let max = -Infinity;
-  for (let j = 0; j < V; j++) { const v = scores[j] ?? -1e9; if (v > max) max = v; }
-  let sum = 0;
-  for (let j = 0; j < V; j++) { const e = Math.exp((scores[j] ?? -1e9) - max); scores[j] = e; sum += e; }
-  let r = opts.rand() * sum;
-  for (let j = 0; j < V; j++) { r -= scores[j] ?? 0; if (r <= 0) return j; }
-  return V - 1;
 }
 
 export function generateSolid2Wasm(

@@ -68,7 +68,7 @@ export const snippets = {
   rmsnorm: slice(inferSource, "static void rmsnorm_q16(", "rmsnorm_q16"),
   gelu: slice(inferSource, "static int32_t gelu_q16(", "gelu_q16"),
   attention: slice(inferSource, "static void attention_q16(", "attention_q16"),
-  softmax: slice(inferSource, "static void softmax_last_q15(", "softmax_last_q15"),
+  softmax: slice(inferSource, "static void softmax_at_q15(", "softmax_at_q15"),
   forward: slice(inferSource, "static void forward_range_impl(", "forward_range_impl"),
   nextRandom: slice(inferSource, "static uint32_t next_random(", "next_random"),
   probabilities: slice(

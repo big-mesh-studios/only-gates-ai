@@ -167,11 +167,36 @@ const int32_t *tiny_gpt_buffer(TinyGpt *model, int which);
 void tiny_gpt_probabilities(TinyGpt *model, int32_t temperature_q16,
                             int32_t *out);
 
+/*
+ * Same softmax for one absolute position. This is the incremental-decode
+ * variant: after `tiny_gpt_forward_range(model, tokens, position, 1)` the
+ * newest logits are at `position`, not necessarily at `context - 1`.
+ */
+void tiny_gpt_probabilities_at(TinyGpt *model, int position,
+                               int32_t temperature_q16, int32_t *out);
+
 /* Seeds the xorshift32 sampler. A zero seed is replaced by a default. */
 void tiny_gpt_set_seed(TinyGpt *model, uint32_t seed);
 
 /* Samples from the integer distribution over the top-k tokens. */
 int32_t tiny_gpt_sample(TinyGpt *model, int32_t temperature_q16, int32_t top_k);
+
+/* Samples using the logits at `position` (incremental decode hot path). */
+int32_t tiny_gpt_sample_at(TinyGpt *model, int position,
+                           int32_t temperature_q16, int32_t top_k);
+
+/*
+ * Position-aware sampler with an optional repetition penalty. `recent` points
+ * to `recent_count` token ids; each distinct id is penalized by `penalty_q16`
+ * (Q16; 65536 means no penalty). `recent_count` may be zero and `recent` may
+ * be NULL.
+ *
+ * Penalizing inside the C sampler keeps the per-token decode path free of
+ * JavaScript sorting and exponentiation over the whole vocabulary.
+ */
+int32_t tiny_gpt_sample_at_penalized(
+    TinyGpt *model, int position, int32_t temperature_q16, int32_t top_k,
+    const int32_t *recent, int recent_count, int32_t penalty_q16);
 
 int tiny_gpt_vocab_size(const TinyGpt *model);
 int tiny_gpt_context(const TinyGpt *model);

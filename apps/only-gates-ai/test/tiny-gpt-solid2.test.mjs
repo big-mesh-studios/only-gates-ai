@@ -79,8 +79,13 @@ function fakeModel(overrides = {}) {
       forwardRange(tokens, start, count) {
         calls.push({ start, count, ids: Array.from(tokens).slice(0, start + count) });
       },
-      logitsRow(position) {
-        return rows.get(position) ?? blank;
+      sampleAtPenalized(position) {
+        const row = rows.get(position) ?? blank;
+        let best = 0;
+        for (let i = 1; i < row.length; i++) {
+          if (row[i] > row[best]) best = i;
+        }
+        return best;
       },
       sample() {
         throw new Error("generateSolid2Wasm must sample at the prompt position");
@@ -152,12 +157,12 @@ test("Solid 2 generation computes one row per new token", () => {
   });
 
   assert.deepEqual(result.tokenIds, [1, 5, 2, 4, 5]);
+  // The last generated token has no following sample, so its row is not built.
   assert.deepEqual(
     m.calls.map(({ start, count }) => [start, count]),
     [
       [0, 3],
       [3, 1],
-      [4, 1],
     ],
   );
 });

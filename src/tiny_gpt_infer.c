@@ -255,12 +255,55 @@ static void attention_q16(TinyGpt *model, int layer, const int32_t *qkv,
   }
 }
 
-/* Integer softmax over the last position. Writes vocab Q15 probabilities. */
-static void softmax_last_q15(TinyGpt *model, int32_t temperature_q16,
-                             int32_t *out_q15) {
+/*
+ * Applies a Q16 repetition penalty to the score of each distinct recent token.
+ * Positive scores are divided by the penalty, negative scores are multiplied,
+ * which is the usual CTRL-style repetition penalty.
+ */
+static void apply_repetition_penalty(int32_t *scores, int vocab,
+                                     const int32_t *recent, int recent_count,
+                                     int32_t penalty_q16) {
+  if (recent == NULL || recent_count <= 0 || penalty_q16 <= 0 ||
+      penalty_q16 == INT_Q16_ONE) {
+    return;
+  }
+  for (int i = 0; i < recent_count; ++i) {
+    const int id = recent[i];
+    if (id < 0 || id >= vocab) {
+      continue;
+    }
+    int duplicate = 0;
+    for (int j = 0; j < i; ++j) {
+      if (recent[j] == id) {
+        duplicate = 1;
+        break;
+      }
+    }
+    if (duplicate) {
+      continue;
+    }
+    int64_t score = scores[id];
+    if (score > 0) {
+      score = (score * INT_Q16_ONE) / penalty_q16;
+    } else {
+      score = (score * penalty_q16) / INT_Q16_ONE;
+    }
+    if (score > INT32_MAX) {
+      score = INT32_MAX;
+    } else if (score < -INT32_MAX) {
+      score = -INT32_MAX;
+    }
+    scores[id] = (int32_t)score;
+  }
+}
+
+/* Integer softmax over one absolute position. Writes vocab Q15 weights. */
+static void softmax_at_q15(TinyGpt *model, int position,
+                           int32_t temperature_q16, int32_t *out_q15,
+                           const int32_t *recent, int recent_count,
+                           int32_t penalty_q16) {
   const int vocab = model->config.vocab_size;
-  const int offset = (model->config.context - 1) * vocab;
-  const int32_t *logits = model->logits + offset;
+  const int32_t *logits = model->logits + (size_t)position * vocab;
 
   if (temperature_q16 <= 0) {
     temperature_q16 = 655; /* 0.01 */
@@ -268,15 +311,20 @@ static void softmax_last_q15(TinyGpt *model, int32_t temperature_q16,
     temperature_q16 = 655;
   }
 
-  int32_t maximum = -2147483647;
   for (int i = 0; i < vocab; ++i) {
     const int64_t scaled =
         int_div_round((int64_t)logits[i] * INT_Q16_ONE, temperature_q16);
     /* Q16 (logit / temperature) -> Q12 nats for DI-Exp. */
-    const int32_t score = (int32_t)(scaled >> 4);
-    model->probs[i] = score;
-    if (score > maximum) {
-      maximum = score;
+    model->probs[i] = (int32_t)(scaled >> 4);
+  }
+
+  apply_repetition_penalty(model->probs, vocab, recent, recent_count,
+                           penalty_q16);
+
+  int32_t maximum = -2147483647;
+  for (int i = 0; i < vocab; ++i) {
+    if (model->probs[i] > maximum) {
+      maximum = model->probs[i];
     }
   }
 
@@ -471,16 +519,29 @@ const int32_t *tiny_gpt_buffer(TinyGpt *model, int which) {
   }
 }
 
-void tiny_gpt_probabilities(TinyGpt *model, int32_t temperature_q16,
-                            int32_t *out) {
-  if (model == NULL || out == NULL) {
+void tiny_gpt_probabilities_at(TinyGpt *model, int position,
+                               int32_t temperature_q16, int32_t *out) {
+  if (model == NULL || out == NULL || position < 0 ||
+      position >= model->config.context) {
     tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
     return;
   }
-  softmax_last_q15(model, temperature_q16, model->probs);
+  softmax_at_q15(model, position, temperature_q16, model->probs, NULL, 0,
+                 INT_Q16_ONE);
   for (int i = 0; i < model->config.vocab_size; ++i) {
     out[i] = model->probs[i] * 2;
   }
+  tiny_gpt_error_code = TINY_GPT_OK;
+}
+
+void tiny_gpt_probabilities(TinyGpt *model, int32_t temperature_q16,
+                            int32_t *out) {
+  if (model == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+  tiny_gpt_probabilities_at(model, model->config.context - 1, temperature_q16,
+                            out);
 }
 
 void tiny_gpt_set_seed(TinyGpt *model, uint32_t seed) {
@@ -491,15 +552,9 @@ void tiny_gpt_set_seed(TinyGpt *model, uint32_t seed) {
   model->rng = seed == 0 ? 0x9e3779b9u : seed;
 }
 
-int32_t tiny_gpt_sample(TinyGpt *model, int32_t temperature_q16,
-                        int32_t top_k) {
-  if (model == NULL) {
-    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
-    return -1;
-  }
-
+/* Samples from the Q15 weights already in `model->probs`. */
+static int32_t sample_from_probs(TinyGpt *model, int32_t top_k) {
   const int vocab = model->config.vocab_size;
-  softmax_last_q15(model, temperature_q16, model->probs);
 
   if (top_k < 1) {
     top_k = 1;
@@ -561,6 +616,35 @@ int32_t tiny_gpt_sample(TinyGpt *model, int32_t temperature_q16,
     }
   }
   return model->top_ids[count - 1];
+}
+
+int32_t tiny_gpt_sample_at_penalized(
+    TinyGpt *model, int position, int32_t temperature_q16, int32_t top_k,
+    const int32_t *recent, int recent_count, int32_t penalty_q16) {
+  if (model == NULL || position < 0 || position >= model->config.context) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return -1;
+  }
+  softmax_at_q15(model, position, temperature_q16, model->probs, recent,
+                 recent_count, penalty_q16);
+  tiny_gpt_error_code = TINY_GPT_OK;
+  return sample_from_probs(model, top_k);
+}
+
+int32_t tiny_gpt_sample_at(TinyGpt *model, int position,
+                           int32_t temperature_q16, int32_t top_k) {
+  return tiny_gpt_sample_at_penalized(model, position, temperature_q16, top_k,
+                                      NULL, 0, INT_Q16_ONE);
+}
+
+int32_t tiny_gpt_sample(TinyGpt *model, int32_t temperature_q16,
+                        int32_t top_k) {
+  if (model == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return -1;
+  }
+  return tiny_gpt_sample_at(model, model->config.context - 1, temperature_q16,
+                            top_k);
 }
 
 int tiny_gpt_vocab_size(const TinyGpt *model) {

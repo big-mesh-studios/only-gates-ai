@@ -97,10 +97,31 @@ export interface OnlyGatesWasmModule {
     temperatureQ16: number,
     outPointer: number,
   ): void;
+  _tiny_gpt_probabilities_at(
+    model: number,
+    position: number,
+    temperatureQ16: number,
+    outPointer: number,
+  ): void;
   _tiny_gpt_sample(
     model: number,
     temperatureQ16: number,
     topK: number,
+  ): number;
+  _tiny_gpt_sample_at(
+    model: number,
+    position: number,
+    temperatureQ16: number,
+    topK: number,
+  ): number;
+  _tiny_gpt_sample_at_penalized(
+    model: number,
+    position: number,
+    temperatureQ16: number,
+    topK: number,
+    recentPointer: number,
+    recentCount: number,
+    penaltyQ16: number,
   ): number;
   _tiny_gpt_set_seed(model: number, seed: number): void;
   _tiny_gpt_vocab_size(model: number): number;

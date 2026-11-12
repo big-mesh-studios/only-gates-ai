@@ -57,6 +57,7 @@ function temperatureToQ16(temperature: number): number {
 /** Integer-only Tiny GPT model backed by the WebAssembly module. */
 export class TinyGpt {
   private tokensPointer: number;
+  private recentPointer = 0;
   private destroyed = false;
 
   private constructor(
@@ -65,6 +66,12 @@ export class TinyGpt {
     readonly config: TinyGptConfig,
   ) {
     this.tokensPointer = allocate(module, config.context * 4);
+    try {
+      this.recentPointer = allocate(module, config.context * 4);
+    } catch (error) {
+      module._free(this.tokensPointer);
+      throw error;
+    }
   }
 
   /** Quantizes a packed float32 checkpoint and creates the model. */
@@ -178,13 +185,19 @@ export class TinyGpt {
 
   /** Normalized probabilities for the last context position. */
   probabilities(temperature = 1): Float32Array {
+    return this.probabilitiesAt(this.config.context - 1, temperature);
+  }
+
+  /** Normalized probabilities for one absolute position. */
+  probabilitiesAt(position: number, temperature = 1): Float32Array {
     this.assertAlive();
     const output = withMemory(
       this.module,
       this.config.vocabSize * 4,
       (pointer) => {
-        this.module._tiny_gpt_probabilities(
+        this.module._tiny_gpt_probabilities_at(
           this.modelPointer,
+          position,
           temperatureToQ16(temperature),
           pointer,
         );
@@ -208,6 +221,58 @@ export class TinyGpt {
     );
   }
 
+  /**
+   * Samples from the logits at `position`. This is the incremental-decode hot
+   * path: the newest row is wherever `forwardRange` just wrote it, which is not
+   * necessarily the last context row.
+   */
+  sampleAt(position: number, temperature = 1, topK = 40): number {
+    this.assertAlive();
+    return this.module._tiny_gpt_sample_at(
+      this.modelPointer,
+      position,
+      temperatureToQ16(temperature),
+      topK,
+    );
+  }
+
+  /**
+   * Position-aware sampler with a CTRL-style repetition penalty. `recentTokens`
+   * is the full history; `recentWindow` limits the penalty to the newest
+   * tokens (0 penalizes the whole context window).
+   */
+  sampleAtPenalized(
+    position: number,
+    recentTokens: ArrayLike<number>,
+    temperature = 1,
+    topK = 40,
+    repetitionPenalty = 1,
+    recentWindow = 0,
+  ): number {
+    this.assertAlive();
+    if (recentTokens.length === 0 || !(repetitionPenalty > 1)) {
+      return this.sampleAt(position, temperature, topK);
+    }
+    const available = Math.min(recentTokens.length, this.config.context);
+    const count =
+      recentWindow > 0 ? Math.min(available, recentWindow) : available;
+    const start = recentTokens.length - count;
+    const heap = this.module.HEAP32;
+    const target = this.recentPointer >>> 2;
+    for (let i = 0; i < count; i++) {
+      heap[target + i] = recentTokens[start + i]!;
+    }
+    return this.module._tiny_gpt_sample_at_penalized(
+      this.modelPointer,
+      position,
+      temperatureToQ16(temperature),
+      topK,
+      this.recentPointer,
+      count,
+      Math.round(repetitionPenalty * Q16_ONE),
+    );
+  }
+
   setSeed(seed: number): void {
     this.assertAlive();
     this.module._tiny_gpt_set_seed(this.modelPointer, seed >>> 0);
@@ -227,6 +292,7 @@ export class TinyGpt {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.module._free(this.recentPointer);
     this.module._free(this.tokensPointer);
     this.module._tiny_gpt_destroy(this.modelPointer);
   }

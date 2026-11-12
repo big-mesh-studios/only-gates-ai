@@ -248,14 +248,17 @@ export function SamplingChapter() {
 
       <h3 class="subhead">Logits to Q15</h3>
       <p>
-        The last position’s logits are divided by a Q16 temperature. The code
-        forms <code>(logit_q16 · 65536) / temperature_q16</code>, which is the
-        real ratio stored in Q16, then shifts right by 4 to produce Q12 nats for
-        the same DI-Exp table used by attention. The maximum is subtracted, each
-        delta is clipped to 20 nats, and the weights are normalized to Q15.
+        The selected position’s logits are divided by a Q16 temperature. The
+        code forms <code>(logit_q16 · 65536) / temperature_q16</code>, which is
+        the real ratio stored in Q16, then shifts right by 4 to produce Q12 nats
+        for the same DI-Exp table used by attention. The maximum is subtracted,
+        each delta is clipped to 20 nats, and the weights are normalized to Q15.
+        Taking the position as an argument is what lets incremental decoding
+        sample the row it just computed instead of copying logits back to
+        JavaScript.
       </p>
 
-      <Code code={snippets.softmax} lang="c" file="softmax_last_q15" collapsible />
+      <Code code={snippets.softmax} lang="c" file="softmax_at_q15" collapsible />
 
       <p>
         <code>tiny_gpt_probabilities</code> calls the same softmax and then
@@ -309,7 +312,7 @@ export function SamplingChapter() {
       <p class="source-line">
         Source:{" "}
         <a href={`${repo}/blob/main/src/tiny_gpt_infer.c`}>
-          src/tiny_gpt_infer.c · softmax_last_q15 · tiny_gpt_sample
+          src/tiny_gpt_infer.c · softmax_at_q15 · tiny_gpt_sample
         </a>
       </p>
     </Chapter>
