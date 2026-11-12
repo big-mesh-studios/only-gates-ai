@@ -13,7 +13,7 @@ const DB_VERSION = 1;
 const STORE_NAME = "runs";
 const DEFAULT_RUN_KEY = "current";
 
-export type BrowserTrainingRunKey = "current" | "solid2";
+export type BrowserTrainingRunKey = "current" | "solid2" | "custom";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -142,7 +142,12 @@ function parseState(value: unknown): BrowserTrainingState {
   return {
     format: "only-gates-browser-train",
     version: 1,
-    kind: value.kind === "solid2" ? "solid2" : "alice",
+    kind:
+      value.kind === "solid2"
+        ? "solid2"
+        : value.kind === "custom"
+          ? "custom"
+          : "alice",
     config: value.config as unknown as BrowserTrainingState["config"],
     vocab: value.vocab.filter((entry): entry is string => typeof entry === "string"),
     step: typeof value.step === "number" ? value.step : 0,
@@ -163,6 +168,11 @@ function parseState(value: unknown): BrowserTrainingState {
     corpusHash: typeof value.corpusHash === "string" ? value.corpusHash : "",
     elapsedMs: typeof value.elapsedMs === "number" ? value.elapsedMs : 0,
     savedAt: typeof value.savedAt === "number" ? value.savedAt : Date.now(),
+    sourceUrls: Array.isArray(value.sourceUrls)
+      ? value.sourceUrls.filter(
+          (entry): entry is string => typeof entry === "string",
+        )
+      : undefined,
   };
 }
 

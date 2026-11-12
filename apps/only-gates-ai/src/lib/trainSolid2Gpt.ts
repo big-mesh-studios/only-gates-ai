@@ -1,3 +1,4 @@
+import { createTokenStreamCache } from "./tokenStreamCache";
 import { loadBpeTokenizer, type BpeTokenizer } from "./tinyGptBpe";
 import {
   createSolid2WasmFromData,
@@ -40,9 +41,9 @@ const TOKEN_SCHEME_VERSION = 1;
 // inference format to dominate, but 3× keeps the docs half of the stream.
 const QA_REPEATS = 3;
 
-const CACHE_DB_NAME = "gate-forest-solid2-training-data";
-const CACHE_DB_VERSION = 1;
-const CACHE_STORE = "token-streams";
+const tokenCache = createTokenStreamCache(
+  "gate-forest-solid2-training-data",
+);
 
 export interface Solid2QaRow {
   readonly id?: string;
@@ -106,13 +107,6 @@ export interface Solid2TrainingResult {
   readonly prompts: readonly string[];
 }
 
-interface CachedTokenStream {
-  readonly key: string;
-  readonly trainingTokens: Uint16Array;
-  readonly validationTokens: Uint16Array;
-  readonly savedAt: number;
-}
-
 /* ------------------------------------------------------------------ */
 /* Fetching and parsing                                               */
 /* ------------------------------------------------------------------ */
@@ -156,13 +150,13 @@ function parseQaRows(text: string, label: string): Solid2QaRow[] {
   return rows;
 }
 
-interface BundledSolid2Model {
+export interface BundledSolid2Model {
   readonly checkpoint: Solid2Checkpoint;
   readonly weights: Float32Array;
 }
 
 /** Reads the deployed checkpoint and packed weights for a warm start. */
-async function loadBundledSolid2Model(
+export async function loadBundledSolid2Model(
   base: string,
 ): Promise<BundledSolid2Model> {
   const [checkpointResponse, weightsResponse] = await Promise.all([
@@ -243,81 +237,6 @@ async function tokenizeDocs(
 }
 
 /* ------------------------------------------------------------------ */
-/* Token stream cache                                                 */
-/* ------------------------------------------------------------------ */
-
-function openTokenCache(): Promise<IDBDatabase | null> {
-  return new Promise((resolve) => {
-    if (typeof indexedDB === "undefined") {
-      resolve(null);
-      return;
-    }
-    const request = indexedDB.open(CACHE_DB_NAME, CACHE_DB_VERSION);
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(CACHE_STORE)) {
-        database.createObjectStore(CACHE_STORE);
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
-    request.onblocked = () => resolve(null);
-  });
-}
-
-function withTokenStore<T>(
-  mode: IDBTransactionMode,
-  operation: (store: IDBObjectStore) => IDBRequest<T>,
-): Promise<T | null> {
-  return openTokenCache().then((database) => {
-    if (database === null) return null;
-    return new Promise<T | null>((resolve) => {
-      let settled = false;
-      const finish = (value: T | null): void => {
-        if (settled) return;
-        settled = true;
-        database.close();
-        resolve(value);
-      };
-      try {
-        const transaction = database.transaction(CACHE_STORE, mode);
-        const request = operation(transaction.objectStore(CACHE_STORE));
-        let result: T | undefined;
-        request.onsuccess = () => {
-          result = request.result;
-        };
-        request.onerror = () => finish(null);
-        transaction.oncomplete = () => finish(result ?? null);
-        transaction.onerror = () => finish(null);
-        transaction.onabort = () => finish(null);
-      } catch {
-        finish(null);
-      }
-    });
-  });
-}
-
-function isCachedTokenStream(value: unknown): value is CachedTokenStream {
-  if (typeof value !== "object" || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    record.trainingTokens instanceof Uint16Array &&
-    record.validationTokens instanceof Uint16Array
-  );
-}
-
-async function readTokenCache(key: string): Promise<CachedTokenStream | null> {
-  const value = await withTokenStore<unknown>("readonly", (store) =>
-    store.get(key),
-  );
-  return isCachedTokenStream(value) ? value : null;
-}
-
-async function writeTokenCache(entry: CachedTokenStream): Promise<void> {
-  await withTokenStore("readwrite", (store) => store.put(entry, entry.key));
-}
-
-/* ------------------------------------------------------------------ */
 /* Data loading                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -357,7 +276,7 @@ export async function loadSolid2TrainingData(
   let validationTokens: Uint16Array;
   let cached = false;
 
-  const hit = await readTokenCache(cacheKey);
+  const hit = await tokenCache.read(cacheKey);
   if (hit) {
     trainingTokens = hit.trainingTokens;
     validationTokens = hit.validationTokens;
@@ -388,7 +307,7 @@ export async function loadSolid2TrainingData(
     validationTokens = Uint16Array.from(encodeQaRows(tokenizer, qaVal));
 
     options.onStatus?.("Caching the token stream in IndexedDB...");
-    await writeTokenCache({
+    await tokenCache.write({
       key: cacheKey,
       trainingTokens,
       validationTokens,

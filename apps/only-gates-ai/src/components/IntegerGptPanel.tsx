@@ -34,9 +34,9 @@ import {
 } from "../lib/tinyGptSolid2";
 import { SOLID2_MODEL_BASE } from "../lib/solid2Config";
 
-type ExampleId = "alice" | "solid2";
+type ExampleId = "alice" | "solid2" | "custom";
 type AliceMode = TinyGptMode | "wasm";
-type PanelMode = AliceMode | "solid2-wasm";
+type PanelMode = AliceMode | "solid2-wasm" | "custom-wasm";
 
 function parameterCount(config: {
   vocabSize: number;
@@ -78,6 +78,8 @@ export default function IntegerGptPanel() {
   const [customSolid2, setCustomSolid2] = createSignal<Solid2WasmModel | null>(
     null,
   );
+  // --- Custom docs (same BPE/WASM engine, user-supplied corpus) ---
+  const [custom, setCustom] = createSignal<Solid2WasmModel | null>(null);
   const [solid2Loading, setSolid2Loading] = createSignal(false);
   const [solid2Error, setSolid2Error] = createSignal<string | null>(null);
   const [solid2Gen, setSolid2Gen] = createSignal<Solid2Generation | null>(null);
@@ -178,7 +180,18 @@ export default function IntegerGptPanel() {
     },
   );
 
-  const mode = (): PanelMode => (example() === "solid2" ? "solid2-wasm" : aliceMode());
+  const mode = (): PanelMode =>
+    example() === "solid2"
+      ? "solid2-wasm"
+      : example() === "custom"
+        ? "custom-wasm"
+        : aliceMode();
+
+  const activePrompts = (): readonly string[] => {
+    if (example() === "custom") return custom()?.checkpoint.prompts ?? [];
+    if (example() === "solid2") return solid2()?.checkpoint.prompts ?? [];
+    return [];
+  };
 
   const isCustomCheckpoint = createMemo(
     () => checkpoint() !== TINY_GPT_CHECKPOINT,
@@ -234,24 +247,49 @@ export default function IntegerGptPanel() {
     setPrompt("What are split effects?");
   };
 
+  const handleUseCustomModel = (model: Solid2WasmModel): void => {
+    stopSolid2(true);
+    setCustom(model);
+    setSolid2Gen(null);
+    setPrompt(model.checkpoint.prompts?.[0] ?? "Write a short introduction.");
+    setExample("custom");
+    setStatus(null);
+  };
+
+  const handleResetCustom = (): void => {
+    stopSolid2(true);
+    setCustom(null);
+    setSolid2Gen(null);
+    setPrompt("Write a short introduction.");
+    setStatus(null);
+  };
+
   const activeConfig = createMemo(() => {
     if (example() === "solid2") return solid2()?.config ?? null;
+    if (example() === "custom") return custom()?.config ?? null;
     return (aliceMode() === "wasm" ? wasm()?.config : model()?.config) ?? model()?.config ?? null;
   });
 
   const handleGenerate = () => {
     if (generating()) return;
-    if (example() === "solid2") {
-      const m = solid2();
+    if (example() !== "alice") {
+      const isCustomModel = example() === "custom";
+      const m = isCustomModel ? custom() : solid2();
       if (!m) return;
+      const inputPrompt =
+        isCustomModel && prompt().trim().length === 0
+          ? (m.checkpoint.prompts?.[0] ?? "Write a short introduction.")
+          : prompt();
+      if (inputPrompt !== prompt()) setPrompt(inputPrompt);
       setStatus(null);
       setSolid2Gen(null);
       setGenerating(true);
       setSolid2Streaming(true);
-      const decoder = createSolid2Decoder(m, prompt(), {
+      const decoder = createSolid2Decoder(m, inputPrompt, {
         maxTokens: 160,
         temperature: 0.7,
         topK: 40,
+        promptFormat: isCustomModel ? "text" : "chat",
       });
       solid2Decoder = decoder;
       // Run a tight integer-decode burst, then yield to the event loop. This is
@@ -313,7 +351,7 @@ export default function IntegerGptPanel() {
   };
 
   const handleCompare = () => {
-    if (example() === "solid2") {
+    if (example() !== "alice") {
       setStatus("Comparison against a float baseline is not enabled for the 4k-vocab BPE model (JS float/int8 inference is too slow in-browser). Use the Alice example for float-vs-integer comparison.");
       return;
     }
@@ -331,7 +369,15 @@ export default function IntegerGptPanel() {
     catch (e) { setStatus(`Comparison error: ${(e as Error).message}`); }
   };
 
-  const generateDisabled = () => generating() || (example() === "solid2" ? !solid2() : (aliceMode() === "wasm" ? !wasm() : !model()));
+  const generateDisabled = () =>
+    generating() ||
+    (example() === "solid2"
+      ? !solid2()
+      : example() === "custom"
+        ? !custom()
+        : aliceMode() === "wasm"
+          ? !wasm()
+          : !model());
 
   const aliceDisplayGen = createMemo(() => {
     if (example() !== "alice") return null;
@@ -353,8 +399,47 @@ export default function IntegerGptPanel() {
     <main class="workspace language-workspace">
       <div class="language-toolbar" style="flex-wrap: wrap; gap: 8px;">
         <div class="mode-switch" role="group" aria-label="Example">
-          <button type="button" class={{ active: example() === "alice" }} onClick={() => { setExample("alice"); setPrompt("Alice was"); setStatus(null); }}>Alice (word)</button>
-          <button type="button" class={{ active: example() === "solid2" }} onClick={() => { setExample("solid2"); setStatus(null); }}>Solid 2 Docs (BPE)</button>
+          <button
+            type="button"
+            class={{ active: example() === "alice" }}
+            onClick={() => {
+              stopSolid2(false);
+              setSolid2Gen(null);
+              setExample("alice");
+              setPrompt("Alice was");
+              setStatus(null);
+            }}
+          >
+            Alice (word)
+          </button>
+          <button
+            type="button"
+            class={{ active: example() === "solid2" }}
+            onClick={() => {
+              stopSolid2(false);
+              setSolid2Gen(null);
+              setExample("solid2");
+              setPrompt("What are split effects?");
+              setStatus(null);
+            }}
+          >
+            Solid 2 Docs (BPE)
+          </button>
+          <button
+            type="button"
+            class={{ active: example() === "custom" }}
+            onClick={() => {
+              stopSolid2(false);
+              setSolid2Gen(null);
+              setExample("custom");
+              setPrompt(
+                custom()?.checkpoint.prompts?.[0] ?? "Write a short introduction.",
+              );
+              setStatus(null);
+            }}
+          >
+            Custom Docs (BPE)
+          </button>
         </div>
         <Show when={example() === "alice"}>
           <div class="mode-switch" role="group" aria-label="Inference mode">
@@ -369,13 +454,26 @@ export default function IntegerGptPanel() {
             {" "}TS float/int8 disabled (too slow at 4k vocab in JS).
           </span>
         </Show>
+        <Show when={example() === "custom"}>
+          <span class="muted">
+            {custom()
+              ? `Integer-only ${custom()!.backend === "wasm-simd" ? "WebAssembly SIMD" : "WebAssembly"}, BPE 4096, ctx 256.`
+              : "Train a model on your own Markdown docs below, then use it here."}
+          </span>
+        </Show>
       </div>
 
       <section class="card language-card">
         <div class="card-heading compact">
           <div>
             <span class="eyebrow">Integer GPT</span>
-            <h2>{example() === "alice" ? "Alice in Wonderland" : "Solid 2 Docs Q&A"}</h2>
+            <h2>
+              {example() === "alice"
+                ? "Alice in Wonderland"
+                : example() === "custom"
+                  ? "Custom Docs"
+                  : "Solid 2 Docs Q&A"}
+            </h2>
           </div>
           <Show when={activeConfig()}>
             {(c) => (
@@ -384,6 +482,9 @@ export default function IntegerGptPanel() {
                 {parameterCount(c()).toLocaleString()} params
                 <Show when={example() === "solid2" && solid2()}>
                   {solid2()!.backend === "wasm-simd" ? " · SIMD" : " · scalar"}
+                </Show>
+                <Show when={example() === "custom" && custom()}>
+                  {custom()!.backend === "wasm-simd" ? " · SIMD" : " · scalar"}
                 </Show>
               </div>
             )}
@@ -428,6 +529,15 @@ export default function IntegerGptPanel() {
             Decoder-only transformer (byte-level BPE, 4096 vocab, 256 ctx; config sized to the small docs+Q&A corpus) trained from scratch on <b>pinned Solid 2 docs + curated Q&A</b> via <code>scripts/train_tiny_gpt_solid2_colab.py</code> (runnable with the Termux <code>colab</code> CLI). The browser runs the <b>entire forward pass as integer-only WebAssembly</b> — {solid2()?.backend === "wasm-simd" ? "the SIMD lane" : "the scalar lane"} (Q16 activations, int8 weights, integer RMSNorm/GELU/DI-Exp softmax). The prompt is prefilled once, then each token costs one context row against an integer KV cache, which is the schedule an FPGA datapath would use. Float32 is used only once to quantize the checkpoint at load.
             <Show when={activeConfig()}>{(c) => <span> Loaded config: {c().vocabSize}v/{c().context}ctx, {c().dim}d/{c().layers}L/{c().heads}H/{c().mlp}mlp ({parameterCount(c()).toLocaleString()} params).</span>}</Show>
           </Show>
+          <Show when={example() === "custom"}>
+            Decoder-only transformer with the same 4096-token BPE vocabulary and
+            256-context architecture as the Solid 2 demo, trained in your browser
+            on the Markdown documents you list below. Warm-starting from the
+            bundled checkpoint is optional; the result is quantized and runs
+            through the same <b>integer-only WebAssembly</b> engine (Q16
+            activations, int8 weights).
+            <Show when={activeConfig()}>{(c) => <span> Loaded config: {c().vocabSize}v/{c().context}ctx, {c().dim}d/{c().layers}L/{c().heads}H/{c().mlp}mlp ({parameterCount(c()).toLocaleString()} params).</span>}</Show>
+          </Show>
         </p>
 
         <Show when={status()}><div class="banner info"><span>{status()}</span></div></Show>
@@ -447,6 +557,22 @@ export default function IntegerGptPanel() {
             </span>
           </div>
         </Show>
+        <Show when={example() === "custom" && custom() !== null}>
+          <div class="banner success">
+            <span>
+              Using a custom checkpoint trained in this browser. It was
+              quantized to int8/Q16 for the integer-only WASM path.
+            </span>
+          </div>
+        </Show>
+        <Show when={example() === "custom" && custom() === null}>
+          <div class="banner info">
+            <span>
+              No custom model is loaded yet. Add Markdown URLs in the training
+              panel below, train, then click <b>Use in Integer GPT</b>.
+            </span>
+          </div>
+        </Show>
         <Show when={example() === "alice" && aliceMode() === "wasm" && wasmLoading()}><div class="banner info"><span>Loading WebAssembly integer kernels...</span></div></Show>
         <Show when={example() === "alice" && aliceMode() === "wasm" && wasmError()}><div class="banner warning"><span>{wasmError()}</span></div></Show>
         <Show when={example() === "solid2" && solid2Loading()}><div class="banner info"><span>Loading Solid 2 model (weights.bin + tokenizer + WASM quantization)...</span></div></Show>
@@ -457,7 +583,13 @@ export default function IntegerGptPanel() {
             type="text"
             class="chat-input"
             style="flex: 1; min-width: 220px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; color: var(--text);"
-            placeholder={example() === "solid2" ? "Ask a Solid 2 question..." : "Type a prompt..."}
+            placeholder={
+              example() === "solid2"
+                ? "Ask a Solid 2 question..."
+                : example() === "custom"
+                  ? "Type a prompt about your docs..."
+                  : "Type a prompt..."
+            }
             value={prompt()}
             onInput={(e) => setPrompt(e.currentTarget.value)}
             onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
@@ -466,7 +598,7 @@ export default function IntegerGptPanel() {
           <button type="button" class="button primary" onClick={handleGenerate} disabled={generateDisabled()}>
             {generating() ? "..." : "Generate"}
           </button>
-          <Show when={example() === "solid2" && solid2Streaming()}>
+          <Show when={example() !== "alice" && solid2Streaming()}>
             <button type="button" class="button secondary" onClick={() => stopSolid2(true)}>Stop</button>
           </Show>
           <Show when={example() === "alice"}>
@@ -474,9 +606,9 @@ export default function IntegerGptPanel() {
           </Show>
         </div>
 
-        <Show when={example() === "solid2" && solid2()?.checkpoint.prompts?.length}>
+        <Show when={example() !== "alice" && activePrompts().length > 0}>
           <div style="margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap;">
-            <For each={solid2()!.checkpoint.prompts!.slice(0, 5)}>
+            <For each={activePrompts().slice(0, 5)}>
               {(p) => <button type="button" class="button secondary" style="font-size: 0.8rem; padding: 4px 8px;" onClick={() => setPrompt(p)}>{p}</button>}
             </For>
           </div>
@@ -491,7 +623,7 @@ export default function IntegerGptPanel() {
           )}
         </Show>
 
-        <Show when={example() === "solid2" && solid2Gen()}>
+        <Show when={example() !== "alice" && solid2Gen()}>
           {(c) => (
             <div class="chat-log" style="margin-top: 24px;">
               <div class="chat-message user"><div class="chat-bubble"><p><strong>You:</strong> {c().prompt}</p></div></div>
@@ -542,6 +674,14 @@ export default function IntegerGptPanel() {
           isCustomCheckpoint={customSolid2() !== null}
           onUseSolid2Model={handleUseSolid2Model}
           onResetCheckpoint={handleResetSolid2}
+        />
+      </Show>
+      <Show when={example() === "custom"}>
+        <BrowserTrainingPanel
+          variant="custom"
+          isCustomCheckpoint={custom() !== null}
+          onUseCustomModel={handleUseCustomModel}
+          onResetCheckpoint={handleResetCustom}
         />
       </Show>
     </main>

@@ -47,6 +47,7 @@ function fakeTokenizer() {
   return {
     idFor: (token) => ids.get(token),
     encodeChatPrompt: () => [1, 5, 2],
+    encodeOrdinary: (text) => Array.from(text, (char) => char.charCodeAt(0) % 16),
     isStopToken,
     decodeGenerated: (_tokenizer, tokens) =>
       tokens.map((id) => String.fromCharCode(65 + id)).join(""),
@@ -124,6 +125,23 @@ test("Solid 2 generation prefills only the real prompt tokens", () => {
   solid2.generateSolid2Wasm(m, "hi", { maxTokens: 1, temperature: 1, topK: 0, repetitionPenalty: 1 });
 
   assert.deepEqual(m.calls.at(0), { start: 0, count: 3, ids: [1, 5, 2] });
+});
+
+test("text prompts are encoded as ordinary text for custom models", () => {
+  const m = fakeModel();
+  solid2.createSolid2Decoder(m, "hello", {
+    promptFormat: "text",
+    maxTokens: 1,
+    temperature: 1,
+    topK: 0,
+    repetitionPenalty: 1,
+  });
+
+  assert.deepEqual(m.calls.at(0), {
+    start: 0,
+    count: 5,
+    ids: ["h", "e", "l", "l", "o"].map((char) => char.charCodeAt(0) % 16),
+  });
 });
 
 test("Solid 2 generation samples from the last real prompt token", () => {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -153,6 +154,89 @@ test("browser training tokenizes, trains, exports, and resumes", async () => {
       resumed.state.corpusHash,
       first.state.corpusHash,
     );
+  } finally {
+    await server.close();
+  }
+});
+
+test("custom docs loader normalizes URLs and tokenizes Markdown", async () => {
+  const server = await createServer({
+    root: appRoot,
+    appType: "custom",
+    logLevel: "silent",
+    server: { middlewareMode: true },
+    optimizeDeps: { noDiscovery: true },
+  });
+
+  try {
+    const custom = await server.ssrLoadModule("/src/lib/trainCustomGpt.ts");
+
+    assert.deepEqual(
+      custom.parseDocUrls(
+        [
+          "# my docs",
+          "https://github.com/example/docs/blob/main/guide.md",
+          "https://github.com/example/docs/blob/main/guide.md",
+          "https://example.com/api.md",
+        ].join("\n"),
+      ),
+      [
+        "https://raw.githubusercontent.com/example/docs/main/guide.md",
+        "https://example.com/api.md",
+      ],
+    );
+    assert.throws(() => custom.parseDocUrls("not a url"), /Not a valid URL/);
+
+    assert.deepEqual(
+      custom.extractCustomPrompts([
+        {
+          url: "https://example.com/guide.md",
+          text: "# Getting started\n\nIntro.\n\n## Configuration\n\nDetails.",
+        },
+      ]),
+      ["Getting started", "Configuration"],
+    );
+
+    const tokenizerJson = await readFile(
+      new URL(
+        "../public/models/tiny-gpt-solid2/tokenizer.json",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const paragraph =
+      "Signals track their dependencies and schedule updates. Effects run " +
+      "after the compute phase and may return a cleanup function.\n\n";
+    const markdown = `# Custom guide\n\n${paragraph.repeat(48)}`;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const value = String(url);
+      if (value.endsWith("tokenizer.json")) {
+        return new Response(tokenizerJson, { status: 200 });
+      }
+      if (value.endsWith("guide.md")) {
+        return new Response(markdown, { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    try {
+      const data = await custom.loadCustomTrainingData({
+        urls: ["https://raw.githubusercontent.com/example/docs/main/guide.md"],
+        tokenizerUrl: "https://example.com/tokenizer.json",
+      });
+
+      assert.equal(data.info.documentCount, 1);
+      assert.equal(data.info.documentChars, markdown.length);
+      assert.equal(data.info.tokenizerVocab, 4096);
+      assert.ok(data.trainingData.trainingTokens.length > 258);
+      assert.ok(data.trainingData.validationTokens.length > 0);
+      assert.equal(data.trainingData.vocab.length, 4096);
+      assert.deepEqual(data.prompts, ["Custom guide"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   } finally {
     await server.close();
   }

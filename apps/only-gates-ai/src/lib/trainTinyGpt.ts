@@ -48,7 +48,7 @@ export interface BrowserTrainingProgress extends TrainingPoint {
 
 export type SerializedTinyGptWeights = TinyGptCheckpoint["weights"];
 
-export type BrowserTrainingKind = "alice" | "solid2";
+export type BrowserTrainingKind = "alice" | "solid2" | "custom";
 
 export interface BrowserTrainingState {
   readonly format: "only-gates-browser-train";
@@ -74,6 +74,8 @@ export interface BrowserTrainingState {
   readonly corpusHash: string;
   readonly elapsedMs: number;
   readonly savedAt: number;
+  /** Source URLs for a custom-docs run, so a saved run can be resumed. */
+  readonly sourceUrls?: readonly string[];
 }
 
 export interface BrowserTrainingOptions {

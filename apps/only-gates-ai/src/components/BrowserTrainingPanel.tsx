@@ -26,6 +26,12 @@ import {
   type Solid2TrainingResult,
 } from "../lib/trainSolid2Gpt";
 import {
+  buildCustomWasmFromTraining,
+  parseDocUrls,
+  trainCustomGpt,
+  type CustomTrainingResult,
+} from "../lib/trainCustomGpt";
+import {
   DEFAULT_BROWSER_TRAIN_CONFIG,
   trainTinyGpt,
   type BrowserTrainingProgress,
@@ -35,13 +41,14 @@ import {
 } from "../lib/trainTinyGpt";
 import LossChart from "./LossChart";
 
-type BrowserTrainingVariant = "alice" | "solid2";
+type BrowserTrainingVariant = "alice" | "solid2" | "custom";
 
 interface BrowserTrainingPanelProps {
   readonly variant?: BrowserTrainingVariant;
   readonly isCustomCheckpoint: boolean;
   readonly onUseCheckpoint?: (checkpoint: TinyGptCheckpoint) => void;
   readonly onUseSolid2Model?: (model: Solid2WasmModel) => void;
+  readonly onUseCustomModel?: (model: Solid2WasmModel) => void;
   readonly onResetCheckpoint: () => void;
 }
 
@@ -56,12 +63,18 @@ export default function BrowserTrainingPanel(
   props: BrowserTrainingPanelProps,
 ) {
   const isSolid2 = (): boolean => props.variant === "solid2";
-  const runKey: BrowserTrainingRunKey = isSolid2() ? "solid2" : "current";
-  const defaultSteps = isSolid2() ? 400 : 1800;
-  const defaultBatch = isSolid2() ? 4 : 8;
-  const defaultLearningRate = isSolid2() ? 0.0004 : 0.003;
-  const defaultDropout = isSolid2() ? 0.1 : 0;
-  const defaultMaxMinutes = isSolid2() ? 30 : 0;
+  const isCustom = (): boolean => props.variant === "custom";
+  const isLarge = (): boolean => isSolid2() || isCustom();
+  const runKey: BrowserTrainingRunKey = isSolid2()
+    ? "solid2"
+    : isCustom()
+      ? "custom"
+      : "current";
+  const defaultSteps = isSolid2() ? 400 : isCustom() ? 600 : 1800;
+  const defaultBatch = isLarge() ? 4 : 8;
+  const defaultLearningRate = isLarge() ? 0.0004 : 0.003;
+  const defaultDropout = isLarge() ? 0.1 : 0;
+  const defaultMaxMinutes = isLarge() ? 30 : 0;
 
   const [history, setHistory] = createSignal<readonly TrainingPoint[]>([]);
   const [progress, setProgress] = createSignal<BrowserTrainingProgress | null>(
@@ -71,6 +84,11 @@ export default function BrowserTrainingPanel(
   const [solid2Trained, setSolid2Trained] =
     createSignal<Solid2TrainingResult | null>(null);
   const [solid2Model, setSolid2Model] = createSignal<Solid2WasmModel | null>(
+    null,
+  );
+  const [customTrained, setCustomTrained] =
+    createSignal<CustomTrainingResult | null>(null);
+  const [customModel, setCustomModel] = createSignal<Solid2WasmModel | null>(
     null,
   );
   const [saved, setSaved] = createSignal<BrowserTrainingState | null>(null);
@@ -89,7 +107,8 @@ export default function BrowserTrainingPanel(
   const [dropout, setDropout] = createSignal(defaultDropout);
   const [seed, setSeed] = createSignal(1337);
   const [maxMinutes, setMaxMinutes] = createSignal(defaultMaxMinutes);
-  const [warmStart, setWarmStart] = createSignal(isSolid2());
+  const [warmStart, setWarmStart] = createSignal(isLarge());
+  const [urls, setUrls] = createSignal("");
 
   let cancelRequested = false;
   let saveChain: Promise<void> = Promise.resolve();
@@ -123,13 +142,16 @@ export default function BrowserTrainingPanel(
         setSteps(
           Math.min(
             20000,
-            Math.max(state.steps, state.step + (isSolid2() ? 100 : 200)),
+            Math.max(state.steps, state.step + (isLarge() ? 100 : 200)),
           ),
         );
         setBatch(state.batch);
         setLearningRate(state.lr);
         setDropout(state.dropout);
         setSeed(state.seed);
+        if (isCustom() && state.sourceUrls && state.sourceUrls.length > 0) {
+          setUrls(state.sourceUrls.join("\n"));
+        }
         setStatus(
           `Saved run found: ${state.step} steps, ${
             Number.isFinite(state.bestLoss)
@@ -151,12 +173,28 @@ export default function BrowserTrainingPanel(
       return;
     }
 
+    let customUrls: string[] = [];
+    if (isCustom()) {
+      try {
+        customUrls = parseDocUrls(urls());
+      } catch (reason) {
+        setError((reason as Error).message);
+        return;
+      }
+      if (customUrls.length === 0) {
+        setError("Add at least one document URL before training.");
+        return;
+      }
+    }
+
     cancelRequested = false;
     setBusy(true);
     setError(null);
     setTrained(null);
     setSolid2Trained(null);
     setSolid2Model(null);
+    setCustomTrained(null);
+    setCustomModel(null);
     setSample(null);
     setProgress(null);
     setStatus(resume ? "Resuming the saved run..." : "Preparing TensorFlow.js...");
@@ -200,6 +238,61 @@ export default function BrowserTrainingPanel(
             maxTokens: 24,
             temperature: 0.7,
             topK: 40,
+          }).run();
+          setSample({
+            prompt,
+            text: generated.text || "(empty generation)",
+          });
+          setStatus(`${finished} The model is quantized and ready to use.`);
+        } catch (reason) {
+          setError(
+            `Training finished, but the integer model could not be built: ${
+              (reason as Error).message
+            }`,
+          );
+        }
+        return;
+      }
+
+      if (isCustom()) {
+        const result = await trainCustomGpt({
+          urls: customUrls,
+          steps: steps(),
+          batch: batch(),
+          lr: learningRate(),
+          seed: seed(),
+          dropout: dropout(),
+          maxMinutes: maxMinutes(),
+          initialState: initial,
+          warmStart: !resume && warmStart(),
+          onStatus: (value) => setStatus(value),
+          onProgress: (value) => {
+            setBackend(value.backend);
+            setProgress(value);
+            setHistory((previous) => [...previous, value]);
+          },
+          onCheckpoint: persist,
+          shouldCancel: () => cancelRequested,
+        });
+
+        setCustomTrained(result);
+        setHistory(result.result.history);
+        setSaved(result.result.state);
+        setBackend(result.result.backend);
+        const finished = result.result.stopped
+          ? `Training stopped after ${result.result.state.step} steps. The partial model is saved.`
+          : `Training complete after ${result.result.state.step} steps.`;
+        setStatus(`${finished} Quantizing for integer-only inference...`);
+
+        try {
+          const model = await buildCustomWasmFromTraining(result);
+          setCustomModel(model);
+          const prompt = result.prompts[0] ?? "Write a short introduction.";
+          const generated = createSolid2Decoder(model, prompt, {
+            maxTokens: 24,
+            temperature: 0.7,
+            topK: 40,
+            promptFormat: "text",
           }).run();
           setSample({
             prompt,
@@ -300,6 +393,29 @@ export default function BrowserTrainingPanel(
       setStatus("The trained model is now active in the Solid 2 Integer GPT demo.");
       return;
     }
+    if (isCustom()) {
+      const result = customTrained();
+      if (!result) return;
+      let model = customModel();
+      if (!model) {
+        setBusy(true);
+        setStatus("Building the integer-only WASM model...");
+        try {
+          model = await buildCustomWasmFromTraining(result);
+          setCustomModel(model);
+        } catch (reason) {
+          setError(
+            `Could not build the WASM model: ${(reason as Error).message}`,
+          );
+          return;
+        } finally {
+          setBusy(false);
+        }
+      }
+      props.onUseCustomModel?.(model);
+      setStatus("The trained custom model is now active in the Integer GPT demo.");
+      return;
+    }
     const result = trained();
     if (!result) return;
     props.onUseCheckpoint?.(result.checkpoint);
@@ -316,6 +432,8 @@ export default function BrowserTrainingPanel(
       setTrained(null);
       setSolid2Trained(null);
       setSolid2Model(null);
+      setCustomTrained(null);
+      setCustomModel(null);
       setSample(null);
       setStatus("Saved browser training run deleted.");
       setError(null);
@@ -351,26 +469,22 @@ export default function BrowserTrainingPanel(
         </div>
       </div>
 
-      <Show
-        when={isSolid2()}
-        fallback={
-          <>
-            <p class="hint">
-              Trains the same {DEFAULT_BROWSER_TRAIN_CONFIG.vocabSize}-token,
-              {" "}{DEFAULT_BROWSER_TRAIN_CONFIG.context}-context, 62k-parameter
-              Alice model with float32 gradients on the bundled public-domain
-              corpus. The integer path starts when you click <b>Use in Integer GPT</b>:
-              the app quantizes the result and runs the existing int8/WASM
-              inference.
-            </p>
-            <p class="hint">
-              Backend order is WebGPU → WebGL → CPU. WebGL is the normal fallback
-              on browsers without WebGPU; it is not an error. Training is a
-              small educational run, not a replacement for the Solid 2 Colab job.
-            </p>
-          </>
-        }
-      >
+      <Show when={!isLarge()}>
+        <p class="hint">
+          Trains the same {DEFAULT_BROWSER_TRAIN_CONFIG.vocabSize}-token,
+          {" "}{DEFAULT_BROWSER_TRAIN_CONFIG.context}-context, 62k-parameter
+          Alice model with float32 gradients on the bundled public-domain
+          corpus. The integer path starts when you click <b>Use in Integer GPT</b>:
+          the app quantizes the result and runs the existing int8/WASM
+          inference.
+        </p>
+        <p class="hint">
+          Backend order is WebGPU → WebGL → CPU. WebGL is the normal fallback
+          on browsers without WebGPU; it is not an error. Training is a
+          small educational run, not a replacement for the Solid 2 Colab job.
+        </p>
+      </Show>
+      <Show when={isSolid2()}>
         <p class="hint">
           Trains a{" "}
           {solid2ParameterCount(SOLID2_TRAIN_CONFIG).toLocaleString()}-parameter,
@@ -388,6 +502,22 @@ export default function BrowserTrainingPanel(
           hours, so keep the time budget small.
         </p>
       </Show>
+      <Show when={isCustom()}>
+        <p class="hint">
+          Trains a{" "}
+          {solid2ParameterCount(SOLID2_TRAIN_CONFIG).toLocaleString()}-parameter,
+          4096-token BPE, 256-context model on Markdown documents you choose.
+          The documents are fetched in the browser, tokenized with the deployed
+          Solid 2 tokenizer, and cached in IndexedDB after the first load. The
+          integer path starts when you click <b>Use in Integer GPT</b>.
+        </p>
+        <p class="hint">
+          Mirrors the Solid 2 model exactly so the same integer-only WASM engine
+          can run it. Warm-starting from the bundled checkpoint is recommended
+          for short runs; uncheck it to train from random weights. URLs must be
+          public and allow cross-origin reads (CORS), such as raw GitHub links.
+        </p>
+      </Show>
 
       <Show when={error()}>
         <div class="banner error"><span>{error()}</span></div>
@@ -395,11 +525,12 @@ export default function BrowserTrainingPanel(
       <Show when={status()}>
         <div class="banner info"><span>{status()}</span></div>
       </Show>
-      <Show when={isSolid2()}>
+      <Show when={isLarge()}>
         <div class="banner warning">
           <span>
-            Solid 2 training is heavy: 1.34M parameters at 256 context. Use a GPU
-            backend and expect a short run to take a while even then.
+            {isCustom() ? "Custom" : "Solid 2"} training is heavy: 1.34M
+            parameters at 256 context. Use a GPU backend and expect a short run
+            to take a while even then.
           </span>
         </div>
       </Show>
@@ -410,6 +541,19 @@ export default function BrowserTrainingPanel(
             short run here or continue on Colab.
           </span>
         </div>
+      </Show>
+
+      <Show when={isCustom()}>
+        <label class="training-field training-field-wide">
+          Markdown document URLs (one per line)
+          <textarea
+            rows="5"
+            placeholder={"https://raw.githubusercontent.com/owner/repo/main/docs/guide.md\nhttps://raw.githubusercontent.com/owner/repo/main/docs/api.md"}
+            value={urls()}
+            disabled={busy()}
+            onInput={(event) => setUrls(event.currentTarget.value)}
+          />
+        </label>
       </Show>
 
       <div class="training-grid">
@@ -501,7 +645,7 @@ export default function BrowserTrainingPanel(
         </label>
       </div>
 
-      <Show when={isSolid2()}>
+      <Show when={isLarge()}>
         <label class="training-toggle">
           <input
             type="checkbox"
@@ -513,8 +657,11 @@ export default function BrowserTrainingPanel(
             <b>Warm start from the bundled Solid 2 model</b>
             <small>
               Starts from the deployed checkpoint's weights and a fresh
-              optimizer instead of random initialization. Resuming a saved run
-              ignores this.
+              optimizer instead of random initialization.
+              <Show when={isCustom()}>
+                {" "}Uncheck to train the custom model from scratch.
+              </Show>{" "}
+              Resuming a saved run ignores this.
             </small>
           </span>
         </label>
@@ -539,12 +686,12 @@ export default function BrowserTrainingPanel(
           class="button secondary"
           disabled={busy()}
           onClick={() => {
-            const quick = isSolid2() ? 100 : 200;
+            const quick = isLarge() ? 100 : 200;
             setSteps(quick);
             setStatus(`Quick run selected: ${quick} steps.`);
           }}
         >
-          {isSolid2() ? "Quick 100 steps" : "Quick 200 steps"}
+          {isLarge() ? "Quick 100 steps" : "Quick 200 steps"}
         </button>
         <Show when={saved() && !busy()}>
           <button
@@ -625,7 +772,12 @@ export default function BrowserTrainingPanel(
           type="button"
           class="button primary"
           disabled={
-            busy() || (isSolid2() ? !solid2Trained() : !trained())
+            busy() ||
+            (isSolid2()
+              ? !solid2Trained()
+              : isCustom()
+                ? !customTrained()
+                : !trained())
           }
           onClick={() => void useTrainedModel()}
         >
@@ -639,7 +791,9 @@ export default function BrowserTrainingPanel(
           >
             {isSolid2()
               ? "Reset demo to bundled Solid 2"
-              : "Reset demo to bundled Alice"}
+              : isCustom()
+                ? "Unload custom model"
+                : "Reset demo to bundled Alice"}
           </button>
         </Show>
       </div>
@@ -648,7 +802,7 @@ export default function BrowserTrainingPanel(
         Saved runs stay in this browser's IndexedDB. The checkpoint includes the
         model, Adam state, history, and best-validation weights, so a later
         session can continue from the same step.
-        <Show when={isSolid2()}>
+        <Show when={isLarge()}>
           {" "}The tokenized training corpus is cached separately, so the second
           load skips BPE encoding.
         </Show>

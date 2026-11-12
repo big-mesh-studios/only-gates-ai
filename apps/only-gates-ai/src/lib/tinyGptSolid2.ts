@@ -60,6 +60,11 @@ export interface Solid2DecodeOptions {
   seed?: number;
   repetitionPenalty?: number;
   repWindow?: number;
+  /**
+   * "chat" wraps the prompt in the Solid 2 Q&A special tokens. "text" encodes
+   * it as ordinary text, which matches a plain-markdown custom model.
+   */
+  promptFormat?: "chat" | "text";
 }
 
 /**
@@ -95,8 +100,12 @@ export class Solid2Decoder {
       seed: options.seed ?? (Date.now() >>> 0),
       repetitionPenalty: options.repetitionPenalty ?? 1.15,
       repWindow: options.repWindow ?? 64,
+      promptFormat: options.promptFormat ?? "chat",
     };
-    let ids = encodeChatPrompt(model.tokenizer, prompt);
+    let ids =
+      this.opts.promptFormat === "text"
+        ? model.tokenizer.encodeOrdinary(prompt)
+        : encodeChatPrompt(model.tokenizer, prompt);
     if (ids.length === 0) {
       ids = [
         model.tokenizer.idFor("<|user|>") ?? 1,

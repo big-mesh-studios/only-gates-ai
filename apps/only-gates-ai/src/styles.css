@@ -367,7 +367,8 @@ button {
   font-weight: 600;
 }
 
-.training-field input {
+.training-field input,
+.training-field textarea {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -380,11 +381,24 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-.training-field input:focus {
+.training-field textarea {
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.45;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.training-field-wide {
+  width: 100%;
+}
+
+.training-field input:focus,
+.training-field textarea:focus {
   border-color: var(--border-strong);
 }
 
-.training-field input:disabled {
+.training-field input:disabled,
+.training-field textarea:disabled {
   opacity: 0.55;
 }
 
