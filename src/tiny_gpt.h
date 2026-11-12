@@ -36,13 +36,19 @@ typedef struct {
 } TinyGptConfig;
 
 typedef struct {
-  int8_t *wqkv;         /* dim x (3 * dim), row-major */
+  /*
+   * Matrices are stored transposed, one contiguous row of `k` per output
+   * column: weights[out_col * k] .. weights[out_col * k + k - 1]. The dot
+   * product then streams both operands sequentially, which is the shape a
+   * MAC array or a SIMD lane expects.
+   */
+  int8_t *wqkv;         /* (3 * dim) x dim, row-major */
   int32_t *wqkv_scale;  /* 3 * dim */
   int8_t *wo;           /* dim x dim */
   int32_t *wo_scale;    /* dim */
-  int8_t *w1;           /* dim x mlp */
+  int8_t *w1;           /* mlp x dim */
   int32_t *w1_scale;    /* mlp */
-  int8_t *w2;           /* mlp x dim */
+  int8_t *w2;           /* dim x mlp */
   int32_t *w2_scale;    /* dim */
   int32_t *g1;          /* dim, Q16 */
   int32_t *g2;          /* dim, Q16 */
@@ -55,12 +61,28 @@ typedef struct {
   int32_t *token_emb_scale; /* vocab, Q16 */
   int8_t *pos_emb;          /* context x dim, one scale per row */
   int32_t *pos_emb_scale;   /* context, Q16 */
-  int8_t *head;             /* dim x vocab, one scale per column/token */
+  int8_t *head;             /* vocab x dim, tied to token_emb (same layout) */
   int32_t *head_scale;      /* vocab, Q16 */
   int32_t *g_final;         /* dim, Q16 */
   TinyGptLayer *layers;
 
   int32_t inv_sqrt_head_dim_q16;
+
+  /*
+   * Decode cache. Keys and values are quantized once when their position is
+   * computed and reused by later positions, exactly as a hardware accelerator
+   * would keep the KV context in on-chip memory:
+   *
+   *   kv_k[(layer * context + position) * dim + head * head_dim + d]
+   *   kv_k_scale[(layer * context + position) * heads + head]
+   *
+   * The full-context reference path fills every entry; the incremental path
+   * fills only the positions it computes.
+   */
+  int8_t *kv_k;        /* layers * context * dim */
+  int8_t *kv_v;        /* layers * context * dim */
+  int32_t *kv_k_scale; /* layers * context * heads */
+  int32_t *kv_v_scale; /* layers * context * heads */
 
   /* Scratch, sized once at creation. */
   int32_t *x;         /* context * dim */
@@ -75,10 +97,6 @@ typedef struct {
   int32_t *logits;    /* context * vocab, Q16 */
   int32_t *probs;     /* vocab, Q15 (also used as score scratch) */
   int8_t *q8;         /* max column count */
-  int8_t *k8;         /* context * head_dim */
-  int8_t *v8;         /* context * head_dim */
-  int32_t *k_scale;   /* context, Q16 */
-  int32_t *v_scale;   /* context, Q16 */
   int32_t *scores;    /* context, Q12 nats */
   int32_t *attn_prob; /* context, Q15 */
   int32_t *top_ids;   /* vocab */
@@ -97,11 +115,35 @@ enum {
 
 extern int tiny_gpt_error_code;
 
-/* Runs the integer forward pass. `tokens` must contain config.context ids. */
+/*
+ * Runs the integer forward pass over the full context. This is the reference
+ * lane: it recomputes every position and must stay available for teaching and
+ * for validating faster schedules.
+ */
 void tiny_gpt_forward(TinyGpt *model, const int32_t *tokens);
+
+/*
+ * Runs the integer forward pass over the absolute positions
+ * [start, start + count) only, reusing the quantized keys and values cached for
+ * positions before `start`. `tokens` is indexed by absolute position, so it
+ * must stay valid for the whole window.
+ *
+ * This is the incremental decode schedule: prefill once with (0, prompt_len),
+ * then call (position, 1) per generated token. The result is bit-identical to
+ * a full pass over the same window because every operation is row-independent
+ * and attention is causal.
+ */
+void tiny_gpt_forward_range(TinyGpt *model, const int32_t *tokens, int start,
+                            int count);
+
+/* Clears the KV cache. Not required before a full `tiny_gpt_forward`. */
+void tiny_gpt_reset_cache(TinyGpt *model);
 
 /* Q16 logits for all context positions, row-major context x vocab. */
 const int32_t *tiny_gpt_logits(TinyGpt *model);
+
+/* Q16 logits for one absolute position, or NULL if out of range. */
+const int32_t *tiny_gpt_logits_row(TinyGpt *model, int position);
 
 /* Debug/tests: exposes an internal Q16 buffer after the last forward pass. */
 enum {

@@ -144,7 +144,7 @@ pnpm build:site           # SPA + field notes + deep dive`}
           ["Value sum", "Σ p·v", "int64 sum of Q15 × int8 × scale", "shift 15 → Q16"],
           ["Output probabilities", "softmax over logits / temperature", "same DI-Exp path, then double", "Q15 → Q16"],
           ["Sampling", "draw from cumulative distribution", "xorshift32, target = (r × total) >> 32", "integer"],
-          ["Generation", "one forward pass per token", "recompute the full context; no KV cache", "n/a"],
+          ["Generation", "one forward pass per token", "prefill once, then one context row per token against the KV cache", "n/a"],
         ]}
       />
 
@@ -169,9 +169,11 @@ pnpm build:site           # SPA + field notes + deep dive`}
 
       <Note>
         <strong>The claim to keep.</strong> This page teaches integer-only
-        inference. It does not claim bit-identical output to float, a KV cache,
-        or an FPGA implementation. Those are separate milestones, and the field
-        notes track them honestly.
+        inference. It does not claim bit-identical output to float or an FPGA
+        implementation. The decode schedule now uses a KV cache, and the integer
+        engine is still the golden model; the field notes and{" "}
+        <a href={`${repo}/blob/main/docs/FPGA-LOWERING.md`}>the lowering
+        contract</a> track the hardware milestone honestly.
       </Note>
 
       <Checkpoint title="You are done when…">

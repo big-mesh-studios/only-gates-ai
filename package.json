@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@11.24.0",
   "scripts": {
-    "build:wasm": "bash ./build.sh",
+    "build:wasm": "node scripts/build-wasm.mjs",
     "build:lib": "pnpm --filter @only-gates-ai/core build",
     "build:compiler": "pnpm --filter @only-gates-ai/compiler build",
     "build:app": "pnpm --filter @only-gates-ai/app build",

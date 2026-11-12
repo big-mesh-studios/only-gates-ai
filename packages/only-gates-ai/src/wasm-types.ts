@@ -82,7 +82,15 @@ export interface OnlyGatesWasmModule {
   ): number;
   _tiny_gpt_destroy(model: number): void;
   _tiny_gpt_forward(model: number, tokensPointer: number): void;
+  _tiny_gpt_forward_range(
+    model: number,
+    tokensPointer: number,
+    start: number,
+    count: number,
+  ): void;
+  _tiny_gpt_reset_cache(model: number): void;
   _tiny_gpt_logits(model: number): number;
+  _tiny_gpt_logits_row(model: number, position: number): number;
   _tiny_gpt_buffer(model: number, which: number): number;
   _tiny_gpt_probabilities(
     model: number,

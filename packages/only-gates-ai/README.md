@@ -90,7 +90,13 @@ pnpm --filter @only-gates-ai/core build
 ```
 
 This compiles the C module with Emscripten into `wasm/`, then emits JavaScript
-and type declarations into `dist/`. The build requires the Emscripten SDK.
+and type declarations into `dist/`. The build requires the Emscripten SDK
+(`emcc --version` must work).
+
+The same command works in PowerShell, cmd, Git Bash, and CI. Under the hood it
+runs `scripts/build-wasm.mjs`, which invokes `emcmake`/`cmake` and copies both
+inference lanes (`only-gates-ai` and `only-gates-ai-simd`) into `wasm/`. On
+Unix, `scripts/build-wasm.sh` is a thin wrapper around the same script.
 
 ## Testing
 

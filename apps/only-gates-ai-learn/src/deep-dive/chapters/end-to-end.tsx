@@ -436,31 +436,37 @@ export function BeyondChapter() {
 
       <h3 class="subhead">The current cost</h3>
       <p>
-        For each generated token, the engine runs <code>L</code> blocks over{" "}
-        <code>T</code> positions. The matrix work is roughly{" "}
+        For each generated token, a full-context pass runs <code>L</code> blocks
+        over <code>T</code> positions. The matrix work is roughly{" "}
         <code>L·T·(4D² + 2DM)</code> multiply-accumulates, and attention is{" "}
         <code>L·T²·D</code>. With the Solid 2 config that is small on a modern
         CPU, but it grows linearly in <code>T</code> for the matmuls and
-        quadratically for attention. The implementation has no KV cache, so
-        generating 100 tokens does 100 full passes.
+        quadratically for attention. The reference lane still does this on
+        purpose, because it is the simplest thing to reason about.
       </p>
 
-      <h3 class="subhead">The first optimization: KV cache</h3>
+      <h3 class="subhead">The decode schedule: KV cache, one row per token</h3>
       <p>
-        During decode, the keys and values for past positions do not change.
-        Quantize them once, store <code>k8</code>, <code>v8</code>, and their
-        scales per layer, and compute only the new query. The block still needs
-        the current token’s residual, but the QKV projection can be reduced to
-        one row, and attention becomes a dot product against the cache. The
-        output is mathematically identical if the cache stores the same
-        quantized values.
+        The shipping path does not recompute the context. It prefills the
+        prompt once, stores the quantized keys and values per layer, and then
+        computes exactly one context row per generated token. Keys and values
+        for past positions do not change, and activation quantization is
+        per-row and per-head, so the cache is exact: the output is
+        bit-identical to a full pass over the same window.
+      </p>
+      <p>
+        This is also the schedule hardware wants. A full-context recompute per
+        token is a browser convenience, not a datapath; an accelerator streams
+        one row through the MAC array and keeps the KV context in on-chip
+        memory. The C test suite asserts the equality of both schedules on
+        every logit, and the WASM SIMD lane reuses the same test.
       </p>
       <Note>
         A KV cache changes the memory profile: each layer stores{" "}
         <code>T × D/H × H</code> int8 keys and values plus scales. For Solid 2
-        that is small; for a larger model it becomes the dominant memory cost.
-        This is why the current simple version is a good teaching reference
-        first.
+        that is 256 KiB of keys and values plus 32 KiB of scales — small enough
+        for on-chip memory, which is why the cache is the first thing an FPGA
+        build should keep resident.
       </Note>
 
       <h3 class="subhead">From integers to gates</h3>
@@ -504,17 +510,23 @@ export function BeyondChapter() {
       </ul>
 
       <p>
-        The honest status is: integer-only inference in WebAssembly is working;
-        the gate compiler is a prototype for small circuits; a gate-lowered GPT
-        and an FPGA implementation are the roadmap. The deep dive stops at the
-        integer engine because that is the part that ships.
+        The honest status is: integer-only inference runs fully in the browser
+        on a scalar WebAssembly lane and a faster WebAssembly SIMD lane that
+        produces identical logits; the gate compiler is a prototype for small
+        circuits; a gate-lowered GPT and an FPGA implementation are the
+        roadmap. <a href={`${repo}/blob/main/docs/FPGA-LOWERING.md`}>The lowering
+        contract</a> maps every operation in the shipping engine onto gates,
+        memories, and widths, and{" "}
+        <a href={`${repo}/blob/main/docs/FPGA-CONFORMANCE.md`}>the conformance
+        vectors</a> are the bit-exact oracle an RTL testbench checks against.
       </p>
 
       <Checkpoint>
         <p>
-          Measure tokens per second for a fixed prompt, then sketch a KV-cache
-          layout with <code>k8</code>, <code>v8</code>, <code>k_scale</code>,
-          and <code>v_scale</code> per layer. Estimate the memory for Solid 2 at
+          Measure tokens per second for a fixed prompt on both the scalar and
+          SIMD lanes, then trace one generated token through the KV-cache
+          layout (<code>kv_k</code>, <code>kv_v</code>, <code>kv_k_scale</code>,{" "}
+          <code>kv_v_scale</code>). Estimate the on-chip memory for Solid 2 at{" "}
           <code>T=256</code>. Then pick one integer operation and write down its
           gate-level shape.
         </p>
@@ -523,6 +535,8 @@ export function BeyondChapter() {
       <p class="source-line">
         Related:{" "}
         <a href="../#gates">the field notes on the gate path</a> ·{" "}
+        <a href={`${repo}/blob/main/docs/FPGA-LOWERING.md`}>FPGA lowering</a> ·{" "}
+        <a href={`${repo}/blob/main/docs/FPGA-CONFORMANCE.md`}>conformance vectors</a> ·{" "}
         <a href={`${repo}/tree/main/packages/only-gates-ai-compiler`}>
           the gate compiler
         </a>

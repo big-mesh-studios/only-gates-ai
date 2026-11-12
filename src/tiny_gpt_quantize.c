@@ -75,9 +75,13 @@ static void quantize_rows(const float *src, int rows, int cols, int8_t *dst,
   }
 }
 
-/* One int8 scale per output column (linear projections). */
-static void quantize_columns(const float *src, int rows, int cols, int8_t *dst,
-                             int32_t *scales) {
+/*
+ * One int8 scale per output column (linear projections). The result is stored
+ * transposed: `dst[col * rows + row]`, so each output column owns one
+ * contiguous `k` row for the integer dot product.
+ */
+static void quantize_columns_transposed(const float *src, int rows, int cols,
+                                        int8_t *dst, int32_t *scales) {
   for (int col = 0; col < cols; ++col) {
     float max_abs = 0.0f;
     for (int row = 0; row < rows; ++row) {
@@ -86,18 +90,16 @@ static void quantize_columns(const float *src, int rows, int cols, int8_t *dst,
         max_abs = magnitude;
       }
     }
+    int8_t *target = dst + (size_t)col * rows;
     if (max_abs <= 0.0f) {
       scales[col] = 0;
-      for (int row = 0; row < rows; ++row) {
-        dst[(size_t)row * cols + col] = 0;
-      }
+      memset(target, 0, (size_t)rows);
       continue;
     }
     scales[col] = scale_q16_from_float(max_abs / 127.0f);
     const float inverse = 127.0f / max_abs;
     for (int row = 0; row < rows; ++row) {
-      const size_t index = (size_t)row * cols + col;
-      dst[index] = quantize_value(src[index], inverse);
+      target[row] = quantize_value(src[(size_t)row * cols + col], inverse);
     }
   }
 }
@@ -165,10 +167,11 @@ static int allocate_layer_weights(TinyGptLayer *layer, int dim, int mlp,
     return 0;
   }
 
-  quantize_columns(wqkv, dim, dim * 3, layer->wqkv, layer->wqkv_scale);
-  quantize_columns(wo, dim, dim, layer->wo, layer->wo_scale);
-  quantize_columns(w1, dim, mlp, layer->w1, layer->w1_scale);
-  quantize_columns(w2, mlp, dim, layer->w2, layer->w2_scale);
+  quantize_columns_transposed(wqkv, dim, dim * 3, layer->wqkv,
+                              layer->wqkv_scale);
+  quantize_columns_transposed(wo, dim, dim, layer->wo, layer->wo_scale);
+  quantize_columns_transposed(w1, dim, mlp, layer->w1, layer->w1_scale);
+  quantize_columns_transposed(w2, mlp, dim, layer->w2, layer->w2_scale);
   quantize_gain(g1, dim, layer->g1);
   quantize_gain(g2, dim, layer->g2);
   return 1;
@@ -179,7 +182,6 @@ static int allocate_scratch(TinyGpt *model) {
   const int dim = model->config.dim;
   const int mlp = model->config.mlp;
   const int vocab = model->config.vocab_size;
-  const int head_dim = dim / model->config.heads;
 
   model->x = allocate_zero((size_t)context * dim, sizeof(int32_t));
   model->x1 = allocate_zero((size_t)context * dim, sizeof(int32_t));
@@ -201,10 +203,20 @@ static int allocate_scratch(TinyGpt *model) {
   const size_t activation_scratch =
       (size_t)dim * 3 > (size_t)mlp ? (size_t)dim * 3 : (size_t)mlp;
   model->q8 = allocate_zero(activation_scratch, sizeof(int8_t));
-  model->k8 = allocate_zero((size_t)context * head_dim, sizeof(int8_t));
-  model->v8 = allocate_zero((size_t)context * head_dim, sizeof(int8_t));
-  model->k_scale = allocate_zero((size_t)context, sizeof(int32_t));
-  model->v_scale = allocate_zero((size_t)context, sizeof(int32_t));
+  model->kv_k =
+      allocate_zero((size_t)model->config.layers * (size_t)context * dim,
+                    sizeof(int8_t));
+  model->kv_v =
+      allocate_zero((size_t)model->config.layers * (size_t)context * dim,
+                    sizeof(int8_t));
+  model->kv_k_scale = allocate_zero(
+      (size_t)model->config.layers * (size_t)context *
+          (size_t)model->config.heads,
+      sizeof(int32_t));
+  model->kv_v_scale = allocate_zero(
+      (size_t)model->config.layers * (size_t)context *
+          (size_t)model->config.heads,
+      sizeof(int32_t));
   model->scores = allocate_zero((size_t)context, sizeof(int32_t));
   model->attn_prob = allocate_zero((size_t)context, sizeof(int32_t));
   model->top_ids = allocate_zero((size_t)vocab, sizeof(int32_t));
@@ -216,10 +228,11 @@ static int allocate_scratch(TinyGpt *model) {
          model->qkv != NULL && model->attn != NULL && model->y != NULL &&
          model->z != NULL && model->gz != NULL && model->m != NULL &&
          model->logits != NULL && model->probs != NULL && model->q8 != NULL &&
-         model->k8 != NULL && model->v8 != NULL && model->k_scale != NULL &&
-         model->v_scale != NULL && model->scores != NULL &&
-         model->attn_prob != NULL && model->top_ids != NULL &&
-         model->top_vals != NULL && model->gelu_lut != NULL;
+         model->kv_k != NULL && model->kv_v != NULL &&
+         model->kv_k_scale != NULL && model->kv_v_scale != NULL &&
+         model->scores != NULL && model->attn_prob != NULL &&
+         model->top_ids != NULL && model->top_vals != NULL &&
+         model->gelu_lut != NULL;
 }
 
 TinyGpt *tiny_gpt_create(int vocab_size, int context, int dim, int layers,
@@ -278,16 +291,13 @@ TinyGpt *tiny_gpt_create(int vocab_size, int context, int dim, int layers,
   quantize_gain(g_final, dim, model->g_final);
 
   /*
-   * The output head is the tied token embedding, transposed to dim x vocab.
-   * Reuse the row-quantized values and scales so the two paths stay identical.
+   * The output head is the tied token embedding. Both the embedding lookup and
+   * the output projection now store one contiguous `dim` row per token, so the
+   * head is a straight copy of the row-quantized values and scales.
    */
-  for (int token = 0; token < vocab_size; ++token) {
-    model->head_scale[token] = model->token_emb_scale[token];
-    for (int d = 0; d < dim; ++d) {
-      model->head[(size_t)d * vocab_size + token] =
-          model->token_emb[(size_t)token * dim + d];
-    }
-  }
+  memcpy(model->head, model->token_emb, (size_t)vocab_size * dim);
+  memcpy(model->head_scale, model->token_emb_scale,
+         (size_t)vocab_size * sizeof(int32_t));
 
   for (int layer = 0; layer < layers; ++layer) {
     if (!allocate_layer_weights(&model->layers[layer], dim, mlp, &cursor)) {

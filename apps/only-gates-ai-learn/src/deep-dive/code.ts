@@ -15,6 +15,9 @@ function slice(
   label: string,
   endMarker = "\n}\n",
 ): string {
+  // Markers assume LF. Normalize so the extractor also works on a Windows
+  // checkout with autocrlf enabled.
+  source = source.replace(/\r\n/g, "\n");
   const start = source.indexOf(startMarker);
   if (start < 0) {
     throw new Error(`deep-dive source extract: missing start marker for ${label}`);
@@ -44,8 +47,8 @@ export const snippets = {
   quantizeRows: slice(quantizeSource, "static void quantize_rows(", "quantize_rows"),
   quantizeColumns: slice(
     quantizeSource,
-    "static void quantize_columns(",
-    "quantize_columns",
+    "static void quantize_columns_transposed(",
+    "quantize_columns_transposed",
   ),
   quantizeGain: slice(quantizeSource, "static void quantize_gain(", "quantize_gain"),
   buildGeluLut: slice(quantizeSource, "static void build_gelu_lut(", "build_gelu_lut"),
@@ -66,7 +69,7 @@ export const snippets = {
   gelu: slice(inferSource, "static int32_t gelu_q16(", "gelu_q16"),
   attention: slice(inferSource, "static void attention_q16(", "attention_q16"),
   softmax: slice(inferSource, "static void softmax_last_q15(", "softmax_last_q15"),
-  forward: slice(inferSource, "void tiny_gpt_forward(", "tiny_gpt_forward"),
+  forward: slice(inferSource, "static void forward_range_impl(", "forward_range_impl"),
   nextRandom: slice(inferSource, "static uint32_t next_random(", "next_random"),
   probabilities: slice(
     inferSource,

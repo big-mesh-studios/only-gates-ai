@@ -1,6 +1,7 @@
 #include "tiny_gpt.h"
 
 #include "int_math.h"
+#include "tiny_gpt_dot_simd.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -68,6 +69,9 @@ static void quantize_activation_row(const int32_t *src, int count, int8_t *dst,
 /*
  * DI-MatMul: per-token int8 activations, int8 weights with per-column Q16
  * scales, int32 accumulation, single int64 requantization to Q16 output.
+ *
+ * Weights are stored one contiguous row per output column, so the inner loop
+ * is a sequential dot product over two int8 rows.
  */
 static void matmul_q16(const int32_t *x, int rows, int cols,
                        const int8_t *weights, const int32_t *weight_scale,
@@ -78,11 +82,8 @@ static void matmul_q16(const int32_t *x, int rows, int cols,
                             &activation_scale);
     int32_t *target = out + (size_t)row * out_cols;
     for (int j = 0; j < out_cols; ++j) {
-      int32_t accumulator = 0;
-      for (int k = 0; k < cols; ++k) {
-        accumulator +=
-            (int32_t)scratch[k] * (int32_t)weights[(size_t)k * out_cols + j];
-      }
+      const int8_t *weight_row = weights + (size_t)j * cols;
+      const int32_t accumulator = tiny_gpt_dot_i8(scratch, weight_row, cols);
       const int64_t product =
           (int64_t)accumulator * activation_scale * weight_scale[j];
       target[j] = (int32_t)int_shift_round(product, 16);
@@ -136,41 +137,57 @@ static int32_t gelu_q16(const TinyGpt *model, int32_t x) {
  * Integer attention. Q/K/V are quantized per head and per token, scores use
  * int8 dot products, DI-Exp with clipping produces Q15 probabilities, and the
  * value aggregation uses the corrected P * V indexing (sum over keys).
+ *
+ * `qkv` points at the first row of the computed range; local row `t`
+ * corresponds to absolute position `start + t`. Keys and values for those
+ * positions are written into the per-layer cache, and the attention window
+ * reads cached rows 0..position, so an incremental decode computes one row and
+ * reuses everything already cached.
  */
-static void attention_q16(TinyGpt *model, const int32_t *qkv) {
+static void attention_q16(TinyGpt *model, int layer, const int32_t *qkv,
+                          int start, int count) {
   const TinyGptConfig *config = &model->config;
   const int context = config->context;
   const int dim = config->dim;
   const int heads = config->heads;
   const int head_dim = dim / heads;
   const int qkv_stride = dim * 3;
+  const size_t layer_base = (size_t)layer * context;
 
   for (int head = 0; head < heads; ++head) {
     const int head_offset = head * head_dim;
 
-    for (int j = 0; j < context; ++j) {
+    /* Quantize and cache the keys and values for the new positions. */
+    for (int t = 0; t < count; ++t) {
+      const int position = start + t;
+      const size_t cache_row = (layer_base + (size_t)position) * dim +
+                               (size_t)head_offset;
+      const size_t scale_index =
+          (layer_base + (size_t)position) * heads + (size_t)head;
       const int32_t *key =
-          qkv + (size_t)j * qkv_stride + dim + head_offset;
+          qkv + (size_t)t * qkv_stride + dim + head_offset;
       const int32_t *value =
-          qkv + (size_t)j * qkv_stride + dim * 2 + head_offset;
-      quantize_activation_row(key, head_dim, model->k8 + (size_t)j * head_dim,
-                              &model->k_scale[j]);
-      quantize_activation_row(value, head_dim, model->v8 + (size_t)j * head_dim,
-                              &model->v_scale[j]);
+          qkv + (size_t)t * qkv_stride + dim * 2 + head_offset;
+      quantize_activation_row(key, head_dim, model->kv_k + cache_row,
+                              &model->kv_k_scale[scale_index]);
+      quantize_activation_row(value, head_dim, model->kv_v + cache_row,
+                              &model->kv_v_scale[scale_index]);
     }
 
-    for (int t = 0; t < context; ++t) {
+    for (int t = 0; t < count; ++t) {
+      const int position = start + t;
       const int32_t *query = qkv + (size_t)t * qkv_stride + head_offset;
       int32_t query_scale = 0;
       quantize_activation_row(query, head_dim, model->q8, &query_scale);
 
       int32_t row_max = -2147483647;
-      for (int j = 0; j <= t; ++j) {
-        int32_t dot = 0;
-        for (int d = 0; d < head_dim; ++d) {
-          dot += (int32_t)model->q8[d] *
-                 (int32_t)model->k8[(size_t)j * head_dim + d];
-        }
+      for (int j = 0; j <= position; ++j) {
+        const size_t cache_row =
+            (layer_base + (size_t)j) * dim + (size_t)head_offset;
+        const size_t scale_index =
+            (layer_base + (size_t)j) * heads + (size_t)head;
+        const int8_t *key8 = model->kv_k + cache_row;
+        const int32_t dot = tiny_gpt_dot_i8(model->q8, key8, head_dim);
         /*
          * product = dot * qscale * kscale * inv_sqrt_q16. With qscale and
          * kscale in Q16, the real score is product / 2^48. Shift by 36 to
@@ -178,7 +195,7 @@ static void attention_q16(TinyGpt *model, const int32_t *qkv) {
          * the Q8 variant's ~1e-3.
          */
         const int64_t product = (int64_t)dot * query_scale *
-                                model->k_scale[j] *
+                                model->kv_k_scale[scale_index] *
                                 model->inv_sqrt_head_dim_q16;
         int64_t score = int_shift_round(product, 36);
         if (score > TINY_GPT_SOFTMAX_CLIP_Q12) {
@@ -193,7 +210,7 @@ static void attention_q16(TinyGpt *model, const int32_t *qkv) {
       }
 
       int32_t total = 0;
-      for (int j = 0; j <= t; ++j) {
+      for (int j = 0; j <= position; ++j) {
         int32_t delta = row_max - model->scores[j];
         if (delta < 0) {
           delta = 0;
@@ -204,30 +221,34 @@ static void attention_q16(TinyGpt *model, const int32_t *qkv) {
         model->attn_prob[j] = weight;
         total += weight;
       }
-      for (int j = t + 1; j < context; ++j) {
+      for (int j = position + 1; j < context; ++j) {
         model->attn_prob[j] = 0;
       }
 
       if (total > 0) {
-        for (int j = 0; j <= t; ++j) {
+        for (int j = 0; j <= position; ++j) {
           model->attn_prob[j] = (int32_t)int_div_round(
               (int64_t)model->attn_prob[j] * INT_Q15_ONE, total);
         }
       } else {
-        const int32_t uniform = INT_Q15_ONE / (t + 1);
-        for (int j = 0; j <= t; ++j) {
+        const int32_t uniform = INT_Q15_ONE / (position + 1);
+        for (int j = 0; j <= position; ++j) {
           model->attn_prob[j] = uniform;
         }
       }
 
       for (int d = 0; d < head_dim; ++d) {
         int64_t accumulator = 0;
-        for (int j = 0; j <= t; ++j) {
+        for (int j = 0; j <= position; ++j) {
+          const size_t cache_row =
+              (layer_base + (size_t)j) * dim + (size_t)head_offset;
+          const size_t scale_index =
+              (layer_base + (size_t)j) * heads + (size_t)head;
           accumulator += (int64_t)model->attn_prob[j] *
-                         (int64_t)model->v8[(size_t)j * head_dim + d] *
-                         model->v_scale[j];
+                         (int64_t)model->kv_v[cache_row + d] *
+                         model->kv_v_scale[scale_index];
         }
-        model->attn[(size_t)t * dim + head_offset + d] =
+        model->attn[(size_t)position * dim + head_offset + d] =
             (int32_t)int_shift_round(accumulator, 15);
       }
     }
@@ -286,20 +307,25 @@ static void softmax_last_q15(TinyGpt *model, int32_t temperature_q16,
   }
 }
 
-void tiny_gpt_forward(TinyGpt *model, const int32_t *tokens) {
-  if (model == NULL || tokens == NULL) {
-    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
-    return;
-  }
-
+/*
+ * Shared forward pass over the absolute positions [start, start + count).
+ * Every stage is row-independent, so computing a subset produces exactly the
+ * rows a full pass would produce; attention reads cached K/V for all earlier
+ * positions.
+ */
+static void forward_range_impl(TinyGpt *model, const int32_t *tokens,
+                               int start, int count) {
   const TinyGptConfig *config = &model->config;
   const int context = config->context;
   const int dim = config->dim;
   const int mlp = config->mlp;
   const int vocab = config->vocab_size;
+  const size_t row_offset = (size_t)start * dim;
+  const size_t qkv_offset = (size_t)start * dim * 3;
+  const size_t mlp_offset = (size_t)start * mlp;
 
   /* Embeddings: token and position tables are int8 with Q16 row scales. */
-  for (int t = 0; t < context; ++t) {
+  for (int t = start; t < start + count; ++t) {
     int token = tokens[t];
     if (token < 0 || token >= vocab) {
       token = 0;
@@ -323,38 +349,92 @@ void tiny_gpt_forward(TinyGpt *model, const int32_t *tokens) {
   for (int layer = 0; layer < config->layers; ++layer) {
     const TinyGptLayer *weights = &model->layers[layer];
 
-    rmsnorm_q16(model->x, context, dim, weights->g1, model->h);
-    matmul_q16(model->h, context, dim, weights->wqkv, weights->wqkv_scale,
-               dim * 3, model->q8, model->qkv);
-    attention_q16(model, model->qkv);
-    matmul_q16(model->attn, context, dim, weights->wo, weights->wo_scale, dim,
-               model->q8, model->y);
+    rmsnorm_q16(model->x + row_offset, count, dim, weights->g1,
+                model->h + row_offset);
+    matmul_q16(model->h + row_offset, count, dim, weights->wqkv,
+               weights->wqkv_scale, dim * 3, model->q8,
+               model->qkv + qkv_offset);
+    attention_q16(model, layer, model->qkv + qkv_offset, start, count);
+    matmul_q16(model->attn + row_offset, count, dim, weights->wo,
+               weights->wo_scale, dim, model->q8, model->y + row_offset);
 
-    for (int i = 0; i < context * dim; ++i) {
-      model->x1[i] = model->x[i] + model->y[i];
+    for (int i = 0; i < count * dim; ++i) {
+      const size_t index = row_offset + (size_t)i;
+      model->x1[index] = model->x[index] + model->y[index];
     }
 
-    rmsnorm_q16(model->x1, context, dim, weights->g2, model->h);
-    matmul_q16(model->h, context, dim, weights->w1, weights->w1_scale, mlp,
-               model->q8, model->z);
+    rmsnorm_q16(model->x1 + row_offset, count, dim, weights->g2,
+                model->h + row_offset);
+    matmul_q16(model->h + row_offset, count, dim, weights->w1,
+               weights->w1_scale, mlp, model->q8, model->z + mlp_offset);
 
-    for (int i = 0; i < context * mlp; ++i) {
-      model->gz[i] = gelu_q16(model, model->z[i]);
+    for (int i = 0; i < count * mlp; ++i) {
+      const size_t index = mlp_offset + (size_t)i;
+      model->gz[index] = gelu_q16(model, model->z[index]);
     }
 
-    matmul_q16(model->gz, context, mlp, weights->w2, weights->w2_scale, dim,
-               model->q8, model->m);
+    matmul_q16(model->gz + mlp_offset, count, mlp, weights->w2,
+               weights->w2_scale, dim, model->q8, model->m + row_offset);
 
-    for (int i = 0; i < context * dim; ++i) {
-      model->x[i] = model->x1[i] + model->m[i];
+    for (int i = 0; i < count * dim; ++i) {
+      const size_t index = row_offset + (size_t)i;
+      model->x[index] = model->x1[index] + model->m[index];
     }
   }
 
-  rmsnorm_q16(model->x, context, dim, model->g_final, model->h);
-  matmul_q16(model->h, context, dim, model->head, model->head_scale, vocab,
-             model->q8, model->logits);
+  rmsnorm_q16(model->x + row_offset, count, dim, model->g_final,
+              model->h + row_offset);
+  matmul_q16(model->h + row_offset, count, dim, model->head,
+             model->head_scale, vocab, model->q8, model->logits + (size_t)start * vocab);
 
   tiny_gpt_error_code = TINY_GPT_OK;
+}
+
+void tiny_gpt_forward_range(TinyGpt *model, const int32_t *tokens, int start,
+                            int count) {
+  if (model == NULL || tokens == NULL || start < 0 || count < 0 ||
+      start > model->config.context ||
+      count > model->config.context - start) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+  if (count == 0) {
+    tiny_gpt_error_code = TINY_GPT_OK;
+    return;
+  }
+  forward_range_impl(model, tokens, start, count);
+}
+
+void tiny_gpt_forward(TinyGpt *model, const int32_t *tokens) {
+  if (model == NULL || tokens == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+  forward_range_impl(model, tokens, 0, model->config.context);
+}
+
+void tiny_gpt_reset_cache(TinyGpt *model) {
+  if (model == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+  const size_t entries =
+      (size_t)model->config.layers * (size_t)model->config.context;
+  memset(model->kv_k, 0, entries * (size_t)model->config.dim);
+  memset(model->kv_v, 0, entries * (size_t)model->config.dim);
+  memset(model->kv_k_scale, 0, entries * (size_t)model->config.heads *
+                                  sizeof(int32_t));
+  memset(model->kv_v_scale, 0, entries * (size_t)model->config.heads *
+                                  sizeof(int32_t));
+  tiny_gpt_error_code = TINY_GPT_OK;
+}
+
+const int32_t *tiny_gpt_logits_row(TinyGpt *model, int position) {
+  if (model == NULL || position < 0 || position >= model->config.context) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return NULL;
+  }
+  return model->logits + (size_t)position * model->config.vocab_size;
 }
 
 const int32_t *tiny_gpt_logits(TinyGpt *model) {
@@ -534,10 +614,10 @@ void tiny_gpt_destroy(TinyGpt *model) {
   free(model->logits);
   free(model->probs);
   free(model->q8);
-  free(model->k8);
-  free(model->v8);
-  free(model->k_scale);
-  free(model->v_scale);
+  free(model->kv_k);
+  free(model->kv_v);
+  free(model->kv_k_scale);
+  free(model->kv_v_scale);
   free(model->scores);
   free(model->attn_prob);
   free(model->top_ids);

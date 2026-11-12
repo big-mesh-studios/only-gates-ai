@@ -1,6 +1,7 @@
 import {
   createTinyGpt,
-  loadOnlyGatesModule,
+  loadOnlyGatesModuleAuto,
+  type OnlyGatesBackend,
   type OnlyGatesWasmModule,
   type TinyGpt,
   type TinyGptBuffer,
@@ -32,6 +33,8 @@ export interface TinyGptWasmModel {
   readonly index: ReadonlyMap<string, number>;
   readonly module: OnlyGatesWasmModule;
   readonly model: TinyGpt;
+  /** Resolved integer lane: SIMD when the browser supports it, else scalar. */
+  readonly backend: OnlyGatesBackend;
 }
 
 export interface TinyGptWasmGeneration {
@@ -96,7 +99,7 @@ export function packTinyGptWeights(
 export async function loadTinyGptWasm(
   checkpoint: TinyGptCheckpoint,
 ): Promise<TinyGptWasmModel> {
-  const module = await loadOnlyGatesModule();
+  const { module, backend } = await loadOnlyGatesModuleAuto();
   const model = createTinyGpt(module, {
     config: checkpoint.config,
     weights: packTinyGptWeights(checkpoint),
@@ -109,6 +112,7 @@ export async function loadTinyGptWasm(
     index,
     module,
     model,
+    backend,
   };
 }
 

@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
+# Thin wrapper kept for existing Unix habits and docs. The real implementation
+# is cross-platform: ../../scripts/build-wasm.mjs.
 set -euo pipefail
 
 package_dir="$(cd "$(dirname "$0")/.." && pwd)"
-repo_root="$(cd "$package_dir/../.." && pwd)"
-build_dir="$repo_root/dist-lib"
-wasm_dir="$package_dir/wasm"
 
-BUILD_DIR="$build_dir" BUILD_TYPE="${BUILD_TYPE:-Release}" bash "$repo_root/build.sh"
-
-mkdir -p "$wasm_dir"
-cp "$build_dir/only-gates-ai.js" "$wasm_dir/only-gates-ai.js"
-cp "$build_dir/only-gates-ai.wasm" "$wasm_dir/only-gates-ai.wasm"
+exec node "$package_dir/../../scripts/build-wasm.mjs" \
+  --build-dir dist-lib \
+  --build-type "${BUILD_TYPE:-Release}" \
+  --copy-wasm packages/only-gates-ai/wasm

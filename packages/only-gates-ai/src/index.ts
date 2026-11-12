@@ -7,9 +7,15 @@ export { OnlyGatesError, OnlyGatesErrorCode } from "./errors.js";
 export type {
   EmscriptenModuleOptions,
   OnlyGatesWasmModule,
+  OnlyGatesBackend,
+  LoadedOnlyGatesModule,
 } from "./wasm.js";
 
-export { loadOnlyGatesModule } from "./wasm.js";
+export {
+  loadOnlyGatesModule,
+  loadOnlyGatesSimdModule,
+  loadOnlyGatesModuleAuto,
+} from "./wasm.js";
 
 export {
   TinyGpt,

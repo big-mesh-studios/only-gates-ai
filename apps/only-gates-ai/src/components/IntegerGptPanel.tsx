@@ -25,9 +25,10 @@ import {
 import { TINY_GPT_CHECKPOINT } from "../assets/tiny-gpt-weights";
 import {
   loadSolid2Wasm,
-  generateSolid2Wasm,
+  createSolid2Decoder,
   type Solid2WasmModel,
   type Solid2Generation,
+  type Solid2Decoder,
 } from "../lib/tinyGptSolid2";
 
 type ExampleId = "alice" | "solid2";
@@ -75,6 +76,21 @@ export default function IntegerGptPanel() {
   const [solid2Loading, setSolid2Loading] = createSignal(false);
   const [solid2Error, setSolid2Error] = createSignal<string | null>(null);
   const [solid2Gen, setSolid2Gen] = createSignal<Solid2Generation | null>(null);
+  const [solid2Streaming, setSolid2Streaming] = createSignal(false);
+  let solid2Decoder: Solid2Decoder | null = null;
+  let solid2Frame = 0;
+
+  const stopSolid2 = (finalize: boolean) => {
+    if (solid2Frame) {
+      cancelAnimationFrame(solid2Frame);
+      solid2Frame = 0;
+    }
+    const decoder = solid2Decoder;
+    solid2Decoder = null;
+    setSolid2Streaming(false);
+    setGenerating(false);
+    if (decoder && finalize) setSolid2Gen(decoder.result());
+  };
 
   const [prompt, setPrompt] = createSignal("Alice was");
 
@@ -115,6 +131,7 @@ export default function IntegerGptPanel() {
   createEffect(
     example,
     (ex) => {
+      if (ex !== "solid2") stopSolid2(true);
       if (ex !== "solid2" || solid2() || solid2Loading()) return;
       // switch prompt to a Solid 2 question when first entering
       setPrompt((p) => (p === "Alice was" ? "What are split effects?" : p));
@@ -145,18 +162,39 @@ export default function IntegerGptPanel() {
     if (example() === "solid2") {
       const m = solid2();
       if (!m) return;
-      setGenerating(true);
-      setSolid2Gen(null);
       setStatus(null);
-      setTimeout(() => {
-        try {
-          setSolid2Gen(generateSolid2Wasm(m, prompt(), { maxTokens: 160, temperature: 0.7, topK: 40 }));
-        } catch (e) {
-          setStatus(`Generation error: ${(e as Error).message}`);
-        } finally {
-          setGenerating(false);
+      setSolid2Gen(null);
+      setGenerating(true);
+      setSolid2Streaming(true);
+      const decoder = createSolid2Decoder(m, prompt(), {
+        maxTokens: 160,
+        temperature: 0.7,
+        topK: 40,
+      });
+      solid2Decoder = decoder;
+      // Time-sliced decoding: generate for roughly one frame, paint, repeat, so
+      // tokens appear while the answer is still being produced.
+      const tick = () => {
+        if (solid2Decoder !== decoder) return;
+        const deadline = performance.now() + 11;
+        let done = false;
+        while (performance.now() < deadline) {
+          if (decoder.step().done) {
+            done = true;
+            break;
+          }
         }
-      }, 10);
+        setSolid2Gen(decoder.result());
+        if (done) {
+          solid2Decoder = null;
+          solid2Frame = 0;
+          setSolid2Streaming(false);
+          setGenerating(false);
+          return;
+        }
+        solid2Frame = requestAnimationFrame(tick);
+      };
+      solid2Frame = requestAnimationFrame(tick);
       return;
     }
     if (aliceMode() === "wasm") {
@@ -243,7 +281,10 @@ export default function IntegerGptPanel() {
           </div>
         </Show>
         <Show when={example() === "solid2"}>
-          <span class="muted">Integer-only (WASM), Q16/int8, BPE 4096, ctx 256. TS float/int8 disabled (too slow at 4k vocab in JS).</span>
+          <span class="muted">
+            Integer-only {solid2()?.backend === "wasm-simd" ? "WebAssembly SIMD" : "WebAssembly"}, Q16/int8, BPE 4096, ctx 256.
+            {" "}TS float/int8 disabled (too slow at 4k vocab in JS).
+          </span>
         </Show>
       </div>
 
@@ -258,6 +299,9 @@ export default function IntegerGptPanel() {
               <div class="runtime-pill ready">
                 <span class="runtime-dot" />
                 {parameterCount(c()).toLocaleString()} params
+                <Show when={example() === "solid2" && solid2()}>
+                  {solid2()!.backend === "wasm-simd" ? " · SIMD" : " · scalar"}
+                </Show>
               </div>
             )}
           </Show>
@@ -282,11 +326,23 @@ export default function IntegerGptPanel() {
         </p>
 
         <p class="hint">
+          <a
+            href={
+              import.meta.env.DEV
+                ? "http://localhost:5175/deep-dive/#beyond"
+                : "learn/deep-dive/#beyond"
+            }
+          >
+            How this lowers to FPGA gates →
+          </a>
+        </p>
+
+        <p class="hint">
           <Show when={example() === "alice"}>
             Tiny transformer trained on Chapters I &amp; II of Alice's Adventures in Wonderland (word-level). Float32 is used only to quantize at load; inference modes show float/int8/fully-integer WASM behavior.
           </Show>
           <Show when={example() === "solid2"}>
-            Decoder-only transformer (byte-level BPE, 4096 vocab, 256 ctx; config sized to the small docs+Q&A corpus) trained from scratch on <b>pinned Solid 2 docs + curated Q&A</b> via <code>scripts/train_tiny_gpt_solid2_colab.py</code> (runnable with the Termux <code>colab</code> CLI). The browser runs the <b>entire forward pass as integer-only WebAssembly</b> (Q16 activations, int8 weights, integer RMSNorm/GELU/DI-Exp softmax). Float32 is used only once to quantize the checkpoint at load.
+            Decoder-only transformer (byte-level BPE, 4096 vocab, 256 ctx; config sized to the small docs+Q&A corpus) trained from scratch on <b>pinned Solid 2 docs + curated Q&A</b> via <code>scripts/train_tiny_gpt_solid2_colab.py</code> (runnable with the Termux <code>colab</code> CLI). The browser runs the <b>entire forward pass as integer-only WebAssembly</b> — {solid2()?.backend === "wasm-simd" ? "the SIMD lane" : "the scalar lane"} (Q16 activations, int8 weights, integer RMSNorm/GELU/DI-Exp softmax). The prompt is prefilled once, then each token costs one context row against an integer KV cache, which is the schedule an FPGA datapath would use. Float32 is used only once to quantize the checkpoint at load.
             <Show when={activeConfig()}>{(c) => <span> Loaded config: {c().vocabSize}v/{c().context}ctx, {c().dim}d/{c().layers}L/{c().heads}H/{c().mlp}mlp ({parameterCount(c()).toLocaleString()} params).</span>}</Show>
           </Show>
         </p>
@@ -311,6 +367,9 @@ export default function IntegerGptPanel() {
           <button type="button" class="button primary" onClick={handleGenerate} disabled={generateDisabled()}>
             {generating() ? "..." : "Generate"}
           </button>
+          <Show when={example() === "solid2" && solid2Streaming()}>
+            <button type="button" class="button secondary" onClick={() => stopSolid2(true)}>Stop</button>
+          </Show>
           <Show when={example() === "alice"}>
             <button type="button" class="button secondary" onClick={handleCompare} disabled={generating() || !model()}>Compare</button>
           </Show>
@@ -337,7 +396,7 @@ export default function IntegerGptPanel() {
           {(c) => (
             <div class="chat-log" style="margin-top: 24px;">
               <div class="chat-message user"><div class="chat-bubble"><p><strong>You:</strong> {c().prompt}</p></div></div>
-              <div class="chat-message assistant"><div class="chat-bubble"><p style="white-space: pre-wrap;">{c().text || <span class="muted">(empty generation)</span>}</p><div class="chat-meta">{c().newTokenCount} tokens in {c().elapsedMs.toFixed(1)}ms (integer-only WASM, BPE){c().stopped ? "" : " · max tokens"}</div></div></div>
+              <div class="chat-message assistant"><div class="chat-bubble"><p style="white-space: pre-wrap;">{c().text || <span class="muted">(empty generation)</span>}</p><div class="chat-meta">{c().newTokenCount} tokens in {c().elapsedMs.toFixed(1)}ms · {(c().newTokenCount / Math.max(c().elapsedMs, 1) * 1000).toFixed(0)} tok/s (integer-only WASM, BPE){solid2Streaming() ? " · streaming" : ""}{c().stopped ? "" : " · max tokens"}</div></div></div>
             </div>
           )}
         </Show>

@@ -20,7 +20,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "pnpm run build:wasm && tsc -p tsconfig.json",
-    "build:wasm": "bash ./scripts/build-wasm.sh",
+    "build:wasm": "node ../../scripts/build-wasm.mjs --build-dir dist-lib --build-type Release --copy-wasm packages/only-gates-ai/wasm",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test test/*.test.mjs"
   },

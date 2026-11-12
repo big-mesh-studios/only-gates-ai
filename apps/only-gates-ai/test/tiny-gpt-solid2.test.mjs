@@ -5,12 +5,12 @@ import test from "node:test";
 import ts from "typescript";
 
 /*
- * Regression test for Solid 2 generation.
+ * Regression tests for Solid 2 generation.
  *
- * Training right-pads fixed-length examples, so inference must right-pad too
- * and read logits at the last real prompt token. The textbook left-pad
- * convention shifts the prompt to the end of the window and samples from a
- * context position the model never saw during training.
+ * Training right-pads fixed-length examples, but inference now pre-fills only
+ * the real prompt tokens and reads logits at the last one. Causal attention
+ * makes trailing pads irrelevant, so the KV-cache decode path must never pad,
+ * and must never sample from a padded position.
  */
 
 const here = new URL(".", import.meta.url);
@@ -53,7 +53,7 @@ function fakeTokenizer() {
   };
 }
 
-function fakeModel() {
+function fakeModel(overrides = {}) {
   const config = {
     vocabSize: 16,
     context: 8,
@@ -61,33 +61,38 @@ function fakeModel() {
     layers: 1,
     heads: 1,
     mlp: 16,
+    ...overrides,
   };
-  let window = [];
-  let logits = new Int32Array(config.context * config.vocabSize);
+  const calls = [];
+  const rows = new Map();
+  const blank = new Int32Array(config.vocabSize);
 
   return {
     config,
     tokenizer: fakeTokenizer(),
-    get window() {
-      return window;
-    },
-    get logitsBuffer() {
-      return logits;
-    },
+    calls,
     model: {
       setSeed() {},
-      forward(tokens) {
-        window = Array.from(tokens);
+      resetCache() {
+        calls.length = 0;
       },
-      logits() {
-        return logits;
+      forwardRange(tokens, start, count) {
+        calls.push({ start, count, ids: Array.from(tokens).slice(0, start + count) });
+      },
+      logitsRow(position) {
+        return rows.get(position) ?? blank;
       },
       sample() {
         throw new Error("generateSolid2Wasm must sample at the prompt position");
       },
     },
-    setLogit(position, token) {
-      logits[position * config.vocabSize + token] = 1_000_000;
+    setRow(position, token, value = 1_000_000) {
+      let row = rows.get(position);
+      if (!row) {
+        row = new Int32Array(config.vocabSize);
+        rows.set(position, row);
+      }
+      row[token] = value;
     },
   };
 }
@@ -109,19 +114,19 @@ const solid2 = evaluateTypeScript(source, (specifier) => {
   throw new Error(`unexpected import: ${specifier}`);
 });
 
-test("Solid 2 generation right-pads the context window", () => {
+test("Solid 2 generation prefills only the real prompt tokens", () => {
   const m = fakeModel();
   solid2.generateSolid2Wasm(m, "hi", { maxTokens: 1, temperature: 1, topK: 0, repetitionPenalty: 1 });
 
-  assert.deepEqual(m.window, [1, 5, 2, 0, 0, 0, 0, 0]);
+  assert.deepEqual(m.calls.at(0), { start: 0, count: 3, ids: [1, 5, 2] });
 });
 
 test("Solid 2 generation samples from the last real prompt token", () => {
   const m = fakeModel();
-  // The correct position (2) points at token 7; the final padded position
-  // points at token 9, which is what the old left-pad code would have used.
-  m.setLogit(2, 7);
-  m.setLogit(7, 9);
+  // Position 2 is the last prompt token. A padded window used to sample from a
+  // pad position; the decode path must not.
+  m.setRow(2, 7);
+  m.setRow(7, 9);
 
   const result = solid2.generateSolid2Wasm(m, "hi", {
     maxTokens: 1,
@@ -132,4 +137,84 @@ test("Solid 2 generation samples from the last real prompt token", () => {
 
   assert.equal(result.tokenIds[3], 7);
   assert.equal(result.text, "H");
+});
+
+test("Solid 2 generation computes one row per new token", () => {
+  const m = fakeModel();
+  m.setRow(2, 4);
+  m.setRow(3, 5);
+
+  const result = solid2.generateSolid2Wasm(m, "hi", {
+    maxTokens: 2,
+    temperature: 1,
+    topK: 0,
+    repetitionPenalty: 1,
+  });
+
+  assert.deepEqual(result.tokenIds, [1, 5, 2, 4, 5]);
+  assert.deepEqual(
+    m.calls.map(({ start, count }) => [start, count]),
+    [
+      [0, 3],
+      [3, 1],
+      [4, 1],
+    ],
+  );
+});
+
+test("Solid 2 generation stops at the context limit instead of sliding", () => {
+  const m = fakeModel({ context: 5 });
+  m.setRow(2, 4);
+  m.setRow(3, 4);
+  m.setRow(4, 4);
+
+  const result = solid2.generateSolid2Wasm(m, "hi", {
+    maxTokens: 100,
+    temperature: 1,
+    topK: 0,
+    repetitionPenalty: 1,
+  });
+
+  assert.equal(result.tokenIds.length, 5);
+  assert.equal(result.newTokenCount, 2);
+  assert.equal(result.stopped, false);
+});
+
+test("Solid 2 generation emits one token from a full window, then stops", () => {
+  const m = fakeModel({ context: 3 });
+  m.setRow(2, 7);
+
+  const result = solid2.generateSolid2Wasm(m, "hi", {
+    maxTokens: 100,
+    temperature: 1,
+    topK: 0,
+    repetitionPenalty: 1,
+  });
+
+  assert.equal(result.newTokenCount, 1);
+  assert.equal(result.tokenIds[3], 7);
+});
+
+test("Stepwise decoding matches a one-shot run", () => {
+  const options = { maxTokens: 3, temperature: 1, topK: 0, repetitionPenalty: 1 };
+  const a = fakeModel();
+  a.setRow(2, 6);
+  a.setRow(3, 7);
+  a.setRow(4, 8);
+  const oneShot = solid2.generateSolid2Wasm(a, "hi", options);
+
+  const b = fakeModel();
+  b.setRow(2, 6);
+  b.setRow(3, 7);
+  b.setRow(4, 8);
+  const decoder = solid2.createSolid2Decoder(b, "hi", options);
+  const steps = [];
+  for (;;) {
+    const step = decoder.step();
+    if (step.done) break;
+    steps.push(step.token);
+  }
+
+  assert.deepEqual(steps, oneShot.tokenIds.slice(3));
+  assert.deepEqual(decoder.result().tokenIds, oneShot.tokenIds);
 });

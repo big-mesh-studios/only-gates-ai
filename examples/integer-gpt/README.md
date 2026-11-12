@@ -74,7 +74,25 @@ engine boundary; it is not a meaningful prompt.
 The window keeps the **last** `context` ids and right-pads with 0 when the
 sequence is shorter. Training also right-pads, so causal attention means the
 pads never affect the real tokens. Logits are read at the last real prompt
-position rather than at the end of the padded window.
+position rather than at the end of the padded window. The browser decode path
+does not pad at all: it prefills the real prompt and then calls
+`tiny_gpt_forward_range` one position at a time against the KV cache.
+
+## Export FPGA conformance vectors
+
+```sh
+./integer-gpt \
+  --weights ../../apps/only-gates-ai/public/models/tiny-gpt-solid2/weights.bin \
+  --config 4096,256,128,4,4,512 \
+  --tokens 1,2,3,4,5,6,7,8 \
+  --dump-vectors solid2-vectors.txt
+```
+
+The file records the config, a hash of the packed weights, the token window,
+and the Q16 logits at the sampled position. It is the golden output an RTL
+testbench compares against; see `docs/FPGA-CONFORMANCE.md`. A design that
+replaces dynamic activation scales with static ones will not match these
+vectors and needs its own set.
 
 ## Inspect an intermediate buffer
 
@@ -95,8 +113,10 @@ where the integer path diverges from a float reference.
 - It does not tokenize or detokenize.
 - It does not reproduce the browser's repetition penalty, which lives in the
   TypeScript host wrapper.
-- It does not cache keys/values: each generated token recomputes the whole
-  context, exactly like the shipping engine.
+- It does not cache keys/values in the CLI generation loop: each `--steps` token
+  still calls the full-context reference path. The incremental
+  `tiny_gpt_forward_range` schedule is exercised by the C tests and the browser;
+  the CLI stays on the simplest reference code.
 - It is not bit-identical to a float forward pass. Quantization changes the
   distribution; the selftest checks invariants, not float equality.
 

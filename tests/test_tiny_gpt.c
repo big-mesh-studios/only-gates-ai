@@ -224,6 +224,90 @@ static void test_mlp_larger_than_qkv_scratch(void) {
   free(weights);
 }
 
+/*
+ * The reference lane recomputes every position; the decode lane computes a
+ * range and reuses cached keys/values. Same arithmetic, different schedule, so
+ * every Q16 logit must match exactly.
+ */
+static void test_incremental_matches_full(void) {
+  float *weights = synthetic_weights();
+  expect_true("incremental: allocate weights", weights != NULL);
+  if (weights == NULL) {
+    return;
+  }
+  TinyGpt *model =
+      tiny_gpt_create(TEST_VOCAB, TEST_CONTEXT, TEST_DIM, TEST_LAYERS,
+                      TEST_HEADS, TEST_MLP, weights);
+  expect_true("incremental: create model", model != NULL);
+  if (model == NULL) {
+    free(weights);
+    return;
+  }
+
+  int32_t tokens[TEST_CONTEXT];
+  for (int i = 0; i < TEST_CONTEXT; ++i) {
+    tokens[i] = (i * 7 + 3) % TEST_VOCAB;
+  }
+  const int total = TEST_CONTEXT * TEST_VOCAB;
+
+  tiny_gpt_forward(model, tokens);
+  int32_t *reference = malloc((size_t)total * sizeof(*reference));
+  expect_true("incremental: allocate reference", reference != NULL);
+  if (reference == NULL) {
+    tiny_gpt_destroy(model);
+    free(weights);
+    return;
+  }
+  memcpy(reference, tiny_gpt_logits(model), (size_t)total * sizeof(int32_t));
+
+  int mismatches = 0;
+  tiny_gpt_reset_cache(model);
+  tiny_gpt_forward_range(model, tokens, 0, 5);
+  tiny_gpt_forward_range(model, tokens, 5, TEST_CONTEXT - 5);
+  const int32_t *logits = tiny_gpt_logits(model);
+  for (int i = 0; i < total; ++i) {
+    if (logits[i] != reference[i]) {
+      ++mismatches;
+    }
+  }
+  expect_true("incremental: prefill + range matches full", mismatches == 0);
+
+  mismatches = 0;
+  tiny_gpt_reset_cache(model);
+  for (int position = 0; position < TEST_CONTEXT; ++position) {
+    tiny_gpt_forward_range(model, tokens, position, 1);
+  }
+  logits = tiny_gpt_logits(model);
+  for (int i = 0; i < total; ++i) {
+    if (logits[i] != reference[i]) {
+      ++mismatches;
+    }
+  }
+  expect_true("incremental: one row per step matches full", mismatches == 0);
+
+  const int32_t *row = tiny_gpt_logits_row(model, 7);
+  expect_true("incremental: logits_row available", row != NULL);
+  if (row != NULL) {
+    mismatches = 0;
+    for (int i = 0; i < TEST_VOCAB; ++i) {
+      if (row[i] != reference[7 * TEST_VOCAB + i]) {
+        ++mismatches;
+      }
+    }
+    expect_true("incremental: logits_row matches buffer", mismatches == 0);
+  }
+
+  expect_true("incremental: range rejects overflow",
+              (tiny_gpt_forward_range(model, tokens, TEST_CONTEXT - 1, 2),
+               tiny_gpt_last_error() == TINY_GPT_ERROR_ARGUMENT));
+  expect_true("incremental: logits_row rejects out of range",
+              tiny_gpt_logits_row(model, TEST_CONTEXT) == NULL);
+
+  free(reference);
+  tiny_gpt_destroy(model);
+  free(weights);
+}
+
 static void test_invalid_config(void) {
   float weights[16] = {0.0f};
   expect_true("reject zero vocab",
@@ -247,6 +331,7 @@ static void test_invalid_config(void) {
 int main(void) {
   test_int_math();
   test_create_forward();
+  test_incremental_matches_full();
   test_mlp_larger_than_qkv_scratch();
   test_invalid_config();
   return test_report();

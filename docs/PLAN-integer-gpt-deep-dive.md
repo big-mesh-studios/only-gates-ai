@@ -57,7 +57,7 @@ primer expansion" below for the new chapters.
 | 11 | Tokenizer and generation | Word-level vs BPE, context window, chat template, WASM boundary |
 | 12 | Train and export | Data, LM/QA stages, hyperparameters, `weights.bin` layout |
 | 13 | Verify and debug | Top-1/top-5/probability deltas, test vectors, symptom table |
-| 14 | Performance and gates | Full-context recompute, no KV cache, KV-cache design, FPGA path |
+| 14 | Performance and gates | KV-cache decode schedule, WASM SIMD lane, FPGA lowering contract, conformance vectors |
 | 15 | Appendices | Full source, runnable CLI, build commands, glossary, checklist |
 
 Every chapter: why, math, code, checkpoint test, production source, common bug.
@@ -118,7 +118,12 @@ All SVGs use `role="img"`, `<title>`, `<desc>`, and responsive `viewBox`.
 - `tiny_gpt_probabilities` doubles Q15 to Q16; the JS wrapper divides by 65536.
 - The TypeScript `tinyGpt.ts` int8 path keeps RMSNorm/GELU/softmax in float.
   Only `src/tiny_gpt_infer.c` is fully integer.
-- There is no KV cache; each generated token recomputes the full context.
+- Two schedules share one arithmetic: the reference lane recomputes the full
+  context, and the decode lane prefills once and then computes one context row
+  per token against a per-layer KV cache. Tests assert bit-identical logits.
+- `examples/integer-gpt` and the WASM SIMD lane must produce the same Q16 logits
+  as the scalar lane; the SIMD dot product groups integer additions differently
+  but the result is exact.
 
 ## Verification
 

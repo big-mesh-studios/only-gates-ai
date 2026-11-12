@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
+# Thin wrapper kept for existing Unix habits and docs. The real implementation
+# is cross-platform: scripts/build-wasm.mjs.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-# Debug by default so DWARF is usable in Chrome. Use -O1/-Og for a faster build
-# if needed, but avoid -O3 while debugging: heavy optimization degrades DWARF.
-BUILD_TYPE="${BUILD_TYPE:-Debug}"
-BUILD_DIR="${BUILD_DIR:-dist}"
-
-emcmake cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
-cmake --build "$BUILD_DIR" --parallel
+exec node scripts/build-wasm.mjs \
+  --build-dir "${BUILD_DIR:-dist}" \
+  --build-type "${BUILD_TYPE:-Debug}"

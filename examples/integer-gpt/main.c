@@ -42,6 +42,7 @@ typedef struct {
   int top_k;
   uint32_t seed;
   const char *dump_buffer;
+  const char *dump_vectors;
 } Options;
 
 static void usage(const char *program) {
@@ -55,7 +56,9 @@ static void usage(const char *program) {
           "  --temperature F      sampling temperature (default 0.8)\n"
           "  --top-k N            keep the N best tokens (default 40)\n"
           "  --seed N             xorshift32 seed (default 12345)\n"
-          "  --dump-buffer NAME   x, x1, h, qkv, attn, y, z, gz, m, logits\n",
+          "  --dump-buffer NAME   x, x1, h, qkv, attn, y, z, gz, m, logits\n"
+          "  --dump-vectors FILE  write an FPGA conformance vector (see\n"
+          "                       docs/FPGA-CONFORMANCE.md)\n",
           program, program);
 }
 
@@ -297,6 +300,53 @@ static void dump_buffer(TinyGpt *model, const char *name, int count) {
   }
 }
 
+/* FNV-1a over the packed float32 checkpoint, used to tie a vector file to a
+ * specific weights.bin. */
+static uint64_t hash_weights(const float *weights, size_t count) {
+  const uint8_t *bytes = (const uint8_t *)weights;
+  const size_t length = count * sizeof(float);
+  uint64_t hash = 1469598103934665603ull;
+  for (size_t i = 0; i < length; ++i) {
+    hash ^= bytes[i];
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+/*
+ * Writes a deterministic conformance vector for an RTL testbench: the config,
+ * the weights hash, the absolute token window, and the Q16 logits at one
+ * position. The format is deliberately plain text so a testbench can parse it
+ * without a JSON dependency.
+ */
+static int write_vectors(const char *path, const Config *config,
+                         const float *weights, size_t weight_count,
+                         const int32_t *tokens, int position,
+                         const int32_t *logits) {
+  FILE *file = fopen(path, "w");
+  if (file == NULL) {
+    fprintf(stderr, "could not write %s\n", path);
+    return 0;
+  }
+  fprintf(file, "# only-gates-ai conformance vectors v1\n");
+  fprintf(file, "config %d %d %d %d %d %d\n", config->vocab, config->context,
+          config->dim, config->layers, config->heads, config->mlp);
+  fprintf(file, "weights_fnv1a64 %016llx\n",
+          (unsigned long long)hash_weights(weights, weight_count));
+  fprintf(file, "tokens %d", position + 1);
+  for (int i = 0; i <= position; ++i) {
+    fprintf(file, " %d", tokens[i]);
+  }
+  fprintf(file, "\nposition %d\n", position);
+  fprintf(file, "logits %d", config->vocab);
+  for (int i = 0; i < config->vocab; ++i) {
+    fprintf(file, " %d", logits[i]);
+  }
+  fprintf(file, "\n");
+  fclose(file);
+  return 1;
+}
+
 static int selftest_check(const char *name, int condition, int *failures) {
   if (!condition) {
     printf("FAIL %s\n", name);
@@ -475,6 +525,8 @@ static int parse_options(int argc, char **argv, Options *options) {
       options->seed = (uint32_t)strtoul(argv[++i], NULL, 10);
     } else if (strcmp(argv[i], "--dump-buffer") == 0 && i + 1 < argc) {
       options->dump_buffer = argv[++i];
+    } else if (strcmp(argv[i], "--dump-vectors") == 0 && i + 1 < argc) {
+      options->dump_vectors = argv[++i];
     } else if (strcmp(argv[i], "--help") == 0 ||
                strcmp(argv[i], "-h") == 0) {
       return 0;
@@ -584,6 +636,19 @@ int main(int argc, char **argv) {
 
   const int32_t *logits = tiny_gpt_logits(model);
   const int last = (options.config.context - 1) * options.config.vocab;
+  if (options.dump_vectors != NULL) {
+    if (!write_vectors(options.dump_vectors, &options.config, weights,
+                       weight_count, window, options.config.context - 1,
+                       logits + last)) {
+      free(options.tokens);
+      free(window);
+      free(probabilities);
+      tiny_gpt_destroy(model);
+      free(weights);
+      return 1;
+    }
+    printf("wrote conformance vectors: %s\n", options.dump_vectors);
+  }
   printf("next-token logits (Q16, last position):\n");
   print_top_logits(logits + last, options.config.vocab, 10);
 

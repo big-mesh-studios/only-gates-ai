@@ -107,6 +107,45 @@ export class TinyGpt {
     this.module._tiny_gpt_forward(this.modelPointer, this.tokensPointer);
   }
 
+  /**
+   * Computes only the absolute positions `[start, start + count)`, reusing the
+   * keys and values cached for earlier positions.
+   *
+   * `tokens` is indexed by absolute position. Prefill once with
+   * `forwardRange(tokens, 0, promptLength)`, then call
+   * `forwardRange(tokens, position, 1)` per generated token. The result is
+   * bit-identical to `forward` over the same window.
+   */
+  forwardRange(tokens: ArrayLike<number>, start: number, count: number): void {
+    this.assertAlive();
+    if (
+      !Number.isInteger(start) ||
+      !Number.isInteger(count) ||
+      start < 0 ||
+      count < 0 ||
+      start + count > this.config.context ||
+      tokens.length < start + count
+    ) {
+      throw new OnlyGatesError(
+        OnlyGatesErrorCode.InvalidParams,
+        `forwardRange(${start}, ${count}) is outside the ${this.config.context}-position context`,
+      );
+    }
+    this.module.HEAP32.set(tokens, this.tokensPointer >>> 2);
+    this.module._tiny_gpt_forward_range(
+      this.modelPointer,
+      this.tokensPointer,
+      start,
+      count,
+    );
+  }
+
+  /** Clears cached keys/values. Not required before a full `forward`. */
+  resetCache(): void {
+    this.assertAlive();
+    this.module._tiny_gpt_reset_cache(this.modelPointer);
+  }
+
   /** Q16 logits for every context position, row-major context x vocab. */
   logits(): Int32Array {
     this.assertAlive();
@@ -116,6 +155,25 @@ export class TinyGpt {
       pointer,
       this.config.context * this.config.vocabSize,
     );
+  }
+
+  /**
+   * Q16 logits for one absolute position. This is the decode hot path: one
+   * vocab-sized row instead of the whole context x vocab buffer.
+   */
+  logitsRow(position: number): Int32Array {
+    this.assertAlive();
+    const pointer = this.module._tiny_gpt_logits_row(
+      this.modelPointer,
+      position,
+    );
+    if (pointer === 0) {
+      throw new OnlyGatesError(
+        OnlyGatesErrorCode.InvalidParams,
+        `logits position ${position} is outside the context`,
+      );
+    }
+    return readInts(this.module, pointer, this.config.vocabSize);
   }
 
   /** Normalized probabilities for the last context position. */
