@@ -10,6 +10,10 @@ import {
 } from "../lib/browserTrainingStorage";
 import { CUSTOM_DOC_PRESETS } from "../lib/customDocPresets";
 import {
+  buildCustomTrainingNotebook,
+  downloadCustomNotebook,
+} from "../lib/customTrainingNotebook";
+import {
   createSolid2Decoder,
   createSolid2WasmFromData,
   type Solid2WasmModel,
@@ -447,6 +451,38 @@ export default function BrowserTrainingPanel(
     setStatus("The trained model is now active in the Integer GPT demo.");
   };
 
+  const createNotebook = (): void => {
+    try {
+      const customUrls = parseDocUrls(urls());
+      if (customUrls.length === 0) {
+        setError("Add at least one document URL before creating a notebook.");
+        return;
+      }
+      const notebook = buildCustomTrainingNotebook({
+        urls: customUrls,
+        assistant: assistantMode(),
+        steps: steps(),
+        batch: batch(),
+        learningRate: learningRate(),
+        dropout: dropout(),
+        seed: seed(),
+        maxMinutes: maxMinutes(),
+        warmStart: warmStart(),
+      });
+      downloadCustomNotebook(notebook);
+      setError(null);
+      setStatus(
+        `Colab notebook downloaded (${notebook.filename}). Upload it to ` +
+          "colab.research.google.com, run the cells, then import the produced " +
+          ".zip with Import model (.zip).",
+      );
+    } catch (reason) {
+      setError(
+        `Could not create the notebook: ${(reason as Error).message}`,
+      );
+    }
+  };
+
   const clearSavedRun = async (): Promise<void> => {
     try {
       await saveChain.catch(() => undefined);
@@ -763,6 +799,21 @@ export default function BrowserTrainingPanel(
             onInput={(event) => setUrls(event.currentTarget.value)}
           />
         </label>
+        <div class="button-row">
+          <button
+            type="button"
+            class="button secondary"
+            disabled={busy()}
+            title="Download a Google Colab notebook preloaded with these URLs and settings"
+            onClick={createNotebook}
+          >
+            Create Notebook
+          </button>
+          <span class="muted">
+            Downloads an .ipynb that trains on these URLs in Colab and exports
+            a .zip for Import model (.zip).
+          </span>
+        </div>
       </Show>
 
       <div class="training-grid">

@@ -74,6 +74,33 @@ python scripts/train_tiny_gpt_solid2_colab.py \
 The same `--out` directory, configuration, seed, and data are required. The
 trainer refuses to resume if the fingerprint does not match.
 
+### Custom Docs models
+
+The **Integer GPT → Custom Docs (BPE)** tab can generate a Colab notebook for
+the URLs currently in the document list. Click **Create Notebook**, upload the
+downloaded `.ipynb` to Colab, and run the cells. The notebook trains with
+`scripts/train_tiny_gpt_custom_colab.py` and writes
+`only-gates-custom-bundle.zip`.
+
+Import that ZIP with **Import model (.zip)** in the same tab. The bundle is
+inference-only; it contains the model, tokenizer, prompts, and training
+summary, but no optimizer state.
+
+The equivalent command is:
+
+```sh
+python scripts/train_tiny_gpt_custom_colab.py \
+  --urls-file /content/only-gates-custom-urls.txt \
+  --out /content/drive/MyDrive/tiny-gpt-custom \
+  --steps 3000 --batch 4 --lr 0.0004 --dropout 0.1 --seed 1337 \
+  --assistant --warm-start --save-every 100 --max-minutes 180 \
+  --bundle-out /content/only-gates-custom-bundle.zip --resume
+```
+
+Use `--inspect-only` to fetch and tokenize the documents without training, and
+`--smoke` for a tiny end-to-end check. A later run with the same URLs and
+settings resumes from `<out>/latest.pt`.
+
 ### Colab etiquette
 
 - Start with the smoke test.
