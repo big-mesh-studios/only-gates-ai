@@ -18,6 +18,8 @@ Design rules
 - Prompt styles are split: training sees ``canonical``, ``paraphrase_a``,
   ``paraphrase_c`` (imperative) and ``paraphrase_d`` (question form); the
   held-out evaluation split uses ``paraphrase_b``.
+- Train and validation rows use ``FAMILY_WEIGHTS`` so weak families get more
+  examples; test splits stay equal per family for comparability.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,6 +63,34 @@ FAMILIES = (
 
 TRAIN_STYLES = ("canonical", "paraphrase_a", "paraphrase_c", "paraphrase_d")
 HELD_OUT_STYLE = "paraphrase_b"
+
+# Training-row budget by family. Run 4 failed most held-out paraphrase and
+# question rows in these families, so they get the largest share. Families at
+# or near 100% keep enough coverage to avoid regressions without spending rows.
+# Test splits deliberately ignore these weights and stay equal per family so
+# run-to-run scores remain comparable.
+FAMILY_WEIGHTS: Dict[str, float] = {
+    "function_add": 1.5,
+    "table_access": 1.5,
+    "for_print_range": 1.5,
+    "for_count_above": 1.5,
+    "iterate_print": 1.5,
+    "repeat_until": 1.5,
+    "nested_loop": 1.5,
+    "for_sum_all": 1.0,
+    "table_literal": 1.0,
+    "string_concat": 1.0,
+    "string_interp": 1.0,
+    "function_typed": 1.0,
+    "if_elseif_grade": 1.0,
+    "iterate_filter": 1.0,
+    "for_sum_first_n": 1.0,
+    "for_find_max": 0.75,
+    "for_find_min": 0.75,
+    "for_product": 0.75,
+    "if_else_health": 0.75,
+    "while_accumulate": 0.75,
+}
 
 
 @dataclass(frozen=True)
@@ -1216,6 +1247,51 @@ def make_row(
     }
 
 
+def allocate_family_counts(
+    families: Sequence[str],
+    count: int,
+    weights: Optional[Dict[str, float]] = None,
+) -> Dict[str, int]:
+    """Split ``count`` rows across families, respecting optional weights.
+
+    Uses the largest-remainder method so the counts sum exactly to ``count``.
+    Ties break on family name to stay deterministic. Without ``weights`` every
+    family gets an equal share (the pre-Phase-2 behaviour).
+    """
+    if count <= 0 or not families:
+        return {}
+    if weights is None:
+        shares = [1.0] * len(families)
+    else:
+        shares = [max(0.0, float(weights.get(family, 1.0))) for family in families]
+    total = sum(shares)
+    if total <= 0:
+        shares = [1.0] * len(families)
+        total = float(len(families))
+    raw = [count * share / total for share in shares]
+    counts = [max(1, math.floor(value)) for value in raw]
+    remainder = count - sum(counts)
+    if remainder > 0:
+        order = sorted(
+            range(len(families)),
+            key=lambda index: (-(raw[index] - math.floor(raw[index])), families[index]),
+        )
+        for index in order[:remainder]:
+            counts[index] += 1
+    elif remainder < 0:
+        order = sorted(
+            range(len(families)),
+            key=lambda index: (raw[index], families[index]),
+        )
+        for index in order:
+            if remainder == 0:
+                break
+            if counts[index] > 1:
+                counts[index] -= 1
+                remainder += 1
+    return {family: counts[index] for index, family in enumerate(families)}
+
+
 def generate_split(
     families: Sequence[str],
     count: int,
@@ -1223,15 +1299,17 @@ def generate_split(
     split: str,
     styles: Sequence[str],
     names: NamePool,
+    weights: Optional[Dict[str, float]] = None,
 ) -> List[Dict[str, object]]:
     if count <= 0 or not families:
         return []
     seen: set[Tuple[str, str]] = set()
     rows: List[Dict[str, object]] = []
-    per_family = max(1, (count + len(families) - 1) // len(families))
+    family_counts = allocate_family_counts(families, count, weights)
     index = 0
     for family_index, family in enumerate(families):
         builder = FAMILY_BUILDERS[family]
+        per_family = family_counts[family]
         produced = 0
         attempt = 0
         while produced < per_family and attempt < per_family * 50:
@@ -1313,6 +1391,11 @@ def write_readme(path: Path, counts: Dict[str, int], families: Sequence[str]) ->
         "- `test-question.jsonl`: `paraphrase_d` question prompts with unseen values.",
         "- `test-unseen.jsonl`: canonical prompts with a held-out identifier pool.",
         "",
+        "Train and validation rows are allocated by `FAMILY_WEIGHTS` in",
+        "`scripts/luau_tasks.py`; test splits stay equal per family so scores",
+        "remain comparable across runs. Pass `--equal-families` for the old",
+        "equal allocation.",
+        "",
         "Regenerate with:",
         "",
         "```sh",
@@ -1349,6 +1432,14 @@ def main() -> None:
         choices=FAMILIES,
         help="Generate only this family (repeatable). Default: all.",
     )
+    parser.add_argument(
+        "--equal-families",
+        action="store_true",
+        help=(
+            "Give every family the same number of train/val rows instead of "
+            "using FAMILY_WEIGHTS. Test splits are always equal."
+        ),
+    )
     parser.add_argument("--list-families", action="store_true")
     args = parser.parse_args()
 
@@ -1361,17 +1452,30 @@ def main() -> None:
     if args.train < 1:
         raise SystemExit("--train must be at least 1")
 
+    weights = None if args.equal_families else FAMILY_WEIGHTS
     counts: Dict[str, int] = {}
     counts["train"] = write_jsonl(
         args.out / "train.jsonl",
         generate_split(
-            families, args.train, args.seed, "train", TRAIN_STYLES, COMMON_NAMES
+            families,
+            args.train,
+            args.seed,
+            "train",
+            TRAIN_STYLES,
+            COMMON_NAMES,
+            weights,
         ),
     )
     counts["val"] = write_jsonl(
         args.out / "val.jsonl",
         generate_split(
-            families, args.val, args.seed + 1, "val", TRAIN_STYLES, COMMON_NAMES
+            families,
+            args.val,
+            args.seed + 1,
+            "val",
+            TRAIN_STYLES,
+            COMMON_NAMES,
+            weights,
         ),
     )
     counts["test-seen"] = write_jsonl(

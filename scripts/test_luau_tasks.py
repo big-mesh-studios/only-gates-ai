@@ -147,6 +147,41 @@ class LuauTaskGeneratorTest(unittest.TestCase):
                         )
         self.assertEqual(required_families, seen)
 
+    def test_family_allocation_sums_to_requested_count(self) -> None:
+        families = luau_tasks.FAMILIES
+        for count in (20, 200, 1200, 12000):
+            counts = luau_tasks.allocate_family_counts(families, count)
+            self.assertEqual(sum(counts.values()), count)
+            self.assertEqual(set(counts), set(families))
+            self.assertTrue(all(value >= 1 for value in counts.values()))
+
+    def test_weighted_allocation_favours_weak_families(self) -> None:
+        families = luau_tasks.FAMILIES
+        first = luau_tasks.allocate_family_counts(
+            families, 12000, luau_tasks.FAMILY_WEIGHTS
+        )
+        second = luau_tasks.allocate_family_counts(
+            families, 12000, luau_tasks.FAMILY_WEIGHTS
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(sum(first.values()), 12000)
+        self.assertGreater(first["function_add"], first["for_find_max"])
+        self.assertGreater(first["nested_loop"], first["while_accumulate"])
+        self.assertEqual(first["function_add"], first["table_access"])
+
+    def test_weighted_generation_keeps_total_rows(self) -> None:
+        rows = luau_tasks.generate_split(
+            luau_tasks.FAMILIES,
+            200,
+            11,
+            "train",
+            luau_tasks.TRAIN_STYLES,
+            luau_tasks.COMMON_NAMES,
+            luau_tasks.FAMILY_WEIGHTS,
+        )
+        self.assertEqual(len(rows), 200)
+        self.assertEqual({row["family"] for row in rows}, set(luau_tasks.FAMILIES))
+
     def test_generated_code_executes_when_luau_is_available(self) -> None:
         luau_bin = os.environ.get("LUAU_BIN")
         if not luau_bin:

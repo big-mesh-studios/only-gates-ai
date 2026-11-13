@@ -46,6 +46,11 @@ and an execution harness. The harness is for evaluation only.
 - `test-question.jsonl`: `paraphrase_d` question prompts with unseen values.
 - `test-unseen.jsonl`: canonical prompts with a held-out identifier pool.
 
+Train and validation rows are allocated by `FAMILY_WEIGHTS` in
+`scripts/luau_tasks.py`; test splits stay equal per family so scores
+remain comparable across runs. Pass `--equal-families` for the old
+equal allocation.
+
 Regenerate with:
 
 ```sh
