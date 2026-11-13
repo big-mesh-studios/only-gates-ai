@@ -729,6 +729,8 @@ Validation performed on this slice:
 | 2 | Luau BPE, 1,695 | 6,000 | 3,031,296 | 30 | 42.50% |
 | 3 | Luau BPE, 1,721 | 12,000 | 5,228,032 | 25 | 72.88% |
 | 4 | Luau BPE, 1,721 | 12,000 | 5,228,032 | 13 (early stop) | **83.88%** |
+| 5 (rejected) | Luau BPE, 1,721 | 12,000 | 5,228,032 | 15 | 82.25% |
+| 6 | Luau BPE, 1,721 | 12,000 | 5,228,032 | 12 (early stop) | **84.38%** |
 
 Run 2 details (`dim=192, layers=6, heads=6, mlp=768`):
 
@@ -878,7 +880,8 @@ Phase 2 (family rebalancing) and Phase 5 (recipe ablation) target those two
 failure modes. Run 3 remains reachable at commit `d7b6763` for rollback.
 
 Metrics come from `/content/luau-eval4.json` (Luau 0.746 execution checks).
-The committed bundle is run 4 and exports the best-validation checkpoint.
+Run 4 exported the best-validation checkpoint and was the shipped bundle until
+run 6.
 
 ## Rejected experiment: run 5 nested-loop wording
 
@@ -904,8 +907,67 @@ checkpoint-selection artifact.
 
 The wording change only adds variable names that do not affect stdout, so the
 old prompts were answerable; the failure was model behaviour. The change was
-reverted (`585034c`) and run 4 remains the shipped bundle. The two useful
+reverted (`585034c`) and run 4 remained shipped until run 6. The two useful
 takeaways for Phase 2 are that `nested_loop` question prompts need training
 coverage, and that run-to-run paraphrase variance from reshuffling is larger
 than the nested-loop fix. Phase 2 should rebalance toward the six weak
 paraphrase families and measure against run 4, not run 5.
+
+## Sixth training run: rebalanced rows
+
+Run 6 keeps the run-4 architecture, tokenizer, and 12,000 training rows. Only
+the per-family row budget changes.
+
+- `FAMILY_WEIGHTS` gives 1.5x rows to the families that failed held-out
+  paraphrase in run 4 (`function_add`, `table_access`, `for_print_range`,
+  `for_count_above`, `iterate_print`, `repeat_until`) plus `nested_loop`.
+- Families already at or near 100% drop to 0.75x.
+- Train rows now range 405-809 per family (validation mirrors it).
+- Test splits stay equal per family, so run-4 scores remain comparable.
+- A largest-remainder allocator keeps the total at exactly 12,000.
+
+| Setting | Run 6 |
+| --- | --- |
+| Parameters | 5,228,032 |
+| Train rows | 12,000 (405-809 per family) |
+| Epochs run | 12 (early stop, patience 4) |
+| Best val loss | 0.1446 (step 3,048, epoch 8) |
+| Exported weights | best (final scored identically on the held-out suite) |
+
+Run 6 details, 800-row held-out suite:
+
+| Split | Run 4 | Run 6 |
+| --- | --- | --- |
+| `test-seen` (canonical) | 99.67% | **100.00%** |
+| `test-question` (question style) | 94.50% | **99.50%** |
+| `test-unseen` (held-out identifiers) | 64.00% | 64.00% |
+| `test-paraphrase` (held-out wording) | 59.50% | 56.00% |
+| all rows | 83.88% | **84.38%** |
+
+Per-family pass@1 across the 800 rows:
+
+| Family | Run 4 | Run 6 | Family | Run 4 | Run 6 |
+| --- | --- | --- | --- | --- | --- |
+| `repeat_until` | 75% | **100%** | `function_typed` | 100% | 95% |
+| `for_count_above` | 65% | **90%** | `if_else_health` | 100% | 95% |
+| `nested_loop` | 47.5% | **72.5%** | `table_literal` | 100% | 92.5% |
+| `table_access` | 75% | **82.5%** | `if_elseif_grade` | 97.5% | 90% |
+| `for_print_range` | 67.5% | **75%** | `string_concat` | 97.5% | 87.5% |
+| `for_sum_all` | 77.5% | **82.5%** | `string_interp` | 92.5% | 75% |
+| `for_find_max` | 87.5% | 87.5% | `while_accumulate` | 100% | 75% |
+| `for_find_min` | 90% | 90% | `for_sum_first_n` | 92.5% | 85% |
+| `for_product` | 87.5% | 87.5% | `function_add` | 67.5% | 67.5% |
+| `iterate_filter` | 92.5% | 92.5% | `iterate_print` | 65% | 65% |
+
+The rebalance did what it was meant to do at the family level: `repeat_until`,
+`for_count_above`, and `nested_loop` each gained about 25 points, and the
+question split reached 99.5%. The cost is that strong families gave back rows:
+`while_accumulate` fell 25 points and `string_interp` 17.5, while paraphrase
+slipped 3.5 points overall. No family is below 65%, and overall is the best so
+far, so run 6 is the shipped bundle.
+
+The 85% target was missed by 0.6 points (five rows). If 85% is required, the
+next experiment should use a gentler split (for example 1.25x weak / 0.9x
+strong) so the solved families keep more coverage.
+
+Metrics come from `/content/luau-eval6.json` (Luau 0.746 execution checks).

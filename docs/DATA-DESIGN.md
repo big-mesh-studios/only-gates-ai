@@ -106,13 +106,21 @@ rows is 600 near-duplicates, not 600 examples.
 
 ### 8. Balance families and detect saturation
 
-- Generate a fixed number of rows per family (the Luau set uses 600).
+- Generate a fixed number of rows per family by default (the Luau set used
+  600). When one family fails a held-out split, weight *training* rows toward
+  it instead of only adding more data.
+- Weight train and validation, never the test splits: changing test-family
+  counts makes scores incomparable across runs.
+- Allocate with a largest-remainder method so the total stays exact, and keep a
+  flag for the old equal allocation.
 - Cap attempts per family; if it cannot produce enough unique pairs, the
   generator space is too small.
 - When saturated, **widen the space** (more field names, value ranges, shapes)
   or **add a family**. Never silently duplicate to hit a count.
 - A low-diversity family quietly teaches memorization; audit distinct codes
   before training.
+- Watch the families you reduced: if a previously strong family drops more than
+  ~3 points, the rebalance was too aggressive.
 
 ### 9. Train several prompt styles; hold out one
 
@@ -228,7 +236,7 @@ composition), not more duplicates.
 | Property | Value |
 | --- | --- |
 | Families | 20 |
-| Train / val | 12,000 / 1,200 rows (600 per family) |
+| Train / val | 12,000 / 1,200 rows (405-809 per family, weighted) |
 | Eval | 800 rows across four splits |
 | Prompt styles in training | 4 |
 | Held-out style | 1 (`paraphrase_b`) |

@@ -19,22 +19,24 @@ needs the same values as the pre-load fallback. The current run uses:
 { "vocabSize": 1721, "context": 256, "dim": 256, "layers": 6, "heads": 8, "mlp": 1024 }
 ```
 
-The committed bundle is the run-4 checkpoint: 5,228,032 parameters
+The committed bundle is the run-6 checkpoint: 5,228,032 parameters
 (`weights.bin` is 20,912,128 bytes of float32). Execution-evaluated pass@1 on
-the 800-row held-out suite is 83.88% overall, split as:
+the 800-row held-out suite is 84.38% overall, split as:
 
-| Split | Run 3 | Run 4 |
+| Split | Run 4 | Run 6 |
 | --- | --- | --- |
-| `test-seen` (canonical prompts) | 100.00% | 99.67% |
-| `test-question` (question prompts) | 75.50% | 94.50% |
-| `test-unseen` (held-out identifiers) | 63.00% | 64.00% |
-| `test-paraphrase` (held-out wording) | 34.50% | 59.50% |
-| all rows | 72.88% | **83.88%** |
+| `test-seen` (canonical prompts) | 99.67% | 100.00% |
+| `test-question` (question prompts) | 94.50% | 99.50% |
+| `test-unseen` (held-out identifiers) | 64.00% | 64.00% |
+| `test-paraphrase` (held-out wording) | 59.50% | 56.00% |
+| all rows | 83.88% | **84.38%** |
 
-Run 4 keeps the run-3 architecture and tokenizer. It fixes prompts that did
-not mention the literals their expected output depends on, and exports the
-best-validation checkpoint (0.1438) instead of the final one. Syntax and
-stop-token rates are 100%, so failures are wrong answers, not invalid Luau.
+Run 6 keeps the run-4 architecture and tokenizer. It reallocates the 12,000
+training rows toward families that failed held-out paraphrases (405–809 rows
+per family instead of 600), and exports the best-validation checkpoint
+(0.1446). Test splits stay equal per family, so scores remain comparable.
+Syntax and stop-token rates are 100%, so failures are wrong answers, not
+invalid Luau.
 
 ## Produce the files
 
@@ -65,7 +67,9 @@ cp /content/drive/MyDrive/tiny-gpt-luau/weights.bin .
 ```
 
 `notebooks/train_tiny_gpt_luau_colab.ipynb` runs the same flow end to end,
-including Luau execution checks and evaluation.
+including Luau execution checks and evaluation. `scripts/luau_tasks.py`
+weights train and validation rows toward weak families; pass
+`--equal-families` to regenerate the older equal allocation.
 
 ## Evaluate a checkpoint
 

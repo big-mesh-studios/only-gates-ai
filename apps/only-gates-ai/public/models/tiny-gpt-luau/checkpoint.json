@@ -18,13 +18,13 @@
     "training": {
       "assistant": true,
       "mode": "qa",
-      "steps": 4953,
+      "steps": 4572,
       "batch": 32,
       "learningRate": 0.0003,
       "dropout": 0.1,
       "seed": 1337,
-      "bestStep": 3429,
-      "bestLoss": 0.14381178618018434,
+      "bestStep": 3048,
+      "bestLoss": 0.1445682573595946,
       "sourceUrls": [
         "data/luau-tasks/train.jsonl",
         "/content/only-gates-ai/apps/only-gates-ai/src/assets/luau-faq.md"
@@ -34,15 +34,15 @@
   "samples": [
     {
       "prompt": "Write a for loop that sums the first 50 elements of the array `values` and prints the result in Luau. The array has at least 50 elements.",
-      "text": "local sum = 0\nfor i = 1, 50 do\n    sum += values[i]\nend\nprint(sum)"
+      "text": "local score_total = 0\nfor j = 1, 50 do\n    score_total += values[j]\nend\nprint(score_total)"
     },
     {
       "prompt": "Write a for loop that prints the numbers from 1 to 20 in Luau.",
-      "text": "local counter = 0\nfor idx = 1, 20 do\n    counter += list[idx]\nend\nprint(counter)"
+      "text": "local cursor = 0\nlocal output = 0\nwhile cursor < 20 do\n    cursor += 1\n    output += cursor\nend\nprint(output)"
     },
     {
       "prompt": "Write a for loop that counts how many elements of `scores` are greater than 80, then prints the count in Luau.",
-      "text": "local hits = 0\nfor i = 1, #scores do\n    if scores[i] > 80 then\n        hits += 1\n    end\nend\nprint(hits)"
+      "text": "local passing = 0\nfor place = 1, #scores do\n    if scores[place] > 80 then\n        passing += 1\n    end\nend\nprint(passing)"
     },
     {
       "prompt": "Write a local function named `add` in Luau that takes `a` and `b` and returns their sum. Then print `add(2, 3)`.",
@@ -50,7 +50,7 @@
     },
     {
       "prompt": "Given the array `items = { \"sword\", \"shield\", \"potion\" }`, write a loop in Luau that prints each index and value.",
-      "text": "for slot, member in items do\n    print(slot, member)\nend"
+      "text": "for index, element in items do\n    print(index, element)\nend"
     },
     {
       "prompt": "How do you do a for loop in Luau?",
@@ -62,7 +62,7 @@
     },
     {
       "prompt": "How do you add type annotations in Luau?",
-      "text": "Put `: Type` after a variable, parameter, or return type:\n\n```luau\nlocal name: string = \"Ada\"\n\nlocal function greet(who: string): string\n    return \"Hello, \" .. who\nend\n```\n\n```\n```\n\n\nprint(introduce(\"Ada\")\n\n```\nUse `string.title)"
+      "text": "Put `: Type` after a variable, parameter, or return type:\n\n```luau\nlocal name: string = \"Ada\"\n\nlocal function greet(who: string): string\n    return \"Hello, \" .. who\nend\n```\n\nLuau checks annotations when the script uses `--!strict` or `--!nonstrict`. You can also define type aliases with `type`."
     }
   ],
   "prompts": [
