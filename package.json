@@ -18,6 +18,11 @@
     "test": "cmake -S . -B build-tests -DBUILD_TESTING=ON && cmake --build build-tests --parallel && ctest --test-dir build-tests --output-on-failure",
     "test:lib": "pnpm --filter @only-gates-ai/core test",
     "test:compiler": "pnpm --filter @only-gates-ai/compiler test",
+    "test:luau": "python3 -m unittest scripts/test_luau_tasks.py scripts/test_luau_sft.py",
+    "luau:tasks": "python3 scripts/luau_tasks.py --out data/luau-tasks --seed 1337",
+    "luau:tokenizer": "python3 scripts/train_luau_tokenizer.py --out data/luau-tokenizer/tokenizer.json",
+    "luau:notebook": "python3 scripts/build_luau_notebook.py",
+    "luau:check": "python3 scripts/check_luau_tasks.py --tasks data/luau-tasks/test-seen.jsonl --tasks data/luau-tasks/test-paraphrase.jsonl --tasks data/luau-tasks/test-question.jsonl --tasks data/luau-tasks/test-unseen.jsonl",
     "typecheck:app": "pnpm --filter @only-gates-ai/compiler build && pnpm --filter @only-gates-ai/app typecheck",
     "format": "find . -type f \\( -name \"*.cpp\" -o -name \"*.h\" -o -name \"*.c\" -o -name \"*.hpp\" \\) | xargs clang-format -i"
   },

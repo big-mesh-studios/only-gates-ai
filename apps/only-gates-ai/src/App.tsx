@@ -14,6 +14,7 @@ import DrawingPad from "./components/DrawingPad";
 import IntegerGptPanel from "./components/IntegerGptPanel";
 import LanguageModelPanel from "./components/LanguageModelPanel";
 import LivePrediction from "./components/LivePrediction";
+import LuauPanel from "./components/LuauPanel";
 import ModelStoragePanel from "./components/ModelStoragePanel";
 import SettingsPanel from "./components/SettingsPanel";
 import TestingPanel from "./components/TestingPanel";
@@ -101,7 +102,7 @@ export default function App() {
   const [runtimeError, setRuntimeError] = createSignal("");
   const [instance, setInstance] = createSignal<OnlyGatesAI | null>(null);
 
-  const [activeTab, setActiveTab] = createSignal<"symbols" | "language" | "integer">("symbols");
+  const [activeTab, setActiveTab] = createSignal<"symbols" | "language" | "integer" | "luau">("symbols");
   const [mode, setMode] = createSignal<"train" | "test">("train");
   const [inferenceMode, setInferenceMode] = createSignal<InferenceMode>("hard");
 
@@ -1003,6 +1004,15 @@ export default function App() {
         >
           Integer GPT
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab() === "luau" ? "true" : "false"}
+          class={{ active: activeTab() === "luau" }}
+          onClick={() => setActiveTab("luau")}
+        >
+          Luau
+        </button>
       </nav>
 
       <div class="tab-panel" hidden={activeTab() !== "symbols"}>
@@ -1178,30 +1188,50 @@ export default function App() {
         <IntegerGptPanel />
       </div>
 
+      <div class="tab-panel" hidden={activeTab() !== "luau"}>
+        <LuauPanel active={activeTab() === "luau"} />
+      </div>
+
       <footer class="app-footer">
         <Show
-          when={activeTab() === "symbols"}
+          when={activeTab() === "luau"}
           fallback={
-            <>
+            <Show
+              when={activeTab() === "symbols"}
+              fallback={
+                <>
+                  <span>
+                    Word vectors: a Word2Bits subset (Apache-2.0). Autocomplete
+                    trains with floats and predicts with popcount and Q15
+                    fixed-point softmax.
+                  </span>
+                  <span>
+                    Q&A mode retrieves the trained answer closest to your
+                    question. Nothing is uploaded; everything stays in this
+                    browser tab.
+                  </span>
+                </>
+              }
+            >
               <span>
-                Word vectors: a Word2Bits subset (Apache-2.0). Autocomplete
-                trains with floats and predicts with popcount and Q15
-                fixed-point softmax.
+                {CIRCUITS_PER_LABEL} circuits per label · saved strokes are
+                replayed, never re-rasterised from the display canvas.
               </span>
               <span>
-                Q&A mode retrieves the trained answer closest to your question.
-                Nothing is uploaded; everything stays in this browser tab.
+                Soft circuits weigh every gate; hard circuits lock each wire and
+                gate to its most likely choice.
               </span>
-            </>
+            </Show>
           }
         >
           <span>
-            {CIRCUITS_PER_LABEL} circuits per label · saved strokes are replayed,
-            never re-rasterised from the display canvas.
+            Luau answers come from a task-tuned tiny GPT. Write prompts use a
+            `Task:` prefix, question prompts use `Question:`; both run through
+            the same integer-only WASM inference path.
           </span>
           <span>
-            Soft circuits weigh every gate; hard circuits lock each wire and gate
-            to its most likely choice.
+            Generated code is shown for reading and copying. It is not executed
+            in the browser; run it in the Luau CLI or Roblox Studio.
           </span>
         </Show>
       </footer>

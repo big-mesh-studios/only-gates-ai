@@ -2217,12 +2217,14 @@ input:disabled {
 
   .app-tabs {
     display: flex;
+    flex-wrap: wrap;
     width: 100%;
   }
 
   .app-tabs button {
     flex: 1;
-    padding: 10px 12px;
+    padding: 10px 8px;
+    font-size: 0.76rem;
   }
 
   .language-toolbar {
@@ -2385,5 +2387,134 @@ input:disabled {
 
   .result-row .result-score {
     display: none;
+  }
+}
+
+/* Luau tab */
+.luau-panel .hint {
+  max-width: 78ch;
+}
+
+.luau-mode {
+  display: inline-flex;
+  gap: 4px;
+  margin: 4px 0 14px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.luau-mode button {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.luau-mode button:hover {
+  color: var(--text);
+}
+
+.luau-mode button.active {
+  background: rgba(84, 214, 255, 0.14);
+  color: var(--accent);
+}
+
+.luau-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+
+.luau-presets .muted {
+  margin-right: 2px;
+  font-size: 0.72rem;
+}
+
+.luau-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.luau-field textarea {
+  width: 100%;
+  min-height: 96px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.luau-field textarea:focus {
+  outline: 2px solid rgba(84, 214, 255, 0.35);
+  outline-offset: 1px;
+}
+
+.luau-output {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.luau-output-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+}
+
+.luau-output .chat-code {
+  max-height: 380px;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  white-space: pre-wrap;
+}
+
+.luau-output .chat-meta {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.luau-model-meta {
+  margin-top: 14px;
+  font-size: 0.72rem;
+}
+
+@media (max-width: 640px) {
+  .luau-mode {
+    display: flex;
+  }
+
+  .luau-mode button {
+    flex: 1;
+  }
+
+  .luau-output .chat-code {
+    max-height: 300px;
   }
 }

@@ -1,0 +1,6 @@
+# Resumable training state is large and machine-specific; keep it out of git.
+latest.pt
+
+# Evaluation and bundle outputs are produced per run.
+eval-report.json
+only-gates-luau-bundle.zip
