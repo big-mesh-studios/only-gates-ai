@@ -14,6 +14,7 @@ import {
   type TinyGptCandidate,
   nextTokens,
 } from "./tinyGpt";
+import { encodeFloat32 } from "./base64Float32";
 
 /*
  * Integer-only WASM inference for the Tiny GPT demo.
@@ -64,6 +65,28 @@ function decodeBase64(base64: string): Float32Array {
 }
 
 /**
+ * Parameter lengths in `tiny_gpt_create` order:
+ * tokenEmb, posEmb, gFinal, then per layer g1, wqkv, wo, g2, w1, w2.
+ */
+export function tinyGptParameterLengths(
+  config: TinyGptConfig,
+): readonly number[] {
+  const { vocabSize, context, dim, layers, mlp } = config;
+  const lengths = [vocabSize * dim, context * dim, dim];
+  for (let layer = 0; layer < layers; layer++) {
+    lengths.push(dim, dim * dim * 3, dim * dim, dim, dim * mlp, mlp * dim);
+  }
+  return lengths;
+}
+
+export function tinyGptParameterCount(config: TinyGptConfig): number {
+  return tinyGptParameterLengths(config).reduce(
+    (total, length) => total + length,
+    0,
+  );
+}
+
+/**
  * Packs the checkpoint in the order `tiny_gpt_create` expects:
  * tokenEmb, posEmb, gFinal, then per layer g1, wqkv, wo, g2, w1, w2.
  */
@@ -93,6 +116,46 @@ export function packTinyGptWeights(
     offset += part.length;
   }
   return packed;
+}
+
+/**
+ * Rebuilds the serialized checkpoint weight fields from packed float32 values.
+ *
+ * This is the inverse of `packTinyGptWeights`; imported word-level bundles use
+ * it so the existing `loadTinyGpt` / WASM loaders can consume the result.
+ */
+export function unpackTinyGptWeights(
+  config: TinyGptConfig,
+  packed: Float32Array,
+): TinyGptCheckpoint["weights"] {
+  const lengths = tinyGptParameterLengths(config);
+  const expected = lengths.reduce((total, length) => total + length, 0);
+  if (packed.length !== expected) {
+    throw new Error(
+      `Packed weights have ${packed.length.toLocaleString()} values but the config needs ` +
+        `${expected.toLocaleString()} (config mismatch or corrupt weights).`,
+    );
+  }
+  let offset = 0;
+  const take = (length: number): string => {
+    const values = packed.slice(offset, offset + length);
+    offset += length;
+    return encodeFloat32(values);
+  };
+
+  const tokenEmb = take(lengths[0]!);
+  const posEmb = take(lengths[1]!);
+  const gFinal = take(lengths[2]!);
+  let index = 3;
+  const layers = Array.from({ length: config.layers }, () => ({
+    g1: take(lengths[index++]!),
+    wqkv: take(lengths[index++]!),
+    wo: take(lengths[index++]!),
+    g2: take(lengths[index++]!),
+    w1: take(lengths[index++]!),
+    w2: take(lengths[index++]!),
+  }));
+  return { tokenEmb, posEmb, layers, gFinal };
 }
 
 /** Loads the WASM module and builds the integer-only model. */

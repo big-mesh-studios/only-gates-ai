@@ -918,6 +918,7 @@ export default function IntegerGptPanel() {
           isCustomCheckpoint={isCustomCheckpoint()}
           onUseCheckpoint={handleUseCheckpoint}
           onResetCheckpoint={handleResetCheckpoint}
+          onBundleStatus={setStatus}
         />
       </Show>
       <Show when={example() === "solid2"}>
@@ -926,6 +927,7 @@ export default function IntegerGptPanel() {
           isCustomCheckpoint={customSolid2() !== null}
           onUseSolid2Model={handleUseSolid2Model}
           onResetCheckpoint={handleResetSolid2}
+          onBundleStatus={setStatus}
         />
       </Show>
       <Show when={example() === "custom"}>
@@ -934,6 +936,7 @@ export default function IntegerGptPanel() {
           isCustomCheckpoint={custom() !== null}
           onUseCustomModel={handleUseCustomModel}
           onResetCheckpoint={handleResetCustom}
+          onBundleStatus={setStatus}
         />
       </Show>
     </main>

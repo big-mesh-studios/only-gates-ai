@@ -2,6 +2,7 @@ import { createSignal, For, onCleanup, onSettled, Show } from "solid-js";
 
 import corpus from "../assets/tiny-gpt-corpus.txt?raw";
 import {
+  browserTrainingRunKey,
   deleteBrowserTrainingState,
   loadBrowserTrainingState,
   saveBrowserTrainingState,
@@ -10,8 +11,18 @@ import {
 import { CUSTOM_DOC_PRESETS } from "../lib/customDocPresets";
 import {
   createSolid2Decoder,
+  createSolid2WasmFromData,
   type Solid2WasmModel,
 } from "../lib/tinyGptSolid2";
+import {
+  aliceBundleSource,
+  createModelBundle,
+  customBundleSource,
+  downloadModelBundle,
+  formatByteSize,
+  importModelBundle,
+  solid2BundleSource,
+} from "../lib/modelBundle";
 import {
   generateTinyGpt,
   loadTinyGpt,
@@ -51,6 +62,8 @@ interface BrowserTrainingPanelProps {
   readonly onUseSolid2Model?: (model: Solid2WasmModel) => void;
   readonly onUseCustomModel?: (model: Solid2WasmModel) => void;
   readonly onResetCheckpoint: () => void;
+  /** Surfaces import results in the parent chat card after a tab switch. */
+  readonly onBundleStatus?: (message: string) => void;
 }
 
 function backendLabel(backend: string | null): string {
@@ -101,6 +114,11 @@ export default function BrowserTrainingPanel(
     readonly prompt: string;
     readonly text: string;
   } | null>(null);
+  const [exporting, setExporting] = createSignal(false);
+  const [importing, setImporting] = createSignal(false);
+  const [includeResumeState, setIncludeResumeState] = createSignal(true);
+  const [bundleInfo, setBundleInfo] = createSignal<string | null>(null);
+  let importInput: HTMLInputElement | undefined;
 
   const [steps, setSteps] = createSignal(defaultSteps);
   const [batch, setBatch] = createSignal(defaultBatch);
@@ -446,6 +464,148 @@ export default function BrowserTrainingPanel(
       setError(null);
     } catch (reason) {
       setError(`Could not delete the saved run: ${(reason as Error).message}`);
+    }
+  };
+
+  const hasBundleSource = (): boolean => {
+    if (isSolid2()) return solid2Trained() !== null;
+    if (isCustom()) return customTrained() !== null;
+    return trained() !== null;
+  };
+
+  const bundleSource = () => {
+    if (isSolid2()) {
+      const result = solid2Trained();
+      return result ? solid2BundleSource(result) : null;
+    }
+    if (isCustom()) {
+      const result = customTrained();
+      return result ? customBundleSource(result) : null;
+    }
+    const result = trained();
+    return result ? aliceBundleSource(result) : null;
+  };
+
+  const applyImportedState = (state: BrowserTrainingState): void => {
+    setSaved(state);
+    setHistory(state.history);
+    setSteps(
+      Math.min(
+        20000,
+        Math.max(state.steps, state.step + (isLarge() ? 100 : 200)),
+      ),
+    );
+    setBatch(state.batch);
+    setLearningRate(state.lr);
+    setDropout(state.dropout);
+    setSeed(state.seed);
+    if (isCustom() && state.sourceUrls && state.sourceUrls.length > 0) {
+      setUrls(state.sourceUrls.join("\n"));
+    }
+    if (isCustom()) {
+      setAssistantMode(state.assistant ?? false);
+    }
+  };
+
+  const exportBundle = async (): Promise<void> => {
+    const source = bundleSource();
+    if (!source || exporting() || busy()) return;
+    setExporting(true);
+    setError(null);
+    setStatus("Packaging the model bundle...");
+    try {
+      const bundle = await createModelBundle(source, {
+        includeResumeState: includeResumeState(),
+      });
+      downloadModelBundle(bundle);
+      setBundleInfo(
+        `${bundle.filename} · ${formatByteSize(bundle.zip.byteLength)}${
+          includeResumeState() ? " · resumable" : " · inference only"
+        }`,
+      );
+      setStatus(
+        "Model bundle downloaded. Share the .zip with anyone who wants to run it or continue training.",
+      );
+    } catch (reason) {
+      setError(
+        `Could not export the model bundle: ${(reason as Error).message}`,
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const importBundle = async (file: File): Promise<void> => {
+    if (importing() || busy()) return;
+    setImporting(true);
+    setError(null);
+    setStatus(`Reading ${file.name}...`);
+    try {
+      const imported = await importModelBundle(file);
+      const sameKind =
+        (imported.kind === "alice" && !isLarge()) ||
+        (imported.kind === "solid2" && isSolid2()) ||
+        (imported.kind === "custom" && isCustom());
+
+      let model: Solid2WasmModel | null = null;
+      if (imported.kind !== "alice") {
+        setStatus(
+          `Building the integer-only WASM model from ${file.name}...`,
+        );
+        model = await createSolid2WasmFromData(
+          imported.checkpoint,
+          imported.tokenizer,
+          imported.weights,
+        );
+      }
+
+      // The imported model replaces any result this panel just trained, so
+      // don't let Export silently package the previous run.
+      setTrained(null);
+      setSolid2Trained(null);
+      setSolid2Model(null);
+      setCustomTrained(null);
+      setCustomModel(null);
+      setSample(null);
+      setProgress(null);
+      if (!imported.trainingState) setHistory([]);
+
+      if (imported.trainingState) {
+        await saveBrowserTrainingState(
+          imported.trainingState,
+          browserTrainingRunKey(imported.kind),
+        );
+      }
+
+      if (imported.kind === "alice") {
+        props.onUseCheckpoint?.(imported.checkpoint);
+      } else if (imported.kind === "solid2") {
+        props.onUseSolid2Model?.(model!);
+      } else {
+        props.onUseCustomModel?.(model!);
+      }
+
+      if (sameKind && imported.trainingState) {
+        applyImportedState(imported.trainingState);
+      }
+
+      setBundleInfo(
+        `${file.name} · ${imported.manifest.model.name} · ${imported.manifest.model.parameterCount.toLocaleString()} params${
+          imported.trainingState
+            ? ` · resumable from step ${imported.trainingState.step}`
+            : " · inference only"
+        }`,
+      );
+      const message = imported.trainingState
+        ? "Model bundle imported. Use “Resume saved run” to continue training from the saved step."
+        : "Model bundle imported and ready in Integer GPT.";
+      setStatus(message);
+      props.onBundleStatus?.(message);
+    } catch (reason) {
+      setError(`Could not import ${file.name}: ${(reason as Error).message}`);
+      setStatus(null);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -852,6 +1012,14 @@ export default function BrowserTrainingPanel(
         >
           Use in Integer GPT
         </button>
+        <button
+          type="button"
+          class="button secondary"
+          disabled={busy() || exporting() || !hasBundleSource()}
+          onClick={() => void exportBundle()}
+        >
+          {exporting() ? "Packaging..." : "Export model (.zip)"}
+        </button>
         <Show when={props.isCustomCheckpoint}>
           <button
             type="button"
@@ -867,10 +1035,72 @@ export default function BrowserTrainingPanel(
         </Show>
       </div>
 
+      <Show when={hasBundleSource()}>
+        <label class="training-toggle">
+          <input
+            type="checkbox"
+            checked={includeResumeState()}
+            disabled={busy() || exporting()}
+            onChange={(event) =>
+              setIncludeResumeState(event.currentTarget.checked)
+            }
+          />
+          <span>
+            <b>Include resume state in the exported bundle</b>
+            <small>
+              Adds the current weights, optimizer moments, and best-validation
+              weights, so a friend can continue training from the same step. The
+              download is several times larger; uncheck for a smaller
+              inference-only bundle.
+            </small>
+          </span>
+        </label>
+      </Show>
+
+      <div class="bundle-share">
+        <div class="section-heading">
+          <span>Share or import a model</span>
+          <span class="muted">.zip</span>
+        </div>
+        <p class="hint">
+          Export the trained model with its weights, tokenizer, manifest, and
+          optional resume state. Import a bundle from Alice, Solid 2, or Custom
+          Docs; the manifest selects the right tab automatically.
+        </p>
+        <div class="button-row">
+          <button
+            type="button"
+            class="button secondary"
+            disabled={busy() || importing() || exporting()}
+            onClick={() => importInput?.click()}
+          >
+            {importing() ? "Importing..." : "Import model (.zip)"}
+          </button>
+          <input
+            ref={(element) => {
+              importInput = element;
+            }}
+            type="file"
+            accept=".zip,application/zip"
+            style="display: none"
+            aria-label="Import model bundle"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file) void importBundle(file);
+            }}
+          />
+          <Show when={bundleInfo()}>
+            <span class="muted">{bundleInfo()}</span>
+          </Show>
+        </div>
+      </div>
+
       <p class="hint">
         Saved runs stay in this browser's IndexedDB. The checkpoint includes the
         model, Adam state, history, and best-validation weights, so a later
-        session can continue from the same step.
+        session can continue from the same step. Export a bundle to share the
+        model or continue on another machine.
         <Show when={isLarge()}>
           {" "}The tokenized training corpus is cached separately, so the second
           load skips BPE encoding.

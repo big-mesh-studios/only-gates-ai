@@ -1,4 +1,8 @@
-import type { BrowserTrainingState, TrainingPoint } from "./trainTinyGpt";
+import type {
+  BrowserTrainingKind,
+  BrowserTrainingState,
+  TrainingPoint,
+} from "./trainTinyGpt";
 
 /*
  * IndexedDB persistence for browser training.
@@ -14,6 +18,13 @@ const STORE_NAME = "runs";
 const DEFAULT_RUN_KEY = "current";
 
 export type BrowserTrainingRunKey = "current" | "solid2" | "custom";
+
+/** Maps a model kind to the IndexedDB run slot used by its training panel. */
+export function browserTrainingRunKey(
+  kind: BrowserTrainingKind,
+): BrowserTrainingRunKey {
+  return kind === "alice" ? "current" : kind;
+}
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -123,7 +134,7 @@ function parsePoint(value: unknown): TrainingPoint {
   };
 }
 
-function parseState(value: unknown): BrowserTrainingState {
+export function parseBrowserTrainingState(value: unknown): BrowserTrainingState {
   if (!isRecord(value) || value.format !== "only-gates-browser-train") {
     throw new Error("Saved training data is not a browser training run.");
   }
@@ -192,7 +203,7 @@ export async function loadBrowserTrainingState(
   if (value === undefined) {
     return null;
   }
-  return parseState(value);
+  return parseBrowserTrainingState(value);
 }
 
 export async function deleteBrowserTrainingState(

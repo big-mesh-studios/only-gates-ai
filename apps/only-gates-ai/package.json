@@ -18,6 +18,7 @@
     "@solidjs/web": "2.0.0-rc.21",
     "@tensorflow/tfjs": "4.22.0",
     "@tensorflow/tfjs-backend-webgpu": "4.22.0",
+    "jszip": "^3.10.2",
     "solid-js": "2.0.0-rc.21"
   },
   "devDependencies": {

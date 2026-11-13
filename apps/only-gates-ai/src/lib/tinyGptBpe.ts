@@ -17,6 +17,16 @@ export async function loadBpeTokenizer(url: string): Promise<ByteLevelBpe> {
   return parseBpeModel(json);
 }
 
+/** Serializes a tokenizer back to the deployed `tokenizer.json` shape. */
+export function serializeBpeTokenizer(tokenizer: ByteLevelBpe): BpeModel {
+  return {
+    version: 1,
+    specialTokens: [...tokenizer.specialTokens],
+    vocab: [...tokenizer.vocab],
+    merges: tokenizer.merges.map(([left, right]) => [left, right] as const),
+  };
+}
+
 export function formatChatPrompt(tokenizer: ByteLevelBpe, question: string): string {
   // Encode with special tokens preserved.
   return `${BPE_SPECIAL.user}${question}${BPE_SPECIAL.assistant}`;

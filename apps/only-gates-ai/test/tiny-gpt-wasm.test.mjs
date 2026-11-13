@@ -18,6 +18,10 @@ const wasmSource = await readFile(
   new URL("../src/lib/tinyGptWasm.ts", here),
   "utf8",
 );
+const base64Source = await readFile(
+  new URL("../src/lib/base64Float32.ts", here),
+  "utf8",
+);
 const checkpointSource = await readFile(
   new URL("../src/assets/tiny-gpt-weights.ts", here),
   "utf8",
@@ -43,6 +47,7 @@ function evaluateTypeScript(source, requireFn) {
 }
 
 const tiny = evaluateTypeScript(tinySource, () => ({}));
+const base64 = evaluateTypeScript(base64Source, () => ({}));
 const checkpoint = evaluateTypeScript(
   checkpointSource,
   (id) => (id.includes("tinyGpt") ? tiny : {}),
@@ -50,6 +55,7 @@ const checkpoint = evaluateTypeScript(
 const wasm = evaluateTypeScript(wasmSource, (id) => {
   if (id === "@only-gates-ai/core") return core;
   if (id === "./tinyGpt" || id === "./tinyGpt.ts") return tiny;
+  if (id === "./base64Float32" || id === "./base64Float32.ts") return base64;
   throw new Error(`unexpected import ${id}`);
 });
 

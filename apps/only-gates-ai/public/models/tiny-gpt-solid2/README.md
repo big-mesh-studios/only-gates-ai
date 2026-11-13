@@ -12,6 +12,12 @@ These three files are tracked on purpose: the GitHub Pages build publishes
 into it. Large training-state files (`latest.pt`, `best-qa.pt`, etc.) remain
 gitignored.
 
+Browser-trained Solid 2 and custom models can be exported from the Integer GPT
+training panel as a `.zip` bundle. The BPE bundles contain the same
+`checkpoint.json`, `tokenizer.json`, and `weights.bin` files, plus a
+`manifest.json`, so they can also be extracted here and loaded by the normal
+model-folder loader.
+
 ## Train from scratch (Termux + Colab CLI)
 
 The repo includes a self-contained trainer: `scripts/train_tiny_gpt_solid2_colab.py`.
