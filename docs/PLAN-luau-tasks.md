@@ -728,6 +728,7 @@ Validation performed on this slice:
 | 1 | Solid 2 base, 4,096 | 3,000 | 1,344,640 | 20 | 30.67% |
 | 2 | Luau BPE, 1,695 | 6,000 | 3,031,296 | 30 | 42.50% |
 | 3 | Luau BPE, 1,721 | 12,000 | 5,228,032 | 25 | 72.88% |
+| 4 | Luau BPE, 1,721 | 12,000 | 5,228,032 | 13 (early stop) | **83.88%** |
 
 Run 2 details (`dim=192, layers=6, heads=6, mlp=768`):
 
@@ -811,3 +812,70 @@ distinct prompts per family for those four regardless-of-style failures, not to
 grow the model again.
 
 Metrics come from `/content/luau-eval3.json` (Luau 0.746 execution checks).
+
+## Fourth training run
+
+Run 4 isolates the data fix. The architecture, tokenizer, row counts, and
+hyperparameters are identical to run 3; only the under-specified prompts and
+the exported checkpoint change.
+
+| Setting | Run 3 | Run 4 |
+| --- | --- | --- |
+| Tokenizer | 1,721 | 1,721 |
+| Training rows | 12,000 | 12,000 |
+| Parameters | 5,228,032 | 5,228,032 |
+| `dim` / `layers` / `heads` / `mlp` | 256 / 6 / 8 / 1024 | 256 / 6 / 8 / 1024 |
+| Epochs run | 25 | 13 (early stop, patience 4) |
+| Best val loss | 0.1674 (epoch 10) | **0.1438** (step 3,429) |
+| Exported weights | final (val 0.1949) | best (val 0.1438) |
+
+The data fix added every stdout-affecting literal to eight families' prompt
+styles and tagged each row with `tags.required`. `scripts/audit_luau_prompts.py`
+now fails if a generated instruction omits one. All six splits pass the audit
+and 14,000/14,000 execution checks.
+
+Run 4 details, 800-row held-out suite:
+
+| Split | Run 3 | Run 4 |
+| --- | --- | --- |
+| `test-seen` (canonical) | 100.00% | 99.67% |
+| `test-question` (question style) | 75.50% | **94.50%** |
+| `test-unseen` (held-out identifiers) | 63.00% | 64.00% |
+| `test-paraphrase` (held-out wording) | 34.50% | **59.50%** |
+| all rows | 72.88% | **83.88%** |
+
+Syntax and stop-token rates are 100% with no truncation. Against the run-4
+targets: overall, seen, question, and paraphrase pass; `test-unseen` reached
+64% versus a 70% target.
+
+Per-family pass@1 across the 800 rows:
+
+| Family | Run 3 | Run 4 | Family | Run 3 | Run 4 |
+| --- | --- | --- | --- | --- | --- |
+| `table_literal` | 50% | **100%** | `string_concat` | 50% | **97.5%** |
+| `function_typed` | 62.5% | **100%** | `string_interp` | 50% | **92.5%** |
+| `while_accumulate` | 75% | **100%** | `function_add` | 40% | **67.5%** |
+| `if_else_health` | 100% | 100% | `for_print_range` | 75% | 67.5% |
+| `if_elseif_grade` | 87.5% | **97.5%** | `for_count_above` | 90% | 65% |
+| `for_sum_first_n` | 67.5% | **92.5%** | `iterate_print` | 65% | 65% |
+| `iterate_filter` | 90% | 92.5% | `nested_loop` | 70% | 47.5% |
+| `for_find_min` | 90% | 90% | `table_access` | 75% | 75% |
+| `for_find_max` | 87.5% | 87.5% | `repeat_until` | 77.5% | 75% |
+| `for_product` | 85% | 87.5% | `for_sum_all` | 70% | 77.5% |
+
+The four families that previously sat at their under-specified ceilings moved
+to near-ceiling, which confirms the diagnosis: the model was already solving
+the answerable rows. The remaining failures concentrate in two places:
+
+- Held-out paraphrase wording for structurally similar families
+  (`for_print_range`, `for_count_above`, `iterate_print`, `repeat_until`,
+  `table_access`, `function_add`), where the model falls back to a
+  sum/accumulator loop.
+- `nested_loop`, where question-style prompts make the model reuse one index
+  variable in both loops (`for k = 1, 3 do for k = 1, 3 do print(k, k)`).
+
+Phase 2 (family rebalancing) and Phase 5 (recipe ablation) target those two
+failure modes. Run 3 remains reachable at commit `d7b6763` for rollback.
+
+Metrics come from `/content/luau-eval4.json` (Luau 0.746 execution checks).
+The committed bundle is run 4 and exports the best-validation checkpoint.

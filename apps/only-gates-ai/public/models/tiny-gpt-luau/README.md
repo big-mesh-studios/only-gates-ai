@@ -19,19 +19,22 @@ needs the same values as the pre-load fallback. The current run uses:
 { "vocabSize": 1721, "context": 256, "dim": 256, "layers": 6, "heads": 8, "mlp": 1024 }
 ```
 
-The committed bundle is the run-3 checkpoint: 5,228,032 parameters
+The committed bundle is the run-4 checkpoint: 5,228,032 parameters
 (`weights.bin` is 20,912,128 bytes of float32). Execution-evaluated pass@1 on
-the 800-row held-out suite is 72.88% overall, split as:
+the 800-row held-out suite is 83.88% overall, split as:
 
-| Split | pass@1 |
-| --- | --- |
-| `test-seen` (canonical prompts) | 100.00% |
-| `test-question` (question prompts) | 75.50% |
-| `test-unseen` (held-out identifiers) | 63.00% |
-| `test-paraphrase` (held-out wording) | 34.50% |
+| Split | Run 3 | Run 4 |
+| --- | --- | --- |
+| `test-seen` (canonical prompts) | 100.00% | 99.67% |
+| `test-question` (question prompts) | 75.50% | 94.50% |
+| `test-unseen` (held-out identifiers) | 63.00% | 64.00% |
+| `test-paraphrase` (held-out wording) | 34.50% | 59.50% |
+| all rows | 72.88% | **83.88%** |
 
-Syntax and stop-token rates are 100%, so failures are wrong answers, not
-invalid Luau.
+Run 4 keeps the run-3 architecture and tokenizer. It fixes prompts that did
+not mention the literals their expected output depends on, and exports the
+best-validation checkpoint (0.1438) instead of the final one. Syntax and
+stop-token rates are 100%, so failures are wrong answers, not invalid Luau.
 
 ## Produce the files
 
@@ -53,7 +56,7 @@ python3 scripts/train_tiny_gpt_luau_colab.py \
   --dim 256 --layers 6 --heads 8 --mlp 1024 \
   --epochs 25 --batch 32 --lr 3e-4 \
   --dropout 0.1 --faq-repeat 10 \
-  --save-every 500 --max-minutes 120 --export-final
+  --save-every 500 --max-minutes 120
 
 # 4. Copy checkpoint.json, tokenizer.json, and weights.bin here
 cp /content/drive/MyDrive/tiny-gpt-luau/checkpoint.json .
