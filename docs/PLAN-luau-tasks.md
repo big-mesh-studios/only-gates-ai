@@ -879,3 +879,33 @@ failure modes. Run 3 remains reachable at commit `d7b6763` for rollback.
 
 Metrics come from `/content/luau-eval4.json` (Luau 0.746 execution checks).
 The committed bundle is run 4 and exports the best-validation checkpoint.
+
+## Rejected experiment: run 5 nested-loop wording
+
+Run 4 failed every `nested_loop` question row because it reused one index
+variable in both loops. A follow-up run named both loop variables in every
+`nested_loop` prompt and kept the run-4 recipe, to test whether that was a
+prompt gap rather than a model error.
+
+| Split | Run 4 | Run 5 |
+| --- | --- | --- |
+| `test-seen` | 99.67% | 99.00% |
+| `test-question` | 94.50% | **99.50%** |
+| `test-unseen` | 64.00% | 62.00% |
+| `test-paraphrase` | 59.50% | 50.00% |
+| all rows | **83.88%** | 82.25% |
+
+Run 5 fixed the intended failure: `nested_loop` rose from 47.5% to 85% and the
+question split reached 99.5%. But held-out paraphrase fell from 59.5% to 50%,
+with `for_print_range` producing malformed accumulator loops and
+`for_sum_first_n` dropping from 92.5% to 72.5%. Exporting the final epoch
+instead of the best-validation epoch also scored 82.25%, so the loss is not a
+checkpoint-selection artifact.
+
+The wording change only adds variable names that do not affect stdout, so the
+old prompts were answerable; the failure was model behaviour. The change was
+reverted (`585034c`) and run 4 remains the shipped bundle. The two useful
+takeaways for Phase 2 are that `nested_loop` question prompts need training
+coverage, and that run-to-run paraphrase variance from reshuffling is larger
+than the nested-loop fix. Phase 2 should rebalance toward the six weak
+paraphrase families and measure against run 4, not run 5.
