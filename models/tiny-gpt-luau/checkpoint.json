@@ -1,0 +1,75 @@
+{
+  "format": "only-gates-tiny-gpt-luau",
+  "version": 1,
+  "config": {
+    "vocabSize": 1721,
+    "context": 256,
+    "dim": 256,
+    "layers": 6,
+    "heads": 8,
+    "mlp": 1024
+  },
+  "parameterCount": 5228032,
+  "tokenizer": "tokenizer.json",
+  "meta": {
+    "name": "tiny-gpt-luau",
+    "source": "Generated Luau beginner tasks from scripts/luau_tasks.py plus the repository's Luau quick-answer FAQ. Task answers are execution checked before training.",
+    "license": "Generated task data and model weights are produced by this repository. Luau documentation and the FAQ retain their own MIT licenses.",
+    "training": {
+      "assistant": true,
+      "mode": "qa",
+      "steps": 9525,
+      "batch": 32,
+      "learningRate": 0.0003,
+      "dropout": 0.1,
+      "seed": 1337,
+      "bestStep": 3810,
+      "bestLoss": 0.16744936315528275,
+      "sourceUrls": [
+        "data/luau-tasks/train.jsonl",
+        "/content/only-gates-ai/apps/only-gates-ai/src/assets/luau-faq.md"
+      ]
+    }
+  },
+  "samples": [
+    {
+      "prompt": "Write a for loop that sums the first 50 elements of the array `values` and prints the result in Luau. The array has at least 50 elements.",
+      "text": "local accumulator = 0\nfor idx = 1, 50 do\n    accumulator += values[idx]\nend\nprint(accumulator)"
+    },
+    {
+      "prompt": "Write a for loop that prints the numbers from 1 to 20 in Luau.",
+      "text": "local step = 1\nfor step = 1, 20 do\n    print(step)\nend"
+    },
+    {
+      "prompt": "Write a for loop that counts how many elements of `scores` are greater than 80, then prints the count in Luau.",
+      "text": "local matches = 0\nfor offset = 1, #scores do\n    if scores[offset] > 80 then\n        matches += 1\n    end\nend\nprint(matches)"
+    },
+    {
+      "prompt": "Write a local function named `add` in Luau that takes `a` and `b` and returns their sum. Then print `add(2, 3)`.",
+      "text": "local function add(a, b)\n    return a + b\nend\n\nprint(add(2, 3))"
+    },
+    {
+      "prompt": "Given the array `items = { \"sword\", \"shield\", \"potion\" }`, write a loop in Luau that prints each index and value.",
+      "text": "for tag, row in items do\n    print(tag, row)\nend"
+    },
+    {
+      "prompt": "How do you do a for loop in Luau?",
+      "text": "The numeric form is `for variable = start, finish, step do ... end`. The generic form is `for key, value in table do ... end`.\n\n```luau\nfor i = 1, 3 do\n    print(i)\nend\n\nlocal scores = { 10, 20, 30 }\nfor index, score in scores do\n    print(index, score)\nend\n```"
+    },
+    {
+      "prompt": "How do you create a table in Luau?",
+      "text": "Use braces. Tables can be arrays, dictionaries, or both:\n\n```luau\nlocal list = { \"a\", \"b\", \"c\" }\nlocal config = { name = \"Ada\", age = 36 }\nlocal mixed = { \"first\", 42, enabled = true }\n```\n\nRead and write entries with `.` or `[]`:\n\n```luau\nprint(config.name)\nconfig.age = 37\nlist[1] = \"A\"\n```"
+    },
+    {
+      "prompt": "How do you add type annotations in Luau?",
+      "text": "Put `: Type` after a variable, parameter, or return type:\n\n```luau\nlocal name: string = \"Ada\"\n\nlocal function greet(who: string): string\n    return \"Hello, \" .. who\nend\n```\n\nLuau checks annotations when the script uses `--!strict` or `--!nonstrict`. You can also define type aliases with `type`."
+    }
+  ],
+  "prompts": [
+    "Write a for loop that sums the first 50 elements of the array `values` and prints the result in Luau. The array has at least 50 elements.",
+    "Write a for loop that prints the numbers from 1 to 20 in Luau.",
+    "Write a for loop that counts how many elements of `scores` are greater than 80, then prints the count in Luau.",
+    "Write a local function named `add` in Luau that takes `a` and `b` and returns their sum. Then print `add(2, 3)`.",
+    "Given the array `items = { \"sword\", \"shield\", \"potion\" }`, write a loop in Luau that prints each index and value."
+  ]
+}
