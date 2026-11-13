@@ -720,12 +720,12 @@ def family_if_elseif_grade(rng: random.Random, names: NamePool) -> FamilyResult:
             f"with A at 90, B at 80, and C otherwise."
         ),
         "paraphrase_c": (
-            f"Write Luau code that prints A when `{score_name}` is 90 or "
-            f"above, B when it is 80 or above, and C otherwise."
+            f"Write Luau code that prints A when `{score_name} = {score}` is "
+            f"90 or above, B when it is 80 or above, and C otherwise."
         ),
         "paraphrase_d": (
-            f"How do I classify `{score_name} = {score}` as A, B, or C in "
-            f"Luau?"
+            f"How do I classify `{score_name} = {score}` in Luau, printing A "
+            f"at 90 or above, B at 80 or above, and C otherwise?"
         ),
         "paraphrase_b": (
             f"What Luau if/elseif prints A for 90 or above, B for 80 or "
@@ -738,7 +738,11 @@ def family_if_elseif_grade(rng: random.Random, names: NamePool) -> FamilyResult:
         code=code,
         prelude=f"local {score_name} = {score}",
         expect_stdout=expected,
-        tags={"score": score, "expected": expected},
+        tags={
+            "score": score,
+            "expected": expected,
+            "required": (str(score), "90", "80"),
+        },
     )
 
 
@@ -760,16 +764,16 @@ def family_if_else_health(rng: random.Random, names: NamePool) -> FamilyResult:
             f'prints "low" when it is below {limit} and "ok" otherwise.'
         ),
         "paraphrase_a": (
-            f"Show Luau code that warns with low when {health_name} is under "
-            f"{limit} and prints ok otherwise."
+            f"Show Luau code that warns with low when `{health_name} = "
+            f"{health}` is under {limit} and prints ok otherwise."
         ),
         "paraphrase_c": (
-            f"Write Luau code that prints low when `{health_name}` is below "
-            f"{limit} and ok otherwise."
+            f"Write Luau code that prints low when `{health_name} = {health}` "
+            f"is below {limit} and ok otherwise."
         ),
         "paraphrase_d": (
-            f"How do I check whether `{health_name} = {health}` is below "
-            f"{limit} in Luau?"
+            f"How do I write an if/else in Luau that prints `low` when "
+            f"`{health_name} = {health}` is below {limit} and `ok` otherwise?"
         ),
         "paraphrase_b": (
             f"What Luau if/else prints low below {limit} and ok otherwise for "
@@ -782,7 +786,12 @@ def family_if_else_health(rng: random.Random, names: NamePool) -> FamilyResult:
         code=code,
         prelude=f"local {health_name} = {health}",
         expect_stdout=expected,
-        tags={"health": health, "limit": limit, "expected": expected},
+        tags={
+            "health": health,
+            "limit": limit,
+            "expected": expected,
+            "required": (str(health), str(limit), "low", "ok"),
+        },
     )
 
 
@@ -823,7 +832,7 @@ def family_function_add(rng: random.Random, names: NamePool) -> FamilyResult:
         ),
         "paraphrase_d": (
             f"How do I write a Luau function `{function}` that adds `{a}` "
-            f"and `{b}`?"
+            f"and `{b}`, then prints `{function}({left}, {right})`?"
         ),
         "paraphrase_b": (
             f"What Luau code defines `{function}({a}, {b})` and prints "
@@ -835,7 +844,10 @@ def family_function_add(rng: random.Random, names: NamePool) -> FamilyResult:
         instructions=instructions,
         code=code,
         expect_stdout=str(left + right),
-        tags={"expected": left + right},
+        tags={
+            "expected": left + right,
+            "required": (function, str(left), str(right)),
+        },
     )
 
 
@@ -862,20 +874,23 @@ def family_function_typed(rng: random.Random, names: NamePool) -> FamilyResult:
         ),
         "paraphrase_a": (
             f"Show Luau code that defines a typed function `{function}` "
-            f"taking a string and returning a greeting for {person}."
+            f"taking a string and returning `\"Hello, \" .. {param}`, then "
+            f"prints `{function}({lua_string(person)})`."
         ),
         "paraphrase_c": (
             f"Write Luau code that defines a typed function `{function}` "
-            f"returning a greeting, then prints "
+            f"returning `\"Hello, \" .. {param}`, then prints "
             f"`{function}({lua_string(person)})`."
         ),
         "paraphrase_d": (
             f"How do I add type annotations to a Luau function `{function}` "
-            f"that greets `{param}`?"
+            f"returning `\"Hello, \" .. {param}` and prints "
+            f"`{function}({lua_string(person)})`?"
         ),
         "paraphrase_b": (
-            f"What Luau code declares a typed function `{function}` and "
-            f"greets {person}?"
+            f"What Luau code declares a typed function `{function}` returning "
+            f"`\"Hello, \" .. {param}` and prints "
+            f"`{function}({lua_string(person)})`?"
         ),
     }
     return FamilyResult(
@@ -883,7 +898,10 @@ def family_function_typed(rng: random.Random, names: NamePool) -> FamilyResult:
         instructions=instructions,
         code=code,
         expect_stdout=expected,
-        tags={"expected": expected},
+        tags={
+            "expected": expected,
+            "required": ("Hello, ", person),
+        },
     )
 
 
@@ -911,7 +929,8 @@ def family_table_literal(rng: random.Random, names: NamePool) -> FamilyResult:
         ),
         "paraphrase_a": (
             f"Show Luau code that builds a `{table}` table with "
-            f"{name_field} and {age_field}, then prints each field."
+            f"`{name_field} = {lua_string(name_value)}` and "
+            f"`{age_field} = {age_value}`, then prints each field."
         ),
         "paraphrase_c": (
             f"Write Luau code that creates `{table}` with "
@@ -919,12 +938,14 @@ def family_table_literal(rng: random.Random, names: NamePool) -> FamilyResult:
             f"`{age_field} = {age_value}`, then prints both fields."
         ),
         "paraphrase_d": (
-            f"How do I create a Luau table with `{name_field}` and "
-            f"`{age_field}` and print both values?"
+            f"How do I create a Luau table `{table}` with "
+            f"`{name_field} = {lua_string(name_value)}` and "
+            f"`{age_field} = {age_value}`, then print both values?"
         ),
         "paraphrase_b": (
-            f"What Luau code builds `{table}` with two fields and prints both "
-            f"values?"
+            f"What Luau code builds `{table}` with "
+            f"`{name_field} = {lua_string(name_value)}` and "
+            f"`{age_field} = {age_value}` and prints both values?"
         ),
     }
     return FamilyResult(
@@ -932,7 +953,10 @@ def family_table_literal(rng: random.Random, names: NamePool) -> FamilyResult:
         instructions=instructions,
         code=code,
         expect_stdout=expected,
-        tags={"expected": expected},
+        tags={
+            "expected": expected,
+            "required": (name_field, name_value, age_field, str(age_value)),
+        },
     )
 
 
@@ -965,12 +989,12 @@ def family_table_access(rng: random.Random, names: NamePool) -> FamilyResult:
             f"prints it."
         ),
         "paraphrase_d": (
-            f"How do I change `{table}.{field}` to {new_value} in Luau and "
-            f"print it?"
+            f"How do I create `{table}` with `{field} = {field_value}`, "
+            f"change `{field}` to {new_value} in Luau, and print it?"
         ),
         "paraphrase_b": (
-            f"What Luau code updates `{table}.{field}` and prints the new "
-            f"value?"
+            f"What Luau code creates `{table}` with `{field} = {field_value}`, "
+            f"updates `{field}` to {new_value}, and prints the new value?"
         ),
     }
     return FamilyResult(
@@ -978,7 +1002,10 @@ def family_table_access(rng: random.Random, names: NamePool) -> FamilyResult:
         instructions=instructions,
         code=code,
         expect_stdout=str(new_value),
-        tags={"expected": new_value},
+        tags={
+            "expected": new_value,
+            "required": (field, str(field_value), str(new_value)),
+        },
     )
 
 
@@ -1006,16 +1033,20 @@ def family_string_concat(rng: random.Random, names: NamePool) -> FamilyResult:
             f"with a space and prints the result."
         ),
         "paraphrase_c": (
-            f"Write Luau code that joins `{first_var}` and `{last_var}` with "
-            f"a space and prints the full name."
+            f"Write Luau code that joins "
+            f"`{first_var} = {lua_string(first_name)}` and "
+            f"`{last_var} = {lua_string(last_name)}` with a space and prints "
+            f"the full name."
         ),
         "paraphrase_d": (
-            f"How do I join `{first_var}` and `{last_var}` into a full name "
-            f"in Luau?"
+            f"How do I join `{first_var} = {lua_string(first_name)}` and "
+            f"`{last_var} = {lua_string(last_name)}` into a full name in "
+            f"Luau?"
         ),
         "paraphrase_b": (
-            f"What Luau code concatenates `{first_var}` and `{last_var}` with "
-            f"a space?"
+            f"What Luau code concatenates "
+            f"`{first_var} = {lua_string(first_name)}` and "
+            f"`{last_var} = {lua_string(last_name)}` with a space?"
         ),
     }
     return FamilyResult(
@@ -1023,7 +1054,10 @@ def family_string_concat(rng: random.Random, names: NamePool) -> FamilyResult:
         instructions=instructions,
         code=code,
         expect_stdout=expected,
-        tags={"expected": expected},
+        tags={
+            "expected": expected,
+            "required": (first_name, last_name),
+        },
     )
 
 
@@ -1045,19 +1079,20 @@ def family_string_interp(rng: random.Random, names: NamePool) -> FamilyResult:
             f"string interpolation to build and print `{text}`."
         ),
         "paraphrase_a": (
-            f"Show Luau code that uses an interpolated string to greet "
-            f"{person} with \"{greeting}\"."
+            f"Show Luau code that uses an interpolated string to build and "
+            f"print `{text}`."
         ),
         "paraphrase_c": (
             f"Write Luau code that uses string interpolation to build and "
             f"print `{text}`."
         ),
         "paraphrase_d": (
-            f"How do I use Luau string interpolation to print a greeting "
-            f"for `{var}`?"
+            f"How do I use Luau string interpolation with "
+            f"`{var} = {lua_string(person)}` to print `{text}`?"
         ),
         "paraphrase_b": (
-            f"What Luau code interpolates `{var}` into a greeting?"
+            f"What Luau code interpolates `{var} = {lua_string(person)}` into "
+            f"`{text}`?"
         ),
     }
     return FamilyResult(
@@ -1065,7 +1100,10 @@ def family_string_interp(rng: random.Random, names: NamePool) -> FamilyResult:
         instructions=instructions,
         code=code,
         expect_stdout=expected,
-        tags={"expected": expected},
+        tags={
+            "expected": expected,
+            "required": (person, text),
+        },
     )
 
 

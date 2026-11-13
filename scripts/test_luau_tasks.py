@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import sys
 import tempfile
 import unittest
@@ -117,6 +118,34 @@ class LuauTaskGeneratorTest(unittest.TestCase):
                     any(f"local {name} =" in prelude for name in unseen_arrays),
                     f"{row['id']} did not use an unseen array name",
                 )
+
+    def test_every_style_mentions_required_literals(self) -> None:
+        required_families = {
+            "function_add",
+            "table_literal",
+            "table_access",
+            "string_concat",
+            "string_interp",
+            "function_typed",
+            "if_elseif_grade",
+            "if_else_health",
+        }
+        seen = set()
+        for family, builder in luau_tasks.FAMILY_BUILDERS.items():
+            for attempt in range(30):
+                rng = random.Random(attempt * 7919)
+                result = builder(rng, luau_tasks.COMMON_NAMES)
+                required = result.tags.get("required", ())
+                if required:
+                    seen.add(family)
+                for style, text in result.instructions.items():
+                    for literal in required:
+                        self.assertIn(
+                            str(literal),
+                            text,
+                            f"{family}/{style} does not mention {literal!r}: {text}",
+                        )
+        self.assertEqual(required_families, seen)
 
     def test_generated_code_executes_when_luau_is_available(self) -> None:
         luau_bin = os.environ.get("LUAU_BIN")
