@@ -1131,20 +1131,24 @@ def family_nested_loop(rng: random.Random, names: NamePool) -> FamilyResult:
             f"variables in the inner loop."
         ),
         "paraphrase_a": (
-            f"Show Luau code with an outer loop of {outer_n} and an inner "
-            f"loop of {inner_n} that prints every pair."
+            f"Show Luau code with an outer loop `{outer}` from 1 to "
+            f"{outer_n} and an inner loop `{inner}` from 1 to {inner_n} that "
+            f"prints every pair."
         ),
         "paraphrase_c": (
-            f"Write Luau code with an outer loop from 1 to {outer_n} and an "
-            f"inner loop from 1 to {inner_n} that prints both indexes."
+            f"Write Luau code with an outer loop `{outer}` from 1 to "
+            f"{outer_n} and an inner loop `{inner}` from 1 to {inner_n} that "
+            f"prints both indexes."
         ),
         "paraphrase_d": (
-            f"How do I write two nested Luau loops with bounds {outer_n} and "
-            f"{inner_n} and print both indexes?"
+            f"How do I write two nested Luau loops, `{outer}` from 1 to "
+            f"{outer_n} and `{inner}` from 1 to {inner_n}, and print both "
+            f"indexes?"
         ),
         "paraphrase_b": (
-            f"What Luau code nests a {outer_n}-iteration loop inside a "
-            f"{inner_n}-iteration loop and prints both indexes?"
+            f"What Luau code nests an `{outer}` loop from 1 to {outer_n} "
+            f"inside an `{inner}` loop from 1 to {inner_n} and prints both "
+            f"indexes?"
         ),
     }
     return FamilyResult(
@@ -1152,7 +1156,11 @@ def family_nested_loop(rng: random.Random, names: NamePool) -> FamilyResult:
         instructions=instructions,
         code=code,
         expect_stdout=expected,
-        tags={"outer": outer_n, "inner": inner_n},
+        tags={
+            "outer": outer_n,
+            "inner": inner_n,
+            "required": (outer, inner, str(outer_n), str(inner_n)),
+        },
     )
 
 

@@ -129,6 +129,7 @@ class LuauTaskGeneratorTest(unittest.TestCase):
             "function_typed",
             "if_elseif_grade",
             "if_else_health",
+            "nested_loop",
         }
         seen = set()
         for family, builder in luau_tasks.FAMILY_BUILDERS.items():
