@@ -131,6 +131,10 @@ the trainer as `--vocab`.
 `--max-minutes` stops cleanly before Colab disconnects. Re-run this cell with
 `--resume` to continue from `latest.pt`.
 
+Training exports the best-validation checkpoint by default. It also stops
+early after `--early-stop-patience` epochs without validation improvement
+(default 4, `0` disables).
+
 Mount Drive first if you want checkpoints to survive a disconnected runtime.
 """
     ),
@@ -149,8 +153,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
   --dim 256 --layers 6 --heads 8 --mlp 1024 \\
   --epochs 25 --batch 32 --lr 3e-4 \\
   --dropout 0.1 --faq-repeat 10 \\
-  --save-every 500 --max-minutes 120 \\
-  --export-final
+  --save-every 500 --max-minutes 120
 """
     ),
     md("## 6. Evaluate with real Luau execution\n"),

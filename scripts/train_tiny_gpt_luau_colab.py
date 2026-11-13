@@ -19,7 +19,7 @@ First run, warm-starting from an existing Luau Q&A checkpoint::
       --out /content/drive/MyDrive/tiny-gpt-luau \
       --init-from /content/drive/MyDrive/tiny-gpt-luau-faq/latest.pt \
       --epochs 15 --batch 8 --lr 1e-4 \
-      --save-every 200 --max-minutes 300 --export-final
+      --save-every 200 --max-minutes 300
 
 Resume after a Colab disconnect::
 
@@ -568,6 +568,15 @@ def main() -> None:
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--export-only", action="store_true")
     parser.add_argument("--export-final", action="store_true")
+    parser.add_argument(
+        "--early-stop-patience",
+        type=int,
+        default=4,
+        help=(
+            "Stop after N validation epochs without improvement. "
+            "0 disables early stopping."
+        ),
+    )
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
 
@@ -733,6 +742,7 @@ def main() -> None:
     best_loss = float("inf")
     best_step = 0
     best_model: Optional[Dict[str, torch.Tensor]] = None
+    epochs_without_improvement = 0
     elapsed_base = 0.0
 
     if checkpoint is not None:
@@ -748,6 +758,9 @@ def main() -> None:
         best_loss = float(checkpoint.get("best_loss", float("inf")))
         best_step = int(checkpoint.get("best_step", 0))
         best_model = checkpoint.get("best_model")
+        epochs_without_improvement = int(
+            checkpoint.get("epochs_without_improvement", 0)
+        )
         elapsed_base = float(checkpoint.get("elapsed_seconds", 0.0))
         print(
             f"resuming at epoch {start_epoch + 1}/{args.epochs}, step {step}, "
@@ -794,6 +807,7 @@ def main() -> None:
                 "best_loss": best_loss,
                 "best_step": best_step,
                 "best_model": best_model,
+                "epochs_without_improvement": epochs_without_improvement,
                 "elapsed_seconds": elapsed_seconds(),
             },
         )
@@ -902,8 +916,22 @@ def main() -> None:
                 best_loss = value
                 best_step = current_step
                 best_model = model_state_cpu(model)
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
         save(epoch + 1, 0, None, current_step)
         epoch += 1
+        if (
+            args.early_stop_patience > 0
+            and epochs_without_improvement >= args.early_stop_patience
+        ):
+            print(
+                f"early stop at epoch {epoch}/{args.epochs}: no val improvement "
+                f"for {epochs_without_improvement} epochs "
+                f"(best {best_loss:.4f} at step {best_step})",
+                flush=True,
+            )
+            break
 
     save(epoch, 0, None, current_step)
     if best_model is not None and not args.export_final:

@@ -317,10 +317,12 @@ Starting hyperparameters for the 1.34M model:
 | Validation | every epoch, masked loss |
 | Task pass@1 probe | every 5 epochs on 100 tasks |
 
-Export the **final** weights by default. Small instruction-tuned models often
-overfit; the final checkpoint frequently follows the trained format better than
-the best-validation checkpoint. Keep `--export-final` as a flag, not a hard
-rule; compare both.
+Export the **best-validation** weights by default. Run 3 showed the opposite of
+the earlier assumption: its best val loss was `0.1674` at epoch 10, but the
+bundle exported the final epoch at `0.1949`. Keep `--export-final` as an
+explicit flag for experiments, and compare both when in doubt. Training also
+stops early after `--early-stop-patience` epochs without validation
+improvement (default 4; `0` disables).
 
 ### 7.4 Optional Stage C: rejection sampling
 
@@ -449,8 +451,7 @@ python scripts/train_tiny_gpt_luau_colab.py \
   --out /content/drive/MyDrive/tiny-gpt-luau \
   --init-from /content/drive/MyDrive/tiny-gpt-luau-faq/latest.pt \
   --epochs 15 --batch 8 --lr 1e-4 \
-  --save-every 200 --max-minutes 300 \
-  --export-final
+  --save-every 200 --max-minutes 300
 ```
 
 Outputs:
@@ -603,8 +604,7 @@ python scripts/train_tiny_gpt_luau_colab.py \
   --out /content/drive/MyDrive/tiny-gpt-luau \
   --init-from /content/drive/MyDrive/tiny-gpt-luau-faq/latest.pt \
   --epochs 15 --batch 8 --lr 1e-4 \
-  --save-every 200 --max-minutes 300 \
-  --export-final
+  --save-every 200 --max-minutes 300
 ```
 
 ### Evaluate
