@@ -154,6 +154,12 @@ export interface TokenTrainingOptions {
   readonly saveEvery?: number;
   readonly kind?: BrowserTrainingKind;
   readonly modelMeta: TokenTrainingModelMeta;
+  /**
+   * Export the final training weights instead of the best-validation
+   * checkpoint. Small custom Q&A models often overfit their instruction data,
+   * so the best-validation step can be far too early.
+   */
+  readonly exportFinal?: boolean;
 }
 
 export interface WordCorpusData {
@@ -1214,7 +1220,9 @@ export async function trainTokenGpt(
     }
 
     const currentWeights = serializeWeights(tf, config, model);
-    const finalWeights = bestWeights ?? currentWeights;
+    const finalWeights = options.exportFinal
+      ? currentWeights
+      : bestWeights ?? currentWeights;
     const state = makeState(
       config,
       data.vocab,

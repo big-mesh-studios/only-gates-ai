@@ -34,7 +34,7 @@ import {
  */
 
 const tokenCache = createTokenStreamCache("gate-forest-custom-training-data");
-const TOKEN_SCHEME_VERSION = 2;
+const TOKEN_SCHEME_VERSION = 3;
 const VALIDATION_FRACTION = 0.1;
 const MAX_PROMPTS = 5;
 const QA_REPEATS = 3;
@@ -694,6 +694,37 @@ function encodeQaPair(
   return tokens;
 }
 
+export interface CustomQaSplit {
+  readonly training: readonly CustomQaPair[];
+  readonly validation: readonly CustomQaPair[];
+}
+
+/**
+ * Splits Q&A pairs by answer group so validation never shares an answer with
+ * training. Splitting individual question variants would let "What is X?" sit
+ * in validation while "How do I use X?" trains on the same answer.
+ */
+export function splitCustomQaPairs(
+  pairs: readonly CustomQaPair[],
+): CustomQaSplit {
+  const answerOrder: string[] = [];
+  const seen = new Set<string>();
+  for (const pair of pairs) {
+    if (seen.has(pair.answer)) continue;
+    seen.add(pair.answer);
+    answerOrder.push(pair.answer);
+  }
+  const validationAnswers = new Set(
+    answerOrder.filter(
+      (_answer, index) => (index + 1) % QA_VALIDATION_EVERY === 0,
+    ),
+  );
+  return {
+    training: pairs.filter((pair) => !validationAnswers.has(pair.answer)),
+    validation: pairs.filter((pair) => validationAnswers.has(pair.answer)),
+  };
+}
+
 async function buildCustomQaTokenStream(
   tokenizer: BpeTokenizer,
   pairs: readonly CustomQaPair[],
@@ -702,13 +733,8 @@ async function buildCustomQaTokenStream(
   shouldCancel?: () => boolean,
 ): Promise<CustomTokenStream> {
   const ids = specialIds(tokenizer);
-  const validationPairs = pairs.filter(
-    (_pair, index) => (index + 1) % QA_VALIDATION_EVERY === 0,
-  );
-  const trainingPairs = pairs.filter(
-    (_pair, index) => (index + 1) % QA_VALIDATION_EVERY !== 0,
-  );
-  const source = trainingPairs.length > 0 ? trainingPairs : pairs;
+  const split = splitCustomQaPairs(pairs);
+  const source = split.training.length > 0 ? split.training : pairs;
 
   const trainingTokens: number[] = [];
   const total = source.length * QA_REPEATS;
@@ -735,7 +761,7 @@ async function buildCustomQaTokenStream(
   onProgress(1);
 
   const validationTokens: number[] = [];
-  for (const pair of validationPairs) {
+  for (const pair of split.validation) {
     appendIds(validationTokens, encodeQaPair(tokenizer, pair, ids));
   }
 
@@ -1036,6 +1062,9 @@ export async function trainCustomGpt(
     yieldEvery: options.yieldEvery ?? 2,
     saveEvery: options.saveEvery ?? 100,
     kind: "custom",
+    // Instruction-following models memorize the Q&A pairs. With an honest
+    // answer-group holdout, best-validation can select a much too early step.
+    exportFinal: true,
     modelMeta: {
       name: assistant
         ? "tiny-gpt-custom-qa-browser"

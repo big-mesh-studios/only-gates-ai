@@ -367,7 +367,9 @@ export default function IntegerGptPanel() {
       try {
         decoder = createSolid2Decoder(m, input, {
           maxTokens: isCustomModel && customAssistant() ? 200 : 160,
-          temperature: isCustomModel && customAssistant() ? 0.4 : 0.7,
+          // Low temperature helps the small Q&A model stay on the learned
+          // answer instead of drifting into a nearby documentation section.
+          temperature: isCustomModel && customAssistant() ? 0.2 : 0.7,
           topK: 40,
           promptFormat:
             isCustomModel && !customAssistant() ? "text" : "chat",

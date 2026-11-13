@@ -94,12 +94,31 @@ python scripts/train_tiny_gpt_custom_colab.py \
   --out /content/drive/MyDrive/tiny-gpt-custom \
   --steps 3000 --batch 4 --lr 0.0004 --dropout 0.1 --seed 1337 \
   --assistant --warm-start --save-every 100 --max-minutes 180 \
+  --export-final \
   --bundle-out /content/only-gates-custom-bundle.zip --resume
 ```
+
+`--export-final` exports the last training weights rather than the
+best-validation checkpoint. For small Q&A models, validation can peak very
+early while the model is still learning its instruction data, so exporting the
+best-validation step can produce an underfit model. Use `--export-only
+--export-final` to rebuild a bundle from an existing checkpoint without
+retraining.
 
 Use `--inspect-only` to fetch and tokenize the documents without training, and
 `--smoke` for a tiny end-to-end check. A later run with the same URLs and
 settings resumes from `<out>/latest.pt`.
+
+Assistant mode builds questions from Markdown headings. A heading such as
+`## For loops` becomes "What is For loops?", "How do I use For loops?", and
+"Explain For loops." For natural questions, include a Markdown file whose
+headings are written as the questions you expect, for example
+`## How do you do a for loop in Luau?`. The built-in **Load Luau quick answers**
+preset uses that FAQ with a small control-structures/syntax/tables corpus; use
+it for simple questions. The broader **Load Luau docs example** preset is better
+for reference-style questions but dilutes the natural Q&A data in a 1.34M model.
+Generated Colab notebooks write the FAQ locally, so they do not depend on the
+repository branch being published first.
 
 ### Colab etiquette
 

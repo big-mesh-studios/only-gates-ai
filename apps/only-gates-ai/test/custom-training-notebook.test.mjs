@@ -71,6 +71,7 @@ test("custom notebook embeds URLs, settings, and the bundle command", async () =
     assert.match(allCode, /--max-minutes 30/);
     assert.match(allCode, /--assistant/);
     assert.match(allCode, /--warm-start/);
+    assert.match(allCode, /--export-final/);
     assert.match(allCode, /--inspect-only/);
     assert.match(allCode, /--bundle-out \/content\/only-gates-custom-bundle\.zip/);
     assert.match(allCode, /--resume/);
@@ -110,6 +111,43 @@ test("custom notebook omits assistant/warm-start flags when disabled", async () 
     assert.doesNotMatch(code, /--assistant/);
     assert.doesNotMatch(code, /--warm-start/);
     assert.doesNotMatch(code, /--max-minutes/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("custom notebook embeds the Luau FAQ locally", async () => {
+  const server = await createTestServer();
+  try {
+    const notebook = await server.ssrLoadModule(
+      "/src/lib/customTrainingNotebook.ts",
+    );
+    const generated = notebook.buildCustomTrainingNotebook({
+      urls: [
+        "https://raw.githubusercontent.com/clinuxrulz/only-gates-ai/main/apps/only-gates-ai/src/assets/luau-faq.md",
+        "https://example.com/guide.md",
+      ],
+      assistant: true,
+      steps: 100,
+      batch: 2,
+      learningRate: 0.001,
+      dropout: 0,
+      seed: 7,
+      maxMinutes: 0,
+      warmStart: false,
+    });
+    const parsed = JSON.parse(generated.json);
+    const code = parsed.cells
+      .filter((cell) => cell.cell_type === "code")
+      .map(cellText)
+      .join("\n");
+    assert.match(code, /FAQ_PATH = Path\('\/content\/luau-faq\.md'\)/);
+    assert.match(code, /How do you do a for loop in Luau\?/);
+    assert.match(code, /file:\/\/\/content\/luau-faq\.md/);
+    assert.doesNotMatch(
+      code,
+      /raw\.githubusercontent\.com\/clinuxrulz\/only-gates-ai\/main\/apps\/only-gates-ai\/src\/assets\/luau-faq\.md/,
+    );
   } finally {
     await server.close();
   }

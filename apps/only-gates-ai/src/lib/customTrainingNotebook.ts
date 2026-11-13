@@ -1,3 +1,5 @@
+import luauFaq from "../assets/luau-faq.md?raw";
+
 /*
  * Generates a Google Colab notebook for the Custom Docs (BPE) trainer.
  *
@@ -19,6 +21,8 @@ export interface CustomTrainingNotebookOptions {
   readonly maxMinutes: number;
   readonly warmStart: boolean;
   readonly repoUrl?: string;
+  /** Colab output directory. Defaults to Drive/MyDrive/tiny-gpt-custom. */
+  readonly outputDir?: string;
 }
 
 export interface GeneratedCustomNotebook {
@@ -102,7 +106,18 @@ export function buildCustomTrainingNotebook(
   }
 
   const repoUrl = options.repoUrl ?? DEFAULT_REPO;
-  const urlLines = urls.map((url) => `  ${JSON.stringify(url)},`).join("\n");
+  const outputDir = options.outputDir ?? "/content/drive/MyDrive/tiny-gpt-custom";
+  // The Luau preset ships a natural-question FAQ from this app's own assets.
+  // Write it into Colab instead of depending on the file being published on
+  // the repository's main branch.
+  const faqSuffix = "/apps/only-gates-ai/src/assets/luau-faq.md";
+  const usesBundledFaq = urls.some((url) => url.endsWith(faqSuffix));
+  const notebookUrls = urls.map((url) =>
+    url.endsWith(faqSuffix) ? "file:///content/luau-faq.md" : url,
+  );
+  const urlLines = notebookUrls
+    .map((url) => `  ${JSON.stringify(url)},`)
+    .join("\n");
   const assistantFlag = options.assistant ? ["--assistant"] : [];
   const warmStartFlag = options.warmStart ? ["--warm-start"] : [];
   const timeBudget =
@@ -127,6 +142,10 @@ Generated from the app with:
 
 The download cell saves \`only-gates-custom-bundle.zip\`. Import it with
 **Integer GPT → Custom Docs (BPE) → Import model (.zip)**.
+
+Assistant mode builds its answers from Markdown headings. Headings written as
+natural questions (for example, \`## How do you do a for loop in Luau?\`) make
+the model respond better to the way you actually ask questions.
 
 The documents keep their own licenses; this notebook does not relicense them.`;
 
@@ -169,6 +188,7 @@ print(f'{len(URLS)} document URLs written to {URLS_FILE}')`;
     ...timeBudget,
     "--save-every 100",
     "--val-every 100",
+    "--export-final",
     "--bundle-out /content/only-gates-custom-bundle.zip",
     "--resume",
   ];
@@ -189,13 +209,22 @@ print(f'{len(URLS)} document URLs written to {URLS_FILE}')`;
 try:
     from google.colab import drive
     drive.mount('/content/drive')
-    OUT = Path('/content/drive/MyDrive/tiny-gpt-custom')
+    OUT = Path(${JSON.stringify(outputDir)})
 except ImportError:
     OUT = Path('/content/tiny-gpt-custom')
 
 OUT.mkdir(parents=True, exist_ok=True)
 print('Training output:', OUT)`),
       codeCell(cloneRepo),
+      ...(usesBundledFaq
+        ? [
+            codeCell(`from pathlib import Path
+
+FAQ_PATH = Path('/content/luau-faq.md')
+FAQ_PATH.write_text(${JSON.stringify(luauFaq)}, encoding='utf-8')
+print('wrote', FAQ_PATH)`),
+          ]
+        : []),
       markdownCell(`## 1. Document URLs
 
 These are the normalized URLs from the app. Edit the list if you want to add
@@ -219,8 +248,10 @@ empty pages fail quickly.`),
 Rerunning this cell resumes from the last checkpoint. Increase \`--steps\` for a
 better model; 3,000–5,000 steps is a reasonable T4 starting point. The time
 budget comes from the app's **Time budget** field; raise or remove
-\`--max-minutes\` for a longer run. Add \`--fresh\` only when you intentionally
-changed the URLs or settings.`),
+\`--max-minutes\` for a longer run. The cell exports the final weights
+(\`--export-final\`) because small Q&A models often overfit their instructions;
+an early best-validation checkpoint can underfit them. Add \`--fresh\` only
+when you intentionally changed the URLs or settings.`),
       codeCell(shellCommand(trainParts)),
       markdownCell(`## 4. Download the bundle
 

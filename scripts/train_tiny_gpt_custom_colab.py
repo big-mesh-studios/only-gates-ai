@@ -41,7 +41,7 @@ import train_tiny_gpt_solid2_colab as base  # noqa: E402
 
 CHECKPOINT_FORMAT = "only-gates-custom-train"
 CHECKPOINT_VERSION = 1
-TOKEN_SCHEME_VERSION = 2
+TOKEN_SCHEME_VERSION = 3
 VALIDATION_FRACTION = 0.1
 MAX_PROMPTS = 5
 QA_REPEATS = 3
@@ -66,8 +66,12 @@ def normalize_url(value: str) -> str:
     value = value.strip()
     if not value:
         raise ValueError("empty URL")
+    # Colab notebooks can write a local Markdown companion file (for example
+    # the Luau FAQ) and pass it as a file:// URL.
+    if value.startswith("file://"):
+        return value
     if not (value.startswith("http://") or value.startswith("https://")):
-        raise ValueError(f"Only http(s) URLs are supported: {value}")
+        raise ValueError(f"Only http(s) or file URLs are supported: {value}")
     if "github.com/" in value:
         parsed = re.match(r"https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/blob/(.+)", value)
         if parsed:
@@ -647,8 +651,23 @@ def build_qa_stream(
     context: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
     ids = _special_ids(tokenizer)
-    validation = [pair for index, pair in enumerate(pairs) if (index + 1) % QA_VALIDATION_EVERY == 0]
-    training = [pair for index, pair in enumerate(pairs) if (index + 1) % QA_VALIDATION_EVERY != 0]
+    # Hold out whole answer groups. Splitting individual question variants
+    # leaks the same answer into both training and validation.
+    answer_order: List[str] = []
+    by_answer: Dict[str, List[Dict[str, str]]] = {}
+    for pair in pairs:
+        answer = pair["answer"]
+        if answer not in by_answer:
+            by_answer[answer] = []
+            answer_order.append(answer)
+        by_answer[answer].append(dict(pair))
+    validation_answers = {
+        answer
+        for index, answer in enumerate(answer_order)
+        if (index + 1) % QA_VALIDATION_EVERY == 0
+    }
+    validation = [pair for pair in pairs if pair["answer"] in validation_answers]
+    training = [pair for pair in pairs if pair["answer"] not in validation_answers]
     source = training if training else list(pairs)
     training_tokens: List[int] = []
     for _ in range(QA_REPEATS):
@@ -1083,6 +1102,15 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--export-only", action="store_true")
+    parser.add_argument(
+        "--export-final",
+        action="store_true",
+        help=(
+            "Export the final training weights instead of the best-validation "
+            "checkpoint. Small Q&A models often overfit their instruction data; "
+            "the final weights answer the trained questions much better."
+        ),
+    )
     parser.add_argument("--inspect-only", action="store_true")
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
@@ -1132,7 +1160,10 @@ def main() -> None:
             config["vocabSize"], config["context"], config["dim"],
             config["layers"], config["heads"], config["mlp"], dropout,
         ).to(torch.device(args.device))
-        state = checkpoint.get("best_model") or checkpoint["model"]
+        if args.export_final:
+            state = checkpoint["model"]
+        else:
+            state = checkpoint.get("best_model") or checkpoint["model"]
         model.load_state_dict(state)
         prompts = checkpoint.get("prompts", [])
         samples = generate_samples(model, tokenizer, prompts, assistant, torch.device(args.device))
@@ -1148,8 +1179,16 @@ def main() -> None:
             urls=checkpoint.get("source_urls", []),
             corpus_hash=checkpoint.get("corpus_hash", ""),
             step=int(checkpoint.get("step", 0)),
-            best_step=int(checkpoint.get("best_step", 0)),
-            best_loss=float(checkpoint.get("best_loss", float("inf"))),
+            best_step=(
+                int(checkpoint.get("step", 0))
+                if args.export_final
+                else int(checkpoint.get("best_step", 0))
+            ),
+            best_loss=(
+                float("nan")
+                if args.export_final
+                else float(checkpoint.get("best_loss", float("inf")))
+            ),
             elapsed_seconds=float(checkpoint.get("elapsed_seconds", 0.0)),
             history=checkpoint.get("history", []),
             args=args,
@@ -1358,7 +1397,7 @@ def main() -> None:
             flush=True,
         )
 
-    if best_model is not None:
+    if best_model is not None and not args.export_final:
         model.load_state_dict(best_model)
     samples = generate_samples(model, tokenizer, prompts, assistant, device)
     export_bundle(
@@ -1373,8 +1412,8 @@ def main() -> None:
         urls=urls,
         corpus_hash=corpus_hash,
         step=last_step,
-        best_step=best_step,
-        best_loss=best_loss,
+        best_step=last_step if args.export_final else best_step,
+        best_loss=float("nan") if args.export_final else best_loss,
         elapsed_seconds=elapsed_seconds(),
         history=history,
         args=args,

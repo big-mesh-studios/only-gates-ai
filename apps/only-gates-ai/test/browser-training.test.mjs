@@ -189,6 +189,44 @@ test("custom docs loader normalizes URLs and tokenizes Markdown", async () => {
         assert.match(url, /\.md$/);
       }
     }
+    assert.ok(
+      presets.CUSTOM_DOC_PRESETS[0].urls.some((url) =>
+        url.endsWith("/apps/only-gates-ai/src/assets/luau-faq.md"),
+      ),
+      "Luau preset should include the natural-question FAQ",
+    );
+
+    const questionPairs = custom.buildCustomQaPairs([
+      {
+        url: "https://example.com/faq.md",
+        kind: "markdown",
+        text: [
+          "## How do you do a for loop in Luau?",
+          "",
+          "Use a numeric for loop: `for i = 1, 5 do print(i) end`.",
+        ].join("\n"),
+      },
+    ]);
+    assert.equal(questionPairs.length, 1);
+    assert.equal(
+      questionPairs[0].question,
+      "How do you do a for loop in Luau?",
+    );
+
+    const groupedPairs = Array.from({ length: 20 }, (_value, index) => ({
+      question: `Question ${index}?`,
+      answer: `Answer group ${Math.floor(index / 2)}`,
+    }));
+    const split = custom.splitCustomQaPairs(groupedPairs);
+    assert.ok(split.validation.length > 0);
+    assert.ok(split.training.length > 0);
+    const validationAnswers = new Set(
+      split.validation.map((pair) => pair.answer),
+    );
+    assert.equal(
+      split.training.some((pair) => validationAnswers.has(pair.answer)),
+      false,
+    );
 
     const qaPairs = custom.buildCustomQaPairs([
       {

@@ -715,9 +715,10 @@ export default function BrowserTrainingPanel(
           tokenization, and the token stream is cached in IndexedDB. Assistant
           (Q&amp;A) mode is on by default: it builds question/answer examples
           from Markdown headings so the result behaves like a small chat model.
-          Use <b>Load Luau docs example</b> to try the official Luau
-          documentation. The integer path starts when you click{" "}
-          <b>Use in Integer GPT</b>.
+          Headings written as natural questions work best. Use{" "}
+          <b>Load Luau docs example</b> to try the official Luau documentation
+          plus a short natural-language quick-answer guide. The integer path
+          starts when you click <b>Use in Integer GPT</b>.
         </p>
         <p class="hint">
           Mirrors the Solid 2 model exactly so the same integer-only WASM engine

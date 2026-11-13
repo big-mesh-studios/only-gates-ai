@@ -15,15 +15,18 @@ export interface CustomDocPreset {
 
 const LUAU_DOCS_BASE =
   "https://raw.githubusercontent.com/luau-lang/site/master/src/content/docs/";
+const LUAU_FAQ =
+  "https://raw.githubusercontent.com/clinuxrulz/only-gates-ai/main/apps/only-gates-ai/src/assets/luau-faq.md";
 
 export const CUSTOM_DOC_PRESETS: readonly CustomDocPreset[] = [
   {
     id: "luau",
     label: "Load Luau docs example",
     description:
-      "Official Luau language, library, type-system, lint, and performance docs.",
-    license: "MIT (luau-lang/site)",
+      "Official Luau language, library, type-system, lint, and performance docs, plus a short natural-language Luau quick-answer guide.",
+    license: "MIT (luau-lang/site); repository quick answers (MIT)",
     urls: [
+      LUAU_FAQ,
       `${LUAU_DOCS_BASE}getting-started/intro.md`,
       `${LUAU_DOCS_BASE}getting-started/syntax.md`,
       `${LUAU_DOCS_BASE}getting-started/compatibility.md`,
@@ -41,6 +44,19 @@ export const CUSTOM_DOC_PRESETS: readonly CustomDocPreset[] = [
       `${LUAU_DOCS_BASE}types/refinements.md`,
       `${LUAU_DOCS_BASE}types/object-oriented-programs.md`,
       `${LUAU_DOCS_BASE}types/type-functions.md`,
+    ],
+  },
+  {
+    id: "luau-quick",
+    label: "Load Luau quick answers",
+    description:
+      "A small natural-question Luau Q&A set with control structures, basic syntax, and tables. Tuned for simple questions and the 1.34M-parameter model.",
+    license: "MIT (luau-lang/site); repository quick answers (MIT)",
+    urls: [
+      LUAU_FAQ,
+      `${LUAU_DOCS_BASE}getting-started/intro.md`,
+      `${LUAU_DOCS_BASE}getting-started/syntax.md`,
+      `${LUAU_DOCS_BASE}types/tables.md`,
     ],
   },
 ];
