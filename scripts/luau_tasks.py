@@ -64,20 +64,19 @@ FAMILIES = (
 TRAIN_STYLES = ("canonical", "paraphrase_a", "paraphrase_c", "paraphrase_d")
 HELD_OUT_STYLE = "paraphrase_b"
 
-# Training-row budget by family. Run 6 showed that a 1.5x/0.75x split fixed the
-# weak families but cost the solved ones more than it gained. This gentler
-# split keeps the targeted families above equal while leaving near-solved
-# families close to their original coverage. Test splits deliberately ignore
-# these weights and stay equal per family so run-to-run scores remain
-# comparable.
+# Training-row budget by family. Run 4 failed most held-out paraphrase and
+# question rows in these families, so they get the largest share. Families at
+# or near 100% keep enough coverage to avoid regressions without spending rows.
+# Test splits deliberately ignore these weights and stay equal per family so
+# run-to-run scores remain comparable.
 FAMILY_WEIGHTS: Dict[str, float] = {
-    "function_add": 1.25,
-    "table_access": 1.25,
-    "for_print_range": 1.25,
-    "for_count_above": 1.25,
-    "iterate_print": 1.25,
-    "repeat_until": 1.25,
-    "nested_loop": 1.25,
+    "function_add": 1.5,
+    "table_access": 1.5,
+    "for_print_range": 1.5,
+    "for_count_above": 1.5,
+    "iterate_print": 1.5,
+    "repeat_until": 1.5,
+    "nested_loop": 1.5,
     "for_sum_all": 1.0,
     "table_literal": 1.0,
     "string_concat": 1.0,
@@ -86,11 +85,11 @@ FAMILY_WEIGHTS: Dict[str, float] = {
     "if_elseif_grade": 1.0,
     "iterate_filter": 1.0,
     "for_sum_first_n": 1.0,
-    "for_find_max": 0.9,
-    "for_find_min": 0.9,
-    "for_product": 0.9,
-    "if_else_health": 0.9,
-    "while_accumulate": 0.9,
+    "for_find_max": 0.75,
+    "for_find_min": 0.75,
+    "for_product": 0.75,
+    "if_else_health": 0.75,
+    "while_accumulate": 0.75,
 }
 
 
