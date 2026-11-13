@@ -170,6 +170,73 @@ test("custom docs loader normalizes URLs and tokenizes Markdown", async () => {
 
   try {
     const custom = await server.ssrLoadModule("/src/lib/trainCustomGpt.ts");
+    const presets = await server.ssrLoadModule("/src/lib/customDocPresets.ts");
+
+    assert.equal(
+      custom.stripFrontMatter("---\ntitle: Example\n---\n# Heading\n\nBody"),
+      "# Heading\n\nBody",
+    );
+    assert.equal(
+      custom.stripFrontMatter("# Heading\n\nBody"),
+      "# Heading\n\nBody",
+    );
+
+    assert.ok(presets.CUSTOM_DOC_PRESETS.length > 0);
+    for (const preset of presets.CUSTOM_DOC_PRESETS) {
+      assert.ok(preset.urls.length > 0);
+      for (const url of preset.urls) {
+        assert.match(url, /^https:\/\/raw\.githubusercontent\.com\//);
+        assert.match(url, /\.md$/);
+      }
+    }
+
+    const qaPairs = custom.buildCustomQaPairs([
+      {
+        url: "https://example.com/luau.md",
+        kind: "markdown",
+        text: [
+          "---",
+          "title: Luau notes",
+          "---",
+          "# Luau notes",
+          "",
+          "Luau is a fast, gradually typed language based on Lua 5.1.",
+          "",
+          "## String interpolation",
+          "",
+          "Use backtick strings and braces to interpolate values into text.",
+          "",
+          "```luau",
+          "# this is a Luau comment, not a Markdown heading",
+          "local greeting = `Hello, {name}!`",
+          "```",
+          "",
+          "## Table freezing",
+          "",
+          "Call table.freeze to make a table immutable after construction.",
+        ].join("\n"),
+      },
+    ]);
+
+    assert.ok(
+      qaPairs.some(
+        (pair) =>
+          pair.question === "What is String interpolation?" &&
+          pair.answer.includes("backtick strings") &&
+          pair.answer.includes("```luau"),
+      ),
+    );
+    assert.ok(
+      qaPairs.some(
+        (pair) =>
+          pair.question === "How do I use Table freezing?" &&
+          pair.answer.includes("table.freeze"),
+      ),
+    );
+    assert.equal(
+      qaPairs.some((pair) => /this is a Luau comment/.test(pair.question)),
+      false,
+    );
 
     assert.deepEqual(
       custom.parseDocUrls(
@@ -271,6 +338,18 @@ test("custom docs loader normalizes URLs and tokenizes Markdown", async () => {
       assert.ok(data.trainingData.validationTokens.length > 0);
       assert.equal(data.trainingData.vocab.length, 4096);
       assert.deepEqual(data.prompts, ["Custom guide"]);
+
+      const assistant = await custom.loadCustomTrainingData({
+        urls: ["https://raw.githubusercontent.com/example/docs/main/guide.md"],
+        tokenizerUrl: "https://example.com/tokenizer.json",
+        assistant: true,
+      });
+      assert.equal(assistant.info.assistant, true);
+      assert.ok(assistant.info.qaPairs > 0);
+      assert.ok(assistant.trainingData.trainingTokens.length > 258);
+      assert.equal(assistant.trainingData.vocab.length, 4096);
+      assert.match(assistant.prompts[0], /\?$/);
+      assert.notEqual(assistant.trainingData.corpusHash, data.trainingData.corpusHash);
     } finally {
       globalThis.fetch = originalFetch;
     }

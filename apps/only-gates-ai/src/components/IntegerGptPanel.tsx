@@ -9,7 +9,6 @@ import {
   TinyGptModel,
   TinyGptMode,
   TinyGptComparison,
-  TinyGptGeneration,
   type TinyGptCheckpoint,
   loadTinyGpt,
   compareTinyGpt,
@@ -18,12 +17,12 @@ import {
 import {
   TinyGptWasmModel,
   TinyGptWasmComparison,
-  TinyGptWasmGeneration,
   loadTinyGptWasm,
   generateTinyGptWasm,
   compareTinyGptWasm,
 } from "../lib/tinyGptWasm";
 import { TINY_GPT_CHECKPOINT } from "../assets/tiny-gpt-weights";
+import { splitAnswer, splitInlineCode } from "../lib/chatFormat";
 import BrowserTrainingPanel from "./BrowserTrainingPanel";
 import {
   loadSolid2Wasm,
@@ -37,6 +36,20 @@ import { SOLID2_MODEL_BASE } from "../lib/solid2Config";
 type ExampleId = "alice" | "solid2" | "custom";
 type AliceMode = TinyGptMode | "wasm";
 type PanelMode = AliceMode | "solid2-wasm" | "custom-wasm";
+
+interface ChatMessage {
+  readonly id: number;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly meta?: string;
+}
+
+const ALICE_SUGGESTIONS = [
+  "Alice was",
+  "the white rabbit",
+  "she said",
+  "the Queen",
+];
 
 function parameterCount(config: {
   vocabSize: number;
@@ -66,11 +79,9 @@ export default function IntegerGptPanel() {
   const [status, setStatus] = createSignal<string | null>(null);
   const [comparison, setComparison] = createSignal<TinyGptComparison | null>(null);
   const [generating, setGenerating] = createSignal(false);
-  const [generation, setGeneration] = createSignal<TinyGptGeneration | null>(null);
   const [wasm, setWasm] = createSignal<TinyGptWasmModel | null>(null);
   const [wasmLoading, setWasmLoading] = createSignal(false);
   const [wasmError, setWasmError] = createSignal<string | null>(null);
-  const [wasmGeneration, setWasmGeneration] = createSignal<TinyGptWasmGeneration | null>(null);
   const [wasmComparison, setWasmComparison] = createSignal<TinyGptWasmComparison | null>(null);
 
   // --- Solid 2 (BPE, ~1M params, WASM-primary) ---
@@ -80,6 +91,7 @@ export default function IntegerGptPanel() {
   );
   // --- Custom docs (same BPE/WASM engine, user-supplied corpus) ---
   const [custom, setCustom] = createSignal<Solid2WasmModel | null>(null);
+  const [customAssistant, setCustomAssistant] = createSignal(false);
   const [solid2Loading, setSolid2Loading] = createSignal(false);
   const [solid2Error, setSolid2Error] = createSignal<string | null>(null);
   const [solid2Gen, setSolid2Gen] = createSignal<Solid2Generation | null>(null);
@@ -89,17 +101,64 @@ export default function IntegerGptPanel() {
   let solid2Decoder: Solid2Decoder | null = null;
   let solid2Timer: ReturnType<typeof setTimeout> | null = null;
 
-  const stopSolid2 = (finalize: boolean) => {
+  const [chat, setChat] = createSignal<readonly ChatMessage[]>([]);
+  let nextMessageId = 1;
+  let chatLog: HTMLDivElement | undefined;
+
+  const pushMessage = (
+    role: ChatMessage["role"],
+    text: string,
+    meta?: string,
+  ): void => {
+    setChat((previous) => [
+      ...previous,
+      { id: nextMessageId++, role, text, meta },
+    ]);
+  };
+
+  const clearChat = (): void => {
+    setChat([]);
+  };
+
+  const bpeMeta = (generation: Solid2Generation): string =>
+    `${generation.newTokenCount} tokens · ${(
+      (generation.newTokenCount / Math.max(generation.elapsedMs, 1)) *
+      1000
+    ).toFixed(0)} tok/s wall · ${generation.computeTokensPerSecond.toFixed(
+      0,
+    )} tok/s WASM${generation.stopped ? " · stopped" : ""}`;
+
+  const stopSolid2 = (): void => {
     if (solid2Timer !== null) {
       clearTimeout(solid2Timer);
       solid2Timer = null;
     }
-    const decoder = solid2Decoder;
     solid2Decoder = null;
     setSolid2Streaming(false);
     setGenerating(false);
-    if (decoder && finalize) setSolid2Gen(decoder.result());
   };
+
+  /** Stops the decoder and appends the partial answer to the chat. */
+  const finishBpe = (finalize: boolean): void => {
+    const decoder = solid2Decoder;
+    stopSolid2();
+    if (finalize && decoder) {
+      const result = decoder.result();
+      pushMessage(
+        "assistant",
+        result.text || "(empty generation)",
+        bpeMeta(result),
+      );
+    }
+    setSolid2Gen(null);
+  };
+
+  createEffect(
+    () => ({ count: chat().length, live: solid2Gen()?.text }),
+    () => {
+      if (chatLog !== undefined) chatLog.scrollTop = chatLog.scrollHeight;
+    },
+  );
 
   const [prompt, setPrompt] = createSignal("Alice was");
 
@@ -141,7 +200,7 @@ export default function IntegerGptPanel() {
     () => ({ example: example(), custom: customSolid2() }),
     (source) => {
       if (source.example !== "solid2") {
-        stopSolid2(true);
+        finishBpe(false);
         return;
       }
       if (source.custom) {
@@ -198,7 +257,8 @@ export default function IntegerGptPanel() {
   );
 
   const handleUseCheckpoint = (next: TinyGptCheckpoint): void => {
-    stopSolid2(true);
+    finishBpe(false);
+    clearChat();
     setExample("alice");
     if (next === checkpoint()) {
       // The trained checkpoint is already active. Avoid clearing the loaded
@@ -209,26 +269,24 @@ export default function IntegerGptPanel() {
     setModel(null);
     setWasm(null);
     setWasmError(null);
-    setGeneration(null);
     setComparison(null);
-    setWasmGeneration(null);
     setWasmComparison(null);
   };
 
   const handleResetCheckpoint = (): void => {
-    stopSolid2(true);
+    finishBpe(false);
+    clearChat();
     setCheckpoint(TINY_GPT_CHECKPOINT);
     setModel(null);
     setWasm(null);
     setWasmError(null);
-    setGeneration(null);
     setComparison(null);
-    setWasmGeneration(null);
     setWasmComparison(null);
   };
 
   const handleUseSolid2Model = (model: Solid2WasmModel): void => {
-    stopSolid2(true);
+    finishBpe(false);
+    clearChat();
     setCustomSolid2(model);
     setSolid2(model);
     setSolid2Error(null);
@@ -239,7 +297,8 @@ export default function IntegerGptPanel() {
   };
 
   const handleResetSolid2 = (): void => {
-    stopSolid2(true);
+    finishBpe(false);
+    clearChat();
     setCustomSolid2(null);
     setSolid2(null);
     setSolid2Gen(null);
@@ -248,16 +307,25 @@ export default function IntegerGptPanel() {
   };
 
   const handleUseCustomModel = (model: Solid2WasmModel): void => {
-    stopSolid2(true);
+    finishBpe(false);
+    clearChat();
+    const assistant = model.checkpoint.meta?.training?.assistant === true;
+    setCustomAssistant(assistant);
     setCustom(model);
     setSolid2Gen(null);
-    setPrompt(model.checkpoint.prompts?.[0] ?? "Write a short introduction.");
+    setPrompt(
+      assistant
+        ? ""
+        : (model.checkpoint.prompts?.[0] ?? "Write a short introduction."),
+    );
     setExample("custom");
     setStatus(null);
   };
 
   const handleResetCustom = (): void => {
-    stopSolid2(true);
+    finishBpe(false);
+    clearChat();
+    setCustomAssistant(false);
     setCustom(null);
     setSolid2Gen(null);
     setPrompt("Write a short introduction.");
@@ -270,27 +338,48 @@ export default function IntegerGptPanel() {
     return (aliceMode() === "wasm" ? wasm()?.config : model()?.config) ?? model()?.config ?? null;
   });
 
-  const handleGenerate = () => {
+  const hasActiveModel = (): boolean =>
+    example() === "solid2"
+      ? solid2() !== null
+      : example() === "custom"
+        ? custom() !== null
+        : aliceMode() === "wasm"
+          ? wasm() !== null
+          : model() !== null;
+
+  const handleGenerate = (inputOverride?: string): void => {
     if (generating()) return;
+    const input = (inputOverride ?? prompt()).trim();
+    if (input.length === 0 || !hasActiveModel()) return;
+
+    setStatus(null);
+    setPrompt("");
+    pushMessage("user", input);
+
     if (example() !== "alice") {
       const isCustomModel = example() === "custom";
       const m = isCustomModel ? custom() : solid2();
       if (!m) return;
-      const inputPrompt =
-        isCustomModel && prompt().trim().length === 0
-          ? (m.checkpoint.prompts?.[0] ?? "Write a short introduction.")
-          : prompt();
-      if (inputPrompt !== prompt()) setPrompt(inputPrompt);
-      setStatus(null);
       setSolid2Gen(null);
       setGenerating(true);
       setSolid2Streaming(true);
-      const decoder = createSolid2Decoder(m, inputPrompt, {
-        maxTokens: 160,
-        temperature: 0.7,
-        topK: 40,
-        promptFormat: isCustomModel ? "text" : "chat",
-      });
+      let decoder: Solid2Decoder;
+      try {
+        decoder = createSolid2Decoder(m, input, {
+          maxTokens: isCustomModel && customAssistant() ? 200 : 160,
+          temperature: isCustomModel && customAssistant() ? 0.4 : 0.7,
+          topK: 40,
+          promptFormat:
+            isCustomModel && !customAssistant() ? "text" : "chat",
+        });
+      } catch (e) {
+        setGenerating(false);
+        setSolid2Streaming(false);
+        const message = `Generation error: ${(e as Error).message}`;
+        setStatus(message);
+        pushMessage("assistant", message);
+        return;
+      }
       solid2Decoder = decoder;
       // Run a tight integer-decode burst, then yield to the event loop. This is
       // the same schedule the reference worker uses: 40 ms of compute per turn
@@ -308,9 +397,7 @@ export default function IntegerGptPanel() {
         }
         setSolid2Gen(decoder.result());
         if (done) {
-          solid2Decoder = null;
-          setSolid2Streaming(false);
-          setGenerating(false);
+          finishBpe(true);
           return;
         }
         solid2Timer = setTimeout(tick, 0);
@@ -318,36 +405,57 @@ export default function IntegerGptPanel() {
       solid2Timer = setTimeout(tick, 0);
       return;
     }
-    if (aliceMode() === "wasm") {
-      const current = wasm();
-      if (!current) return;
-      setGenerating(true);
-      setWasmGeneration(null);
-      setStatus(null);
-      setTimeout(() => {
-        try {
-          setWasmGeneration(generateTinyGptWasm(current, prompt(), { maxTokens: 24, temperature: 0.8, topK: 40 }));
-        } catch (e) {
-          setStatus(`Generation error: ${(e as Error).message}`);
-        } finally {
-          setGenerating(false);
-        }
-      }, 10);
-      return;
-    }
-    const current = model();
-    if (!current) return;
+
+    const requestExample = example();
     setGenerating(true);
-    setGeneration(null);
     setTimeout(() => {
       try {
-        setGeneration(generateTinyGpt(current, prompt(), aliceMode() as TinyGptMode, { maxTokens: 24, temperature: 0.8, topK: 40 }));
+        if (example() !== requestExample) return;
+        if (aliceMode() === "wasm") {
+          const current = wasm();
+          if (!current) throw new Error("The WASM model is still loading.");
+          const result = generateTinyGptWasm(current, input, {
+            maxTokens: 24,
+            temperature: 0.8,
+            topK: 40,
+          });
+          pushMessage(
+            "assistant",
+            result.text || "(empty generation)",
+            `${result.steps} tokens in ${result.elapsedMs.toFixed(1)}ms · WASM`,
+          );
+        } else {
+          const current = model();
+          if (!current) throw new Error("The model is still loading.");
+          const result = generateTinyGpt(
+            current,
+            input,
+            aliceMode() as TinyGptMode,
+            { maxTokens: 24, temperature: 0.8, topK: 40 },
+          );
+          pushMessage(
+            "assistant",
+            result.text || "(empty generation)",
+            `${result.steps} tokens in ${result.elapsedMs.toFixed(1)}ms · ${result.mode}`,
+          );
+        }
       } catch (e) {
-        setStatus(`Generation error: ${(e as Error).message}`);
+        const message = `Generation error: ${(e as Error).message}`;
+        setStatus(message);
+        pushMessage("assistant", message);
       } finally {
         setGenerating(false);
       }
     }, 10);
+  };
+
+  const lastUserPrompt = (): string => {
+    const messages = chat();
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index]!;
+      if (message.role === "user") return message.text;
+    }
+    return prompt();
   };
 
   const handleCompare = () => {
@@ -355,35 +463,55 @@ export default function IntegerGptPanel() {
       setStatus("Comparison against a float baseline is not enabled for the 4k-vocab BPE model (JS float/int8 inference is too slow in-browser). Use the Alice example for float-vs-integer comparison.");
       return;
     }
+    const query = prompt().trim().length > 0 ? prompt() : lastUserPrompt();
+    if (query.trim().length === 0) return;
     if (aliceMode() === "wasm") {
       const wasmModel = wasm();
       const tsModel = model();
       if (!wasmModel || !tsModel) return;
-      try { setWasmComparison(compareTinyGptWasm(wasmModel, tsModel, prompt())); }
+      try { setWasmComparison(compareTinyGptWasm(wasmModel, tsModel, query)); }
       catch (e) { setStatus(`Comparison error: ${(e as Error).message}`); }
       return;
     }
     const current = model();
     if (!current) return;
-    try { setComparison(compareTinyGpt(current, prompt())); }
+    try { setComparison(compareTinyGpt(current, query)); }
     catch (e) { setStatus(`Comparison error: ${(e as Error).message}`); }
   };
 
-  const generateDisabled = () =>
-    generating() ||
-    (example() === "solid2"
-      ? !solid2()
-      : example() === "custom"
-        ? !custom()
-        : aliceMode() === "wasm"
-          ? !wasm()
-          : !model());
+  const generateDisabled = (): boolean => generating() || !hasActiveModel();
+  const sendDisabled = (): boolean =>
+    generateDisabled() || prompt().trim().length === 0;
 
-  const aliceDisplayGen = createMemo(() => {
-    if (example() !== "alice") return null;
-    if (aliceMode() === "wasm") { const c = wasmGeneration(); return c ? { prompt: c.promptTokens.join(" "), text: c.text, steps: c.steps, elapsedMs: c.elapsedMs, mode: "wasm" } : null; }
-    const c = generation(); return c ? { prompt: c.promptTokens.join(" "), text: c.text, steps: c.steps, elapsedMs: c.elapsedMs, mode: c.mode } : null;
-  });
+  const chatSuggestions = (): readonly string[] =>
+    (example() === "alice" ? ALICE_SUGGESTIONS : activePrompts()).slice(0, 5);
+
+  const activeModelLabel = (): string =>
+    example() === "alice"
+      ? "Alice"
+      : example() === "solid2"
+        ? "Solid 2"
+        : customAssistant()
+          ? "custom assistant"
+          : "custom model";
+
+  const liveAnswerText = (): string => {
+    if (example() === "alice") return "";
+    return solid2Gen()?.text ?? "";
+  };
+
+  const liveAnswerMeta = (): string | undefined => {
+    if (example() === "alice") return undefined;
+    const generation = solid2Gen();
+    return generation ? bpeMeta(generation) : undefined;
+  };
+
+  const handleComposerKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      handleGenerate();
+    }
+  };
 
   const aliceComparison = createMemo(() => {
     if (example() !== "alice") return null;
@@ -395,6 +523,30 @@ export default function IntegerGptPanel() {
     return { leftLabel: "Float32 Top 5", rightLabel: "Int8 Top 5", leftTop: c.floatTop, rightTop: c.int8Top, topOneMatches: c.topOneMatches, overlapAtFive: c.overlapAtFive, meanProbabilityDelta: c.meanProbabilityDelta };
   });
 
+  const renderAnswer = (text: string) => (
+    <For each={splitAnswer(text)}>
+      {(segment) =>
+        segment.kind === "code" ? (
+          <pre class="chat-code">
+            <code>{segment.text}</code>
+          </pre>
+        ) : (
+          <p>
+            <For each={splitInlineCode(segment.text)}>
+              {(part) =>
+                part.kind === "code" ? (
+                  <code class="chat-inline-code">{part.text}</code>
+                ) : (
+                  part.text
+                )
+              }
+            </For>
+          </p>
+        )
+      }
+    </For>
+  );
+
   return (
     <main class="workspace language-workspace">
       <div class="language-toolbar" style="flex-wrap: wrap; gap: 8px;">
@@ -403,8 +555,8 @@ export default function IntegerGptPanel() {
             type="button"
             class={{ active: example() === "alice" }}
             onClick={() => {
-              stopSolid2(false);
-              setSolid2Gen(null);
+              finishBpe(false);
+              clearChat();
               setExample("alice");
               setPrompt("Alice was");
               setStatus(null);
@@ -416,8 +568,8 @@ export default function IntegerGptPanel() {
             type="button"
             class={{ active: example() === "solid2" }}
             onClick={() => {
-              stopSolid2(false);
-              setSolid2Gen(null);
+              finishBpe(false);
+              clearChat();
               setExample("solid2");
               setPrompt("What are split effects?");
               setStatus(null);
@@ -429,11 +581,14 @@ export default function IntegerGptPanel() {
             type="button"
             class={{ active: example() === "custom" }}
             onClick={() => {
-              stopSolid2(false);
-              setSolid2Gen(null);
+              finishBpe(false);
+              clearChat();
               setExample("custom");
               setPrompt(
-                custom()?.checkpoint.prompts?.[0] ?? "Write a short introduction.",
+                customAssistant()
+                  ? ""
+                  : (custom()?.checkpoint.prompts?.[0] ??
+                      "Write a short introduction."),
               );
               setStatus(null);
             }}
@@ -457,7 +612,13 @@ export default function IntegerGptPanel() {
         <Show when={example() === "custom"}>
           <span class="muted">
             {custom()
-              ? `Integer-only ${custom()!.backend === "wasm-simd" ? "WebAssembly SIMD" : "WebAssembly"}, BPE 4096, ctx 256.`
+              ? `Integer-only ${
+                  custom()!.backend === "wasm-simd"
+                    ? "WebAssembly SIMD"
+                    : "WebAssembly"
+                }, BPE 4096, ctx 256 · ${
+                  customAssistant() ? "assistant (Q&A)" : "text continuation"
+                }.`
               : "Train a model on your own Markdown docs below, then use it here."}
           </span>
         </Show>
@@ -578,58 +739,149 @@ export default function IntegerGptPanel() {
         <Show when={example() === "solid2" && solid2Loading()}><div class="banner info"><span>Loading Solid 2 model (weights.bin + tokenizer + WASM quantization)...</span></div></Show>
         <Show when={example() === "solid2" && solid2Error()}><div class="banner warning"><span style="white-space: pre-wrap;">{solid2Error()}</span></div></Show>
 
-        <div class="prompt-row" style="display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap;">
-          <input
-            type="text"
-            class="chat-input"
-            style="flex: 1; min-width: 220px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; color: var(--text);"
-            placeholder={
-              example() === "solid2"
-                ? "Ask a Solid 2 question..."
-                : example() === "custom"
-                  ? "Type a prompt about your docs..."
-                  : "Type a prompt..."
+        <div
+          class="chat-log"
+          role="log"
+          aria-live="polite"
+          aria-label="Integer GPT chat"
+          ref={(element) => {
+            chatLog = element;
+            element.scrollTop = element.scrollHeight;
+          }}
+        >
+          <Show
+            when={chat().length > 0}
+            fallback={
+              <div class="chat-empty">
+                <strong>
+                  {hasActiveModel()
+                    ? `Chat with the ${activeModelLabel()}`
+                    : `No ${activeModelLabel()} model loaded`}
+                </strong>
+                <span>
+                  {hasActiveModel()
+                    ? example() === "alice"
+                      ? "Ask the word-level model to continue a phrase, or start with a suggestion."
+                      : customAssistant()
+                        ? "Ask a question about your documents, or start with a suggestion."
+                        : "Type a prompt to continue from your documents, or start with a suggestion."
+                    : "Load or train a model first; the training panel is below."}
+                </span>
+                <Show when={hasActiveModel() && chatSuggestions().length > 0}>
+                  <div class="completion-list">
+                    <For each={chatSuggestions()}>
+                      {(suggestion) => (
+                        <button
+                          type="button"
+                          class="completion-chip"
+                          onClick={() => handleGenerate(suggestion)}
+                        >
+                          <span class="completion-word">{suggestion}</span>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
             }
-            value={prompt()}
-            onInput={(e) => setPrompt(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
-            disabled={generating()}
-          />
-          <button type="button" class="button primary" onClick={handleGenerate} disabled={generateDisabled()}>
-            {generating() ? "..." : "Generate"}
-          </button>
-          <Show when={example() !== "alice" && solid2Streaming()}>
-            <button type="button" class="button secondary" onClick={() => stopSolid2(true)}>Stop</button>
+          >
+            <For each={chat()}>
+              {(message) => (
+                <div class={`chat-message ${message.role}`}>
+                  <div class="chat-bubble">
+                    <span class="chat-role">
+                      {message.role === "user" ? "You" : "Model"}
+                    </span>
+                    {renderAnswer(message.text)}
+                    <Show when={message.meta}>
+                      <div class="chat-meta">
+                        <span>{message.meta}</span>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              )}
+            </For>
           </Show>
-          <Show when={example() === "alice"}>
-            <button type="button" class="button secondary" onClick={handleCompare} disabled={generating() || !model()}>Compare</button>
+
+          <Show when={generating()}>
+            <div class="chat-message assistant">
+              <div class="chat-bubble">
+                <span class="chat-role">Model</span>
+                <Show
+                  when={liveAnswerText()}
+                  fallback={<p class="muted">Thinking…</p>}
+                >
+                  {renderAnswer(liveAnswerText())}
+                </Show>
+                <Show when={liveAnswerMeta()}>
+                  {(meta) => (
+                    <div class="chat-meta">
+                      <span>{meta()}</span>
+                      <Show when={solid2Streaming()}>
+                        <span>streaming</span>
+                      </Show>
+                    </div>
+                  )}
+                </Show>
+              </div>
+            </div>
           </Show>
         </div>
 
-        <Show when={example() !== "alice" && activePrompts().length > 0}>
-          <div style="margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap;">
-            <For each={activePrompts().slice(0, 5)}>
-              {(p) => <button type="button" class="button secondary" style="font-size: 0.8rem; padding: 4px 8px;" onClick={() => setPrompt(p)}>{p}</button>}
-            </For>
+        <div class="chat-composer">
+          <textarea
+            class="text-area chat-input"
+            aria-label="Chat message"
+            rows="2"
+            spellcheck={false}
+            disabled={generating() || !hasActiveModel()}
+            placeholder={
+              !hasActiveModel()
+                ? "Load a model first…"
+                : example() === "solid2"
+                  ? "Ask a Solid 2 question…"
+                  : example() === "custom"
+                    ? customAssistant()
+                      ? "Ask about your documents…"
+                      : "Continue from your documents…"
+                    : "Ask the Alice model…"
+            }
+            value={prompt()}
+            onInput={(event) => setPrompt(event.currentTarget.value)}
+            onKeyDown={handleComposerKeyDown}
+          />
+          <button
+            type="button"
+            class="button primary chat-send"
+            disabled={sendDisabled()}
+            onClick={() => handleGenerate()}
+          >
+            Send
+          </button>
+          <Show when={example() !== "alice" && solid2Streaming()}>
+            <button
+              type="button"
+              class="button secondary chat-send"
+              onClick={() => finishBpe(true)}
+            >
+              Stop
+            </button>
+          </Show>
+        </div>
+        <p class="chat-hint">Enter to send · Shift+Enter for a new line</p>
+
+        <Show when={example() === "alice"}>
+          <div class="button-row">
+            <button
+              type="button"
+              class="button ghost"
+              onClick={handleCompare}
+              disabled={generating() || !model()}
+            >
+              Compare float vs int8
+            </button>
           </div>
-        </Show>
-
-        <Show when={example() === "alice" && aliceDisplayGen()}>
-          {(c) => (
-            <div class="chat-log" style="margin-top: 24px;">
-              <div class="chat-message user"><div class="chat-bubble"><p><strong>Prompt:</strong> {c().prompt}</p></div></div>
-              <div class="chat-message assistant"><div class="chat-bubble"><p>{c().text}</p><div class="chat-meta">{c().steps} tokens in {c().elapsedMs.toFixed(1)}ms ({c().mode})</div></div></div>
-            </div>
-          )}
-        </Show>
-
-        <Show when={example() !== "alice" && solid2Gen()}>
-          {(c) => (
-            <div class="chat-log" style="margin-top: 24px;">
-              <div class="chat-message user"><div class="chat-bubble"><p><strong>You:</strong> {c().prompt}</p></div></div>
-              <div class="chat-message assistant"><div class="chat-bubble"><p style="white-space: pre-wrap;">{c().text || <span class="muted">(empty generation)</span>}</p><div class="chat-meta">{c().newTokenCount} tokens in {c().elapsedMs.toFixed(1)}ms · {(c().newTokenCount / Math.max(c().elapsedMs, 1) * 1000).toFixed(0)} tok/s wall · {c().computeTokensPerSecond.toFixed(0)} tok/s WASM (integer-only, BPE){solid2Streaming() ? " · streaming" : ""}{c().stopped ? "" : " · max tokens"}</div></div></div>
-            </div>
-          )}
         </Show>
 
         <Show when={example() === "alice" && aliceComparison()}>

@@ -358,6 +358,18 @@ button {
   gap: 10px;
 }
 
+.training-presets {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.training-presets .button {
+  font-size: 0.76rem;
+  padding: 5px 10px;
+}
+
 .training-field {
   display: flex;
   flex-direction: column;

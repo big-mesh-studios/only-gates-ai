@@ -34,9 +34,11 @@ import {
  */
 
 const tokenCache = createTokenStreamCache("gate-forest-custom-training-data");
-const TOKEN_SCHEME_VERSION = 1;
+const TOKEN_SCHEME_VERSION = 2;
 const VALIDATION_FRACTION = 0.1;
 const MAX_PROMPTS = 5;
+const QA_REPEATS = 3;
+const QA_VALIDATION_EVERY = 10;
 
 export type CustomDocKind = "markdown" | "html";
 
@@ -56,6 +58,9 @@ export interface CustomTrainingDataInfo {
   readonly tokenizerVocab: number;
   readonly cached: boolean;
   readonly warmStart: boolean;
+  /** True when the corpus was converted into question/answer pairs. */
+  readonly assistant: boolean;
+  readonly qaPairs: number;
 }
 
 export interface CustomTrainingData {
@@ -70,6 +75,11 @@ export interface CustomDataOptions {
   readonly tokenizerUrl?: string;
   /** Base URL for the deployed tokenizer. Defaults to `SOLID2_MODEL_BASE`. */
   readonly modelBaseUrl?: string;
+  /**
+   * Builds question/answer pairs from Markdown headings and trains with the
+   * chat special tokens instead of treating the docs as plain text.
+   */
+  readonly assistant?: boolean;
   readonly onStatus?: (status: string) => void;
   readonly shouldCancel?: () => boolean;
 }
@@ -418,6 +428,11 @@ export function htmlToMarkdown(html: string): string {
   return blocks.join("\n\n");
 }
 
+/** Removes leading YAML front matter used by many documentation sites. */
+export function stripFrontMatter(text: string): string {
+  return text.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "");
+}
+
 async function fetchCustomDocs(
   urls: readonly string[],
   options: CustomDataOptions,
@@ -465,6 +480,8 @@ async function fetchCustomDocs(
             `or block automated clients.`,
         );
       }
+    } else {
+      text = stripFrontMatter(raw);
     }
     if (text.trim().length === 0) {
       throw new Error(`${url} is empty.`);
@@ -504,6 +521,12 @@ function stripMarkdown(value: string): string {
     .trim();
 }
 
+function cleanMarkdownLinks(value: string): string {
+  return value
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+}
+
 /** Derives short prompts from Markdown headings, falling back to first lines. */
 export function extractCustomPrompts(
   docs: readonly CustomDoc[],
@@ -538,9 +561,197 @@ export function extractCustomPrompts(
   return prompts;
 }
 
+export interface CustomQaPair {
+  readonly question: string;
+  readonly answer: string;
+}
+
+interface MarkdownSection {
+  readonly title: string;
+  readonly body: string;
+}
+
+/**
+ * Splits Markdown into heading-delimited sections. Headings inside fenced code
+ * blocks are ignored, so Luau comments that start with `#` are not mistaken for
+ * document structure.
+ */
+function extractMarkdownSections(doc: CustomDoc): MarkdownSection[] {
+  const text = stripFrontMatter(doc.text);
+  const sections: MarkdownSection[] = [];
+  const lines = text.split(/\r?\n/);
+  let title: string | null = null;
+  let body: string[] = [];
+  let fence: string | null = null;
+
+  const flush = () => {
+    if (title === null) return;
+    const text = body.join("\n").trim();
+    if (text.length >= 20) sections.push({ title, body: text });
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    const fenceMatch = /^(```+|~~~+)/.exec(trimmed);
+    if (fenceMatch) {
+      if (fence === null) {
+        fence = fenceMatch[1]!;
+      } else if (trimmed.startsWith(fence)) {
+        fence = null;
+      }
+    }
+
+    if (fence === null) {
+      const heading = /^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line);
+      if (heading) {
+        flush();
+        title = stripMarkdown(heading[1] ?? "");
+        body = [];
+        continue;
+      }
+    }
+
+    if (title !== null) body.push(line);
+  }
+  flush();
+
+  if (sections.length === 0) {
+    const text = stripFrontMatter(doc.text).trim();
+    if (text.length === 0) return [];
+    const firstLine =
+      text
+        .split(/\r?\n/)
+        .map((line) => stripMarkdown(line))
+        .find((line) => line.length > 0) ?? "Overview";
+    return [{ title: firstLine.slice(0, 80), body: text }];
+  }
+  return sections;
+}
+
+/** Builds chat-formatted question/answer examples from Markdown headings. */
+export function buildCustomQaPairs(
+  docs: readonly CustomDoc[],
+): CustomQaPair[] {
+  const pairs: CustomQaPair[] = [];
+  const seen = new Set<string>();
+  for (const doc of docs) {
+    for (const section of extractMarkdownSections(doc)) {
+      const title = section.title.replace(/[.!?]+$/, "").trim();
+      if (title.length < 2) continue;
+      const alreadyQuestion =
+        /\?$/.test(section.title) ||
+        /^(?:what|how|why|when|where|which|who|can|does|do|is|are|should|will)\b/i.test(
+          title,
+        );
+      const questions = alreadyQuestion
+        ? [`${title}?`]
+        : [
+            `What is ${title}?`,
+            `How do I use ${title}?`,
+            `Explain ${title}.`,
+          ];
+      const answer = cleanMarkdownLinks(section.body);
+      for (const question of questions) {
+        const key = question.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        pairs.push({ question, answer });
+      }
+    }
+  }
+  return pairs;
+}
+
 interface CustomTokenStream {
   readonly trainingTokens: Uint16Array;
   readonly validationTokens: Uint16Array;
+}
+
+function specialIds(tokenizer: BpeTokenizer): {
+  readonly user: number;
+  readonly assistant: number;
+  readonly end: number;
+} {
+  const user = tokenizer.idFor(BPE_SPECIAL.user);
+  const assistant = tokenizer.idFor(BPE_SPECIAL.assistant);
+  const end = tokenizer.idFor(BPE_SPECIAL.end);
+  if (user === undefined || assistant === undefined || end === undefined) {
+    throw new Error("The tokenizer is missing the chat special tokens.");
+  }
+  return { user, assistant, end };
+}
+
+function encodeQaPair(
+  tokenizer: BpeTokenizer,
+  pair: CustomQaPair,
+  ids: { readonly user: number; readonly assistant: number; readonly end: number },
+): number[] {
+  const tokens: number[] = [ids.user];
+  appendIds(tokens, tokenizer.encodeOrdinary(pair.question));
+  tokens.push(ids.assistant);
+  appendIds(tokens, tokenizer.encodeOrdinary(pair.answer));
+  tokens.push(ids.end);
+  return tokens;
+}
+
+async function buildCustomQaTokenStream(
+  tokenizer: BpeTokenizer,
+  pairs: readonly CustomQaPair[],
+  context: number,
+  onProgress: (fraction: number) => void,
+  shouldCancel?: () => boolean,
+): Promise<CustomTokenStream> {
+  const ids = specialIds(tokenizer);
+  const validationPairs = pairs.filter(
+    (_pair, index) => (index + 1) % QA_VALIDATION_EVERY === 0,
+  );
+  const trainingPairs = pairs.filter(
+    (_pair, index) => (index + 1) % QA_VALIDATION_EVERY !== 0,
+  );
+  const source = trainingPairs.length > 0 ? trainingPairs : pairs;
+
+  const trainingTokens: number[] = [];
+  const total = source.length * QA_REPEATS;
+  let completed = 0;
+  let lastPercent = -1;
+  for (let pass = 0; pass < QA_REPEATS; pass++) {
+    for (const pair of source) {
+      appendIds(trainingTokens, encodeQaPair(tokenizer, pair, ids));
+      completed += 1;
+      if (completed % 8 === 0) {
+        const fraction = total > 0 ? completed / total : 1;
+        const percent = Math.floor(fraction * 100);
+        if (percent !== lastPercent) {
+          lastPercent = percent;
+          onProgress(fraction);
+        }
+        await yieldToBrowser();
+        if (shouldCancel?.()) {
+          throw new Error("Training was cancelled.");
+        }
+      }
+    }
+  }
+  onProgress(1);
+
+  const validationTokens: number[] = [];
+  for (const pair of validationPairs) {
+    appendIds(validationTokens, encodeQaPair(tokenizer, pair, ids));
+  }
+
+  const minTraining = context + 2;
+  if (trainingTokens.length < minTraining) {
+    throw new Error(
+      `The documentation produced only ${trainingTokens.length.toLocaleString()} ` +
+        `training tokens, but this model needs at least ${minTraining.toLocaleString()}. ` +
+        `Add more documentation.`,
+    );
+  }
+
+  return {
+    trainingTokens: Uint16Array.from(trainingTokens),
+    validationTokens: Uint16Array.from(validationTokens),
+  };
 }
 
 async function buildCustomTokenStream(
@@ -637,11 +848,21 @@ export async function loadCustomTrainingData(
     throw new Error("The downloaded documents are empty.");
   }
 
+  const assistant = options.assistant === true;
+  const qaPairs = assistant ? buildCustomQaPairs(docs) : [];
+  if (assistant && qaPairs.length === 0) {
+    throw new Error(
+      "Assistant (Q&A) mode needs Markdown headings to build questions. " +
+        "Uncheck it for plain-text training, or add heading-based documents.",
+    );
+  }
+
   const dataHash = hashString(
     docs.map((doc) => `${doc.url}\u0000${doc.text}`).join("\u0001"),
   );
   const tokenizerHash = hashString(JSON.stringify(tokenizer.toJSON()));
-  const cacheKey = `v${TOKEN_SCHEME_VERSION}:${tokenizerHash}:${dataHash}`;
+  const mode = assistant ? "qa" : "docs";
+  const cacheKey = `v${TOKEN_SCHEME_VERSION}:${mode}:${tokenizerHash}:${dataHash}`;
 
   let stream: CustomTokenStream;
   let cached = false;
@@ -656,17 +877,33 @@ export async function loadCustomTrainingData(
       `Loaded the cached token stream (${hit.trainingTokens.length.toLocaleString()} training tokens).`,
     );
   } else {
-    options.onStatus?.(
-      `Tokenizing ${urls.length} document${urls.length === 1 ? "" : "s"} with the BPE tokenizer...`,
-    );
-    stream = await buildCustomTokenStream(
-      tokenizer,
-      docs,
-      SOLID2_TRAIN_CONFIG.context,
-      (fraction) =>
-        options.onStatus?.(`Tokenizing documents (${Math.round(fraction * 100)}%)...`),
-      options.shouldCancel,
-    );
+    if (assistant) {
+      options.onStatus?.(
+        `Building ${qaPairs.length.toLocaleString()} question/answer examples from Markdown headings...`,
+      );
+      stream = await buildCustomQaTokenStream(
+        tokenizer,
+        qaPairs,
+        SOLID2_TRAIN_CONFIG.context,
+        (fraction) =>
+          options.onStatus?.(
+            `Tokenizing question/answer examples (${Math.round(fraction * 100)}%)...`,
+          ),
+        options.shouldCancel,
+      );
+    } else {
+      options.onStatus?.(
+        `Tokenizing ${urls.length} document${urls.length === 1 ? "" : "s"} with the BPE tokenizer...`,
+      );
+      stream = await buildCustomTokenStream(
+        tokenizer,
+        docs,
+        SOLID2_TRAIN_CONFIG.context,
+        (fraction) =>
+          options.onStatus?.(`Tokenizing documents (${Math.round(fraction * 100)}%)...`),
+        options.shouldCancel,
+      );
+    }
     options.onStatus?.("Caching the token stream in IndexedDB...");
     await tokenCache.write({
       key: cacheKey,
@@ -676,9 +913,22 @@ export async function loadCustomTrainingData(
     });
   }
 
-  const prompts = extractCustomPrompts(docs);
+  let prompts: string[];
+  if (assistant) {
+    // One suggestion per section, rather than three variants of the first one.
+    prompts = [];
+    const seenAnswers = new Set<string>();
+    for (const pair of qaPairs) {
+      if (seenAnswers.has(pair.answer)) continue;
+      seenAnswers.add(pair.answer);
+      prompts.push(pair.question);
+      if (prompts.length >= MAX_PROMPTS) break;
+    }
+  } else {
+    prompts = extractCustomPrompts(docs);
+  }
   const corpusHash = hashString(
-    `${TOKEN_SCHEME_VERSION}:${tokenizerHash}:${dataHash}`,
+    `${TOKEN_SCHEME_VERSION}:${mode}:${tokenizerHash}:${dataHash}`,
   );
   const info: CustomTrainingDataInfo = {
     documentCount: docs.length,
@@ -690,12 +940,15 @@ export async function loadCustomTrainingData(
     tokenizerVocab: tokenizer.vocab.length,
     cached,
     warmStart: false,
+    assistant,
+    qaPairs: qaPairs.length,
   };
 
   const htmlCount = docs.filter((doc) => doc.kind === "html").length;
   options.onStatus?.(
     `Ready: ${stream.trainingTokens.length.toLocaleString()} training tokens from ` +
       `${docs.length} document${docs.length === 1 ? "" : "s"}` +
+      `${assistant ? ` and ${qaPairs.length.toLocaleString()} Q&A examples` : ""}` +
       `${htmlCount > 0 ? ` (${htmlCount} HTML page${htmlCount === 1 ? "" : "s"} converted)` : ""}` +
       `${cached ? " (cached)" : ""}.`,
   );
@@ -724,6 +977,7 @@ export async function trainCustomGpt(
 ): Promise<CustomTrainingResult> {
   const data = await loadCustomTrainingData(options);
   const urls = parseDocUrls(options.urls);
+  const assistant = data.info.assistant;
 
   let initialWeights: Float32Array | undefined;
   let warmStarted = false;
@@ -758,6 +1012,7 @@ export async function trainCustomGpt(
   const attachSources = (state: BrowserTrainingState): BrowserTrainingState => ({
     ...state,
     sourceUrls: urls,
+    assistant,
   });
 
   const result = await trainTokenGpt({
@@ -782,7 +1037,9 @@ export async function trainCustomGpt(
     saveEvery: options.saveEvery ?? 100,
     kind: "custom",
     modelMeta: {
-      name: "tiny-gpt-custom-browser",
+      name: assistant
+        ? "tiny-gpt-custom-qa-browser"
+        : "tiny-gpt-custom-browser",
       source:
         "Custom Markdown, text, and HTML documents supplied by the user: " +
         `${urls.slice(0, 8).join(", ")}` +
@@ -805,7 +1062,10 @@ export async function trainCustomGpt(
       name: result.checkpoint.meta.name,
       source: result.checkpoint.meta.source,
       license: result.checkpoint.meta.license,
-      training: result.checkpoint.meta.training,
+      training: {
+        ...result.checkpoint.meta.training,
+        assistant,
+      },
     },
     samples: [...result.checkpoint.samples],
     prompts: [...data.prompts],

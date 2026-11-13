@@ -173,6 +173,8 @@ function parseState(value: unknown): BrowserTrainingState {
           (entry): entry is string => typeof entry === "string",
         )
       : undefined,
+    assistant:
+      typeof value.assistant === "boolean" ? value.assistant : undefined,
   };
 }
 

@@ -76,6 +76,8 @@ export interface BrowserTrainingState {
   readonly savedAt: number;
   /** Source URLs for a custom-docs run, so a saved run can be resumed. */
   readonly sourceUrls?: readonly string[];
+  /** True when a custom-docs run used assistant (Q&A) mode. */
+  readonly assistant?: boolean;
 }
 
 export interface BrowserTrainingOptions {

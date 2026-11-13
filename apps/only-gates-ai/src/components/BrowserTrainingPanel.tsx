@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onSettled, Show } from "solid-js";
+import { createSignal, For, onCleanup, onSettled, Show } from "solid-js";
 
 import corpus from "../assets/tiny-gpt-corpus.txt?raw";
 import {
@@ -7,6 +7,7 @@ import {
   saveBrowserTrainingState,
   type BrowserTrainingRunKey,
 } from "../lib/browserTrainingStorage";
+import { CUSTOM_DOC_PRESETS } from "../lib/customDocPresets";
 import {
   createSolid2Decoder,
   type Solid2WasmModel,
@@ -108,6 +109,7 @@ export default function BrowserTrainingPanel(
   const [seed, setSeed] = createSignal(1337);
   const [maxMinutes, setMaxMinutes] = createSignal(defaultMaxMinutes);
   const [warmStart, setWarmStart] = createSignal(isLarge());
+  const [assistantMode, setAssistantMode] = createSignal(isCustom());
   const [urls, setUrls] = createSignal("");
 
   let cancelRequested = false;
@@ -151,6 +153,10 @@ export default function BrowserTrainingPanel(
         setSeed(state.seed);
         if (isCustom() && state.sourceUrls && state.sourceUrls.length > 0) {
           setUrls(state.sourceUrls.join("\n"));
+        }
+        if (isCustom()) {
+          // Runs saved before assistant mode existed used plain docs training.
+          setAssistantMode(state.assistant ?? false);
         }
         setStatus(
           `Saved run found: ${state.step} steps, ${
@@ -265,6 +271,7 @@ export default function BrowserTrainingPanel(
           maxMinutes: maxMinutes(),
           initialState: initial,
           warmStart: !resume && warmStart(),
+          assistant: assistantMode(),
           onStatus: (value) => setStatus(value),
           onProgress: (value) => {
             setBackend(value.backend);
@@ -292,7 +299,7 @@ export default function BrowserTrainingPanel(
             maxTokens: 24,
             temperature: 0.7,
             topK: 40,
-            promptFormat: "text",
+            promptFormat: result.data.assistant ? "chat" : "text",
           }).run();
           setSample({
             prompt,
@@ -509,8 +516,12 @@ export default function BrowserTrainingPanel(
           4096-token BPE, 256-context model on Markdown, text, or HTML pages you
           choose. Documents are fetched in the browser; HTML is reduced to
           readable text (scripts, navigation, and footers are dropped) before
-          tokenization, and the token stream is cached in IndexedDB. The integer
-          path starts when you click <b>Use in Integer GPT</b>.
+          tokenization, and the token stream is cached in IndexedDB. Assistant
+          (Q&amp;A) mode is on by default: it builds question/answer examples
+          from Markdown headings so the result behaves like a small chat model.
+          Use <b>Load Luau docs example</b> to try the official Luau
+          documentation. The integer path starts when you click{" "}
+          <b>Use in Integer GPT</b>.
         </p>
         <p class="hint">
           Mirrors the Solid 2 model exactly so the same integer-only WASM engine
@@ -547,6 +558,41 @@ export default function BrowserTrainingPanel(
       </Show>
 
       <Show when={isCustom()}>
+        <div class="training-presets">
+          <span class="muted">Examples:</span>
+          <For each={CUSTOM_DOC_PRESETS}>
+            {(preset) => (
+              <button
+                type="button"
+                class="button secondary"
+                disabled={busy()}
+                title={`${preset.description} License: ${preset.license}.`}
+                onClick={() => {
+                  setUrls(preset.urls.join("\n"));
+                  setError(null);
+                  setStatus(
+                    `Loaded ${preset.urls.length} documents for ${preset.label.replace(/^Load | example$/g, "")}.`,
+                  );
+                }}
+              >
+                {preset.label}
+              </button>
+            )}
+          </For>
+          <Show when={urls().trim().length > 0}>
+            <button
+              type="button"
+              class="button ghost"
+              disabled={busy()}
+              onClick={() => {
+                setUrls("");
+                setStatus("Document URL list cleared.");
+              }}
+            >
+              Clear
+            </button>
+          </Show>
+        </div>
         <label class="training-field training-field-wide">
           Document URLs (one per line: .md, .txt, or HTML)
           <textarea
@@ -647,6 +693,26 @@ export default function BrowserTrainingPanel(
           />
         </label>
       </div>
+
+      <Show when={isCustom()}>
+        <label class="training-toggle">
+          <input
+            type="checkbox"
+            checked={assistantMode()}
+            disabled={busy()}
+            onChange={(event) => setAssistantMode(event.currentTarget.checked)}
+          />
+          <span>
+            <b>Assistant (Q&amp;A) mode</b>
+            <small>
+              Turns each Markdown heading into a question and uses the section
+              body as the answer, then trains with the chat special tokens. This
+              makes the model answer questions instead of continuing text.
+              Uncheck it for plain document continuation.
+            </small>
+          </span>
+        </label>
+      </Show>
 
       <Show when={isLarge()}>
         <label class="training-toggle">
