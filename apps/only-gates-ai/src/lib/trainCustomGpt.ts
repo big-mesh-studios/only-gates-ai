@@ -28,8 +28,9 @@ import {
  *
  * The model uses the deployed Solid 2 architecture and BPE tokenizer, so the
  * integer-only WASM engine can load the result unchanged. Only the corpus is
- * different: every URL is fetched, split into paragraphs, and tokenized with
- * the same 4096-token vocabulary.
+ * different: every URL is fetched, Markdown is used directly, HTML is reduced
+ * to readable text, and the result is tokenized with the same 4096-token
+ * vocabulary.
  */
 
 const tokenCache = createTokenStreamCache("gate-forest-custom-training-data");
@@ -37,14 +38,18 @@ const TOKEN_SCHEME_VERSION = 1;
 const VALIDATION_FRACTION = 0.1;
 const MAX_PROMPTS = 5;
 
+export type CustomDocKind = "markdown" | "html";
+
 export interface CustomDoc {
   readonly url: string;
   readonly text: string;
+  readonly kind?: CustomDocKind;
 }
 
 export interface CustomTrainingDataInfo {
   readonly documentCount: number;
   readonly documentChars: number;
+  readonly htmlDocuments: number;
   readonly paragraphs: number;
   readonly trainingTokens: number;
   readonly validationTokens: number;
@@ -144,6 +149,275 @@ export function parseDocUrls(input: string | readonly string[]): string[] {
   return urls;
 }
 
+const HTML_EXTENSIONS = new Set([".html", ".htm", ".xhtml"]);
+const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".txt"]);
+const HTML_CONTENT_TYPES = new Set(["text/html", "application/xhtml+xml"]);
+const MARKDOWN_CONTENT_TYPES = new Set([
+  "text/markdown",
+  "text/plain",
+  "text/x-markdown",
+]);
+const BINARY_CONTENT_TYPES = new Set([
+  "application/pdf",
+  "application/zip",
+  "application/gzip",
+  "application/octet-stream",
+]);
+
+/**
+ * Decides whether a fetched response is HTML, plain text, or not trainable.
+ * Returns null for obviously binary content.
+ */
+export function detectDocumentKind(
+  url: string,
+  contentType: string | null,
+  text: string,
+): CustomDocKind | null {
+  const type = (contentType ?? "").split(";")[0]!.trim().toLowerCase();
+  let extension = "";
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    const dot = path.lastIndexOf(".");
+    if (dot >= 0) extension = path.slice(dot);
+  } catch {
+    // The URL was already validated; an empty extension simply falls through.
+  }
+
+  const head = text.slice(0, 2048).trimStart();
+  const looksHtml =
+    /^(?:<!--[\s\S]*?-->\s*)?(?:<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>])/i.test(
+      head,
+    );
+
+  if (
+    HTML_CONTENT_TYPES.has(type) ||
+    HTML_EXTENSIONS.has(extension) ||
+    looksHtml
+  ) {
+    return "html";
+  }
+  if (
+    MARKDOWN_CONTENT_TYPES.has(type) ||
+    type.startsWith("text/") ||
+    MARKDOWN_EXTENSIONS.has(extension)
+  ) {
+    return "markdown";
+  }
+  if (BINARY_CONTENT_TYPES.has(type)) {
+    if (type === "application/octet-stream" && !text.includes("\u0000")) {
+      return "markdown";
+    }
+    return null;
+  }
+  if (text.includes("\u0000")) return null;
+  return "markdown";
+}
+
+const SKIPPED_TAGS = new Set([
+  "script",
+  "style",
+  "noscript",
+  "template",
+  "svg",
+  "canvas",
+  "iframe",
+  "form",
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "nav",
+  "aside",
+]);
+const BLOCK_TAGS = new Set([
+  "address",
+  "article",
+  "blockquote",
+  "details",
+  "dialog",
+  "div",
+  "dl",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "main",
+  "p",
+  "section",
+  "summary",
+  "ul",
+  "ol",
+  "li",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "pre",
+  "hr",
+]);
+const NOISE_NAME =
+  /(?:^|[\s_-])(?:nav|navbar|navigation|sidebar|side-bar|menu|breadcrumb|footer|toc|table-of-contents|pagination|skip-link|social|share)(?:$|[\s_-])/i;
+
+/**
+ * Converts a fetched HTML document into Markdown-ish text.
+ *
+ * DOMParser is used instead of string/regular-expression stripping because
+ * text such as `<Component />` inside a code sample must survive untouched.
+ * Scripts are parsed but never executed.
+ */
+export function htmlToMarkdown(html: string): string {
+  if (typeof DOMParser === "undefined") {
+    throw new Error("HTML extraction is only available in the browser.");
+  }
+  const doc = new DOMParser().parseFromString(html, "text/html");
+
+  doc
+    .querySelectorAll(
+      "script, style, noscript, template, svg, canvas, iframe, form, button, " +
+        "input, select, textarea, nav, aside, body > header, body > footer, " +
+        "[role='navigation'], [role='banner'], [role='contentinfo'], " +
+        "[aria-hidden='true'], [hidden]",
+    )
+    .forEach((element) => element.remove());
+
+  for (const element of Array.from(doc.querySelectorAll("[class], [id]"))) {
+    const name = `${element.getAttribute("class") ?? ""} ${
+      element.getAttribute("id") ?? ""
+    }`;
+    if (NOISE_NAME.test(name)) element.remove();
+  }
+
+  const candidates = [
+    doc.querySelector("main"),
+    doc.querySelector("[role='main']"),
+    doc.querySelector("article"),
+  ].filter((element): element is Element => element !== null);
+  const root =
+    candidates.sort(
+      (left, right) =>
+        (right.textContent?.length ?? 0) - (left.textContent?.length ?? 0),
+    )[0] ??
+    doc.body ??
+    doc.documentElement;
+  if (!root) return "";
+  if (root === doc.body) {
+    root.querySelectorAll("header, footer").forEach((element) => element.remove());
+  }
+
+  const blocks: string[] = [];
+  const push = (value: string): void => {
+    const text = value.replace(/\n{3,}/g, "\n\n").trim();
+    if (text.length > 0) blocks.push(text);
+  };
+
+  const inline = (node: Node): string => {
+    if (node.nodeType === 3) return node.nodeValue ?? "";
+    if (node.nodeType !== 1) return "";
+    const element = node as Element;
+    const tag = element.tagName.toLowerCase();
+    if (SKIPPED_TAGS.has(tag)) return "";
+    if (tag === "br") return "\n";
+    if (tag === "img") return element.getAttribute("alt") ?? "";
+    if (tag === "code") {
+      const code = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (code.length === 0) return "";
+      const fence = code.includes("`") ? "``" : "`";
+      return `${fence}${code}${fence}`;
+    }
+    let value = "";
+    for (const child of Array.from(element.childNodes)) {
+      value += inline(child);
+    }
+    return value;
+  };
+
+  const normalizeInline = (node: Node): string =>
+    inline(node)
+      .replace(/[ \t\r\f\v]+/g, " ")
+      .replace(/ *\n */g, "\n")
+      .trim();
+  const singleLine = (node: Node): string =>
+    normalizeInline(node).replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ").trim();
+
+  const walk = (node: Node): void => {
+    if (node.nodeType === 3) {
+      const text = normalizeInline(node);
+      if (text.length > 0) push(text);
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const element = node as Element;
+    const tag = element.tagName.toLowerCase();
+    if (SKIPPED_TAGS.has(tag)) return;
+
+    if (tag === "pre") {
+      const raw = (element.textContent ?? "")
+        .replace(/\r\n/g, "\n")
+        .replace(/^\n+|\n+$/g, "");
+      if (raw.length === 0) return;
+      const classNames = element.querySelector("code")?.getAttribute("class") ?? "";
+      const language = /(?:^|\s)language-([\w-]+)/.exec(classNames)?.[1] ?? "";
+      const fence = raw.includes("```") ? "~~~~" : "```";
+      push(`${fence}${language}\n${raw}\n${fence}`);
+      return;
+    }
+    if (/^h[1-6]$/.test(tag)) {
+      const text = singleLine(element);
+      if (text.length > 0) push(`${"#".repeat(Number(tag[1]))} ${text}`);
+      return;
+    }
+    if (tag === "li") {
+      const text = singleLine(element);
+      if (text.length > 0) push(`- ${text}`);
+      return;
+    }
+    if (tag === "blockquote") {
+      const text = normalizeInline(element);
+      if (text.length > 0) {
+        push(
+          text
+            .split("\n")
+            .map((line) => `> ${line}`)
+            .join("\n"),
+        );
+      }
+      return;
+    }
+    if (tag === "table") {
+      for (const row of Array.from(element.querySelectorAll("tr"))) {
+        const cells = Array.from(row.children)
+          .filter((cell) => /^(td|th)$/i.test(cell.tagName))
+          .map((cell) => singleLine(cell));
+        if (cells.some((cell) => cell.length > 0)) {
+          push(cells.join(" | "));
+        }
+      }
+      return;
+    }
+    if (tag === "hr") {
+      push("---");
+      return;
+    }
+    if (BLOCK_TAGS.has(tag)) {
+      const hasBlockChild = Array.from(element.children).some((child) =>
+        BLOCK_TAGS.has(child.tagName.toLowerCase()),
+      );
+      if (hasBlockChild) {
+        for (const child of Array.from(element.childNodes)) walk(child);
+      } else {
+        const text = singleLine(element);
+        if (text.length > 0) push(text);
+      }
+      return;
+    }
+    for (const child of Array.from(element.childNodes)) walk(child);
+  };
+
+  for (const child of Array.from(root.childNodes)) walk(child);
+  return blocks.join("\n\n");
+}
+
 async function fetchCustomDocs(
   urls: readonly string[],
   options: CustomDataOptions,
@@ -169,7 +443,33 @@ async function fetchCustomDocs(
     if (!response.ok) {
       throw new Error(`fetch failed: ${response.status} ${url}`);
     }
-    docs.push({ url, text: await response.text() });
+    const raw = await response.text();
+    const kind = detectDocumentKind(
+      url,
+      response.headers.get("content-type"),
+      raw,
+    );
+    if (kind === null) {
+      throw new Error(
+        `${url} is not a text, Markdown, or HTML document ` +
+          `(content type: ${response.headers.get("content-type") ?? "unknown"}).`,
+      );
+    }
+    let text = raw;
+    if (kind === "html") {
+      options.onStatus?.(`Extracting readable text from ${url}...`);
+      text = htmlToMarkdown(raw);
+      if (text.trim().length === 0) {
+        throw new Error(
+          `${url} has no readable text. The page may be rendered by JavaScript ` +
+            `or block automated clients.`,
+        );
+      }
+    }
+    if (text.trim().length === 0) {
+      throw new Error(`${url} is empty.`);
+    }
+    docs.push({ url, text, kind });
     await yieldToBrowser();
   }
   return docs;
@@ -383,6 +683,7 @@ export async function loadCustomTrainingData(
   const info: CustomTrainingDataInfo = {
     documentCount: docs.length,
     documentChars,
+    htmlDocuments: docs.filter((doc) => doc.kind === "html").length,
     paragraphs: countParagraphs(docs),
     trainingTokens: stream.trainingTokens.length,
     validationTokens: stream.validationTokens.length,
@@ -391,9 +692,11 @@ export async function loadCustomTrainingData(
     warmStart: false,
   };
 
+  const htmlCount = docs.filter((doc) => doc.kind === "html").length;
   options.onStatus?.(
     `Ready: ${stream.trainingTokens.length.toLocaleString()} training tokens from ` +
       `${docs.length} document${docs.length === 1 ? "" : "s"}` +
+      `${htmlCount > 0 ? ` (${htmlCount} HTML page${htmlCount === 1 ? "" : "s"} converted)` : ""}` +
       `${cached ? " (cached)" : ""}.`,
   );
 
@@ -481,7 +784,7 @@ export async function trainCustomGpt(
     modelMeta: {
       name: "tiny-gpt-custom-browser",
       source:
-        "Custom Markdown documents supplied by the user: " +
+        "Custom Markdown, text, and HTML documents supplied by the user: " +
         `${urls.slice(0, 8).join(", ")}` +
         (urls.length > 8 ? ` and ${urls.length - 8} more` : "") +
         ".",

@@ -187,6 +187,43 @@ test("custom docs loader normalizes URLs and tokenizes Markdown", async () => {
     );
     assert.throws(() => custom.parseDocUrls("not a url"), /Not a valid URL/);
 
+    assert.equal(
+      custom.detectDocumentKind("https://example.com/guide.md", null, "# Title"),
+      "markdown",
+    );
+    assert.equal(
+      custom.detectDocumentKind(
+        "https://example.com/guide",
+        "text/html; charset=utf-8",
+        "<html></html>",
+      ),
+      "html",
+    );
+    assert.equal(
+      custom.detectDocumentKind(
+        "https://example.com/guide",
+        null,
+        "<!doctype html><html><body>Hi</body></html>",
+      ),
+      "html",
+    );
+    assert.equal(
+      custom.detectDocumentKind(
+        "https://example.com/guide",
+        "text/plain",
+        "plain text",
+      ),
+      "markdown",
+    );
+    assert.equal(
+      custom.detectDocumentKind(
+        "https://example.com/manual.pdf",
+        "application/pdf",
+        "%PDF-1.7",
+      ),
+      null,
+    );
+
     assert.deepEqual(
       custom.extractCustomPrompts([
         {

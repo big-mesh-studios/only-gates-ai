@@ -532,8 +532,8 @@ export default function IntegerGptPanel() {
           <Show when={example() === "custom"}>
             Decoder-only transformer with the same 4096-token BPE vocabulary and
             256-context architecture as the Solid 2 demo, trained in your browser
-            on the Markdown documents you list below. Warm-starting from the
-            bundled checkpoint is optional; the result is quantized and runs
+            on the Markdown, text, or HTML pages you list below. Warm-starting
+            from the bundled checkpoint is optional; the result is quantized and runs
             through the same <b>integer-only WebAssembly</b> engine (Q16
             activations, int8 weights).
             <Show when={activeConfig()}>{(c) => <span> Loaded config: {c().vocabSize}v/{c().context}ctx, {c().dim}d/{c().layers}L/{c().heads}H/{c().mlp}mlp ({parameterCount(c()).toLocaleString()} params).</span>}</Show>
@@ -568,7 +568,7 @@ export default function IntegerGptPanel() {
         <Show when={example() === "custom" && custom() === null}>
           <div class="banner info">
             <span>
-              No custom model is loaded yet. Add Markdown URLs in the training
+              No custom model is loaded yet. Add document URLs in the training
               panel below, train, then click <b>Use in Integer GPT</b>.
             </span>
           </div>

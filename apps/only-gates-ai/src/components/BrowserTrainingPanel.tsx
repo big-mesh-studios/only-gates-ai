@@ -506,16 +506,19 @@ export default function BrowserTrainingPanel(
         <p class="hint">
           Trains a{" "}
           {solid2ParameterCount(SOLID2_TRAIN_CONFIG).toLocaleString()}-parameter,
-          4096-token BPE, 256-context model on Markdown documents you choose.
-          The documents are fetched in the browser, tokenized with the deployed
-          Solid 2 tokenizer, and cached in IndexedDB after the first load. The
-          integer path starts when you click <b>Use in Integer GPT</b>.
+          4096-token BPE, 256-context model on Markdown, text, or HTML pages you
+          choose. Documents are fetched in the browser; HTML is reduced to
+          readable text (scripts, navigation, and footers are dropped) before
+          tokenization, and the token stream is cached in IndexedDB. The integer
+          path starts when you click <b>Use in Integer GPT</b>.
         </p>
         <p class="hint">
           Mirrors the Solid 2 model exactly so the same integer-only WASM engine
           can run it. Warm-starting from the bundled checkpoint is recommended
           for short runs; uncheck it to train from random weights. URLs must be
           public and allow cross-origin reads (CORS), such as raw GitHub links.
+          Pages rendered entirely by client-side JavaScript will not expose
+          their content to the fetcher.
         </p>
       </Show>
 
@@ -545,10 +548,10 @@ export default function BrowserTrainingPanel(
 
       <Show when={isCustom()}>
         <label class="training-field training-field-wide">
-          Markdown document URLs (one per line)
+          Document URLs (one per line: .md, .txt, or HTML)
           <textarea
             rows="5"
-            placeholder={"https://raw.githubusercontent.com/owner/repo/main/docs/guide.md\nhttps://raw.githubusercontent.com/owner/repo/main/docs/api.md"}
+            placeholder={"https://raw.githubusercontent.com/owner/repo/main/docs/guide.md\nhttps://raw.githubusercontent.com/owner/repo/main/docs/api.md\nhttps://example.com/docs/getting-started.html"}
             value={urls()}
             disabled={busy()}
             onInput={(event) => setUrls(event.currentTarget.value)}
