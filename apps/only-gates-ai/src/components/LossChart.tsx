@@ -143,6 +143,7 @@ export default function LossChart(props: LossChartProps) {
             viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
             role="img"
             aria-label={`Training loss over ${props.points.length} recorded steps`}
+            style={{ overflow: "hidden" }}
           >
             <title>Training loss</title>
             <desc>
@@ -150,6 +151,17 @@ export default function LossChart(props: LossChartProps) {
               over optimizer steps. The dashed vertical line marks the best
               validation loss.
             </desc>
+
+            <defs>
+              <clipPath id="loss-plot-clip">
+                <rect
+                  x={PADDING.left}
+                  y={PADDING.top}
+                  width={WIDTH - PADDING.left - PADDING.right}
+                  height={HEIGHT - PADDING.top - PADDING.bottom}
+                />
+              </clipPath>
+            </defs>
 
             <For each={[0, 0.25, 0.5, 0.75, 1]}>
               {(fraction) => {
@@ -200,30 +212,32 @@ export default function LossChart(props: LossChartProps) {
               {chart().stepMax}
             </text>
 
-            <path d={chart().raw} class="loss-raw" />
-            <path d={chart().smooth} class="loss-smooth" />
-            <Show when={chart().validation.length > 0}>
-              <path d={chart().validationPath} class="loss-val" />
-              <For each={chart().validation}>
-                {(point) => (
-                  <circle
-                    cx={chart().x(point.step)}
-                    cy={chart().y(point.loss)}
-                    r={2.5}
-                    class="loss-val-dot"
-                  />
-                )}
-              </For>
-            </Show>
-            <Show when={chart().bestX !== null}>
-              <line
-                x1={chart().bestX!}
-                x2={chart().bestX!}
-                y1={PADDING.top}
-                y2={HEIGHT - PADDING.bottom}
-                class="loss-best"
-              />
-            </Show>
+            <g clip-path="url(#loss-plot-clip)">
+              <path d={chart().raw} class="loss-raw" />
+              <path d={chart().smooth} class="loss-smooth" />
+              <Show when={chart().validation.length > 0}>
+                <path d={chart().validationPath} class="loss-val" />
+                <For each={chart().validation}>
+                  {(point) => (
+                    <circle
+                      cx={chart().x(point.step)}
+                      cy={chart().y(point.loss)}
+                      r={2.5}
+                      class="loss-val-dot"
+                    />
+                  )}
+                </For>
+              </Show>
+              <Show when={chart().bestX !== null}>
+                <line
+                  x1={chart().bestX!}
+                  x2={chart().bestX!}
+                  y1={PADDING.top}
+                  y2={HEIGHT - PADDING.bottom}
+                  class="loss-best"
+                />
+              </Show>
+            </g>
           </svg>
         )}
       </Show>

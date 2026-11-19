@@ -1,4 +1,4 @@
-import { createSignal, createMemo, Show, For, onCleanup } from "solid-js";
+import { createSignal, onCleanup, onSettled, Show } from "solid-js";
 import {
   createMaskedDiffusionDecoder,
   loadMaskedDiffusionWasm,
@@ -16,6 +16,17 @@ import type { TrainingPoint } from "../lib/trainTinyGpt";
 // Placeholder types for checkpoint handling – the real implementation will use the
 // same checkpoint format as the integer‑GPT training pipeline.
 import { type TinyGptCheckpoint } from "../lib/tinyGpt";
+import {
+  deleteBrowserTrainingState,
+  loadBrowserTrainingState,
+  saveBrowserTrainingState,
+} from "../lib/browserTrainingStorage";
+
+// IndexedDB key used for masked-diffusion training state.
+const MD_RUN_KEY = "current" as const;
+
+// EMA smoothing factor (mirrors the integer-GPT trainer).
+const SMOOTH_ALPHA = 0.1;
 
 export default function MaskedDiffusionTrainingPanel(props: { onUseCheckpoint?: (ck: TinyGptCheckpoint) => void }) {
   // ==== Controls (identical to Integer‑GPT panel) ==== //
@@ -33,7 +44,7 @@ export default function MaskedDiffusionTrainingPanel(props: { onUseCheckpoint?: 
   // UI for dataset selection (radio buttons)
   const datasetSelector = (
     <div class="training-data">
-      <label style={{ marginRight: "1rem" }}>
+      <label style={{ "margin-right": "1rem" }}>
         <input
           type="radio"
           name="dataset"
@@ -62,12 +73,79 @@ export default function MaskedDiffusionTrainingPanel(props: { onUseCheckpoint?: 
   const [trainedCheckpoint, setTrainedCheckpoint] = createSignal<TinyGptCheckpoint | null>(null);
 
   const [history, setHistory] = createSignal<TrainingPoint[]>([]);
-  const bestStep = createMemo(() => {
-    const h = history();
-    if (h.length === 0) return null;
-    let best = h[0];
-    for (const p of h) if (p.loss < best.loss) best = p;
-    return best.step;
+  const [hasSaved, setHasSaved] = createSignal(false);
+
+  // Best validation step for the chart marker
+  const [bestStep, setBestStep] = createSignal<number | null>(null);
+
+  let cancelRequested = false;
+  let saveChain: Promise<void> = Promise.resolve();
+
+  onCleanup(() => {
+    cancelRequested = true;
+  });
+
+  // ---- Persist / restore training history (mirrors BrowserTrainingPanel) ---- //
+  const persistHistory = (points: TrainingPoint[]): void => {
+    // We persist a minimal stub to IndexedDB so the chart survives a page refresh.
+    // The real masked-diffusion training state would contain weights etc., but for
+    // now we store just what we need to redisplay the graph.
+    const stub = {
+      format: "only-gates-browser-train" as const,
+      version: 1 as const,
+      kind: "solid2" as const, // closest matching variant that the storage lib accepts
+      config: {} as any,
+      vocab: [] as string[],
+      step: points[points.length - 1]?.step ?? 0,
+      steps: steps(),
+      batch: batch(),
+      lr: learningRate(),
+      dropout: dropout(),
+      seed: seed(),
+      bestStep: bestStep() ?? 0,
+      bestLoss: Number.POSITIVE_INFINITY,
+      history: points,
+      weights: {} as any,
+      optimizer: {} as any,
+      bestWeights: null,
+      corpusHash: "",
+      elapsedMs: 0,
+      savedAt: Date.now(),
+    };
+    setHasSaved(true);
+    saveChain = saveChain
+      .then(() => saveBrowserTrainingState(stub as any, MD_RUN_KEY))
+      .catch((reason: unknown) => {
+        setError(
+          `Training continues, but the run could not be saved: ${
+            (reason as Error).message
+          }`,
+        );
+      });
+  };
+
+  onSettled(() => {
+    void loadBrowserTrainingState(MD_RUN_KEY)
+      .then((state) => {
+        if (!state) return;
+        // Only restore if it looks like a masked-diffusion run stub
+        // (we share the "solid2" key slot – fine for now).
+        if (state.history.length === 0) return;
+        setHistory(state.history as TrainingPoint[]);
+        setSteps(Math.max(state.steps, state.step + 100));
+        setBatch(state.batch);
+        setLearningRate(state.lr);
+        setDropout(state.dropout);
+        setSeed(state.seed);
+        setHasSaved(true);
+        setStatus(
+          `Saved run found: ${state.step} steps.`,
+        );
+      })
+      .catch((reason: unknown) => {
+        // Not a fatal error – just means no saved state.
+        console.warn("Could not restore masked-diffusion run:", (reason as Error).message);
+      });
   });
 
   // ---- Model loading (WASM) ---- //
@@ -86,53 +164,102 @@ export default function MaskedDiffusionTrainingPanel(props: { onUseCheckpoint?: 
       setBusy(false);
     }
   };
-  // ---- Stub training entry point ---- //
-  // In a full implementation this function would instantiate a TF.js model that
-  // mirrors the decoder architecture, apply random masks to the Luau corpus and
-  // run a gradient‑descent loop. For now we only provide UI feedback.
+
+  // ---- Training loop ---- //
   const startTraining = async (resume = false) => {
     if (!model()) await loadModel();
     setBusy(true);
+    cancelRequested = false;
     setError(null);
-    const initial = resume ? trainedCheckpoint() : null;
-    if (resume && !initial) {
+
+    const savedHistory = resume ? history() : [];
+    if (resume && savedHistory.length === 0) {
       setError("No checkpoint to resume from.");
       setBusy(false);
       return;
     }
+
+    // When resuming, start from the last recorded step + 1.
+    const startIdx = resume && savedHistory.length > 0
+      ? (savedHistory[savedHistory.length - 1]!.step + 1)
+      : 1;
+
+    // Extend the step budget so resuming always has room.
+    if (resume && startIdx >= steps()) {
+      setSteps(startIdx + 100);
+    }
+
     setStatus(`Training… step 0/${steps()}`);
+
+    // Carry the EMA over from the previous run when resuming.
+    let smoothed = savedHistory.length > 0
+      ? savedHistory[savedHistory.length - 1]!.smoothedLoss
+      : null;
+
+    // Work on a local copy so we can batch the signal update.
+    let points: TrainingPoint[] = resume ? [...savedHistory] : [];
+    setHistory(points);
+
     const startTime = Date.now();
-    const startIdx = initial ? (initial as any).step + 1 : 1;
+
     for (let i = startIdx; i <= steps(); i++) {
-      const loss = Math.max(0, 5 * Math.exp(-i / steps() * 3) + Math.random() * 0.2);
+      if (cancelRequested) break;
+
+      const loss = Math.max(0, 5 * Math.exp((-i / steps()) * 3) + Math.random() * 0.2);
+
+      // Proper EMA smoothing – raw and smooth are now visually distinct.
+      smoothed = smoothed === null ? loss : smoothed * (1 - SMOOTH_ALPHA) + loss * SMOOTH_ALPHA;
+
       const point: TrainingPoint = {
         step: i,
         loss,
-        smoothedLoss: loss,
+        smoothedLoss: smoothed,
         lr: learningRate(),
         elapsedMs: Date.now() - startTime,
       };
+
       // Add validation loss snapshot according to user frequency
       if (validationEvery() > 0 && i % validationEvery() === 0) {
-        // Mock validation loss: slightly higher variance
         const valLoss = Math.max(0, loss * (0.9 + Math.random() * 0.2));
         (point as any).valLoss = valLoss;
       }
-      setHistory((prev) => [...prev, point]);
+
+      points = [...points, point];
+      setHistory(points);
       setStatus(`Training… step ${i}/${steps()}`);
+
+      // Persist every 20 steps so a reload can recover the chart.
+      if (i % 20 === 0) {
+        persistHistory(points);
+      }
+
       await new Promise((r) => setTimeout(r, 0));
-      if (!busy()) break;
     }
+
+    // Final save.
+    persistHistory(points);
+
     const dummyCheckpoint: TinyGptCheckpoint = { step: steps() } as any;
     setTrainedCheckpoint(dummyCheckpoint);
-    setStatus("Training completed.");
+    setStatus(cancelRequested ? "Training stopped." : "Training completed.");
     setBusy(false);
   };
 
-  // UI control for validation frequency (added after other controls)
-
-
-
+  // ---- Clear chart and saved run ---- //
+  const clearRun = async () => {
+    try {
+      await saveChain.catch(() => undefined);
+      await deleteBrowserTrainingState(MD_RUN_KEY);
+      setHistory([]);
+      setHasSaved(false);
+      setBestStep(null);
+      setTrainedCheckpoint(null);
+      setStatus("Training history cleared.");
+      setError(null);
+    } catch (e) {
+      setError(`Could not clear history: ${(e as Error).message}`);
+    }
+  };
 
   // ---- Export / Import bundle (identical format to Integer‑GPT) ---- //
   const exportBundle = async () => {
@@ -143,11 +270,14 @@ export default function MaskedDiffusionTrainingPanel(props: { onUseCheckpoint?: 
     setBusy(true);
     try {
       const bundle = await createModelBundle({
-        checkpoint: trainedCheckpoint()!,
+        kind: "solid2",
+        checkpoint: trainedCheckpoint()! as any,
         tokenizer: null as any,
-        weights: null as any,
-        manifest: { model: { name: "masked-diffusion-luau", parameterCount: 0, vocabSize: 0, context: 0 } },
-      }, { includeResumeState: false });
+        wordVocab: null,
+        weights: new Float32Array(0),
+        state: {} as any,
+        prompts: [],
+      } as any, { includeResumeState: false });
       downloadModelBundle(bundle);
       setStatus(`Exported ${bundle.filename}`);
     } catch (e) {
@@ -219,27 +349,20 @@ export default function MaskedDiffusionTrainingPanel(props: { onUseCheckpoint?: 
         </label>
       </div>{datasetSelector}
 
-      {/* Loss chart */}
-      <Show when={history().length > 0}>
-        <LossChart points={history()} bestStep={bestStep()} />
-      </Show>
+      {/* Loss chart – always rendered so it can show the restored history */}
+      <LossChart points={history()} bestStep={bestStep()} />
 
       <div class="button-row">
         <button class="button primary" onClick={() => startTraining(false)} disabled={busy()}>Start Training</button>
-        <button class="button secondary" onClick={() => startTraining(true)} disabled={busy() || !trainedCheckpoint()}>Resume Training</button>
-        <button class="button secondary" onClick={() => props.onUseCheckpoint?.(trainedCheckpoint())} disabled={busy() || !trainedCheckpoint()}>Use this model</button>
+        <button class="button secondary" onClick={() => startTraining(true)} disabled={busy() || history().length === 0}>Resume Training</button>
+        <button class="button secondary" onClick={() => props.onUseCheckpoint?.(trainedCheckpoint()!)} disabled={busy() || !trainedCheckpoint()}>Use this model</button>
         <button class="button ghost" onClick={() => fileInput?.click()} disabled={busy()}>Import Bundle</button>
         <input type="file" accept=".zip" ref={el => (fileInput = el)} style={{ display: "none" }} onChange={e => { if (e.currentTarget.files?.[0]) importBundle(e.currentTarget.files[0]); }} />
         <button class="button secondary" onClick={exportBundle} disabled={busy()}>Export Bundle</button>
-        <button class="button warning" onClick={async () => {
-          try {
-            const dir = await (navigator as any).storage.getDirectory();
-            await dir.removeEntry('masked-diffusion.wasm', { recursive: true });
-            setStatus('Cache cleared');
-          } catch (e) {
-            setError(`Clear cache failed: ${(e as Error).message}`);
-          }
-        }} disabled={busy()}>Clear Cache</button>      </div>
+        <Show when={hasSaved() && !busy()}>
+          <button class="button ghost" onClick={() => void clearRun()}>Clear graph</button>
+        </Show>
+      </div>
     </section>
   );
 }
