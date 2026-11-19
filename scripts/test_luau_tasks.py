@@ -27,7 +27,7 @@ import luau_tasks
 
 
 class LuauTaskGeneratorTest(unittest.TestCase):
-    def generate(self, train: int = 80, seed: int = 11) -> dict[str, list[dict]]:
+    def generate(self, train: int = 240, seed: int = 11) -> dict[str, list[dict]]:
         families = luau_tasks.FAMILIES
         return {
             "train": luau_tasks.generate_split(
@@ -45,6 +45,22 @@ class LuauTaskGeneratorTest(unittest.TestCase):
                 seed + 3,
                 "test-paraphrase",
                 (luau_tasks.HELD_OUT_STYLE,),
+                luau_tasks.COMMON_NAMES,
+            ),
+            "test-paraphrase-g": luau_tasks.generate_split(
+                families,
+                20,
+                seed + 6,
+                "test-paraphrase-g",
+                ("paraphrase_g",),
+                luau_tasks.COMMON_NAMES,
+            ),
+            "test-paraphrase-h": luau_tasks.generate_split(
+                families,
+                20,
+                seed + 7,
+                "test-paraphrase-h",
+                ("paraphrase_h",),
                 luau_tasks.COMMON_NAMES,
             ),
             "test-unseen": luau_tasks.generate_split(
@@ -105,6 +121,15 @@ class LuauTaskGeneratorTest(unittest.TestCase):
             {row["prompt_style"] for row in splits["test-paraphrase"]},
             {luau_tasks.HELD_OUT_STYLE},
         )
+        self.assertEqual(
+            {row["prompt_style"] for row in splits["test-paraphrase-g"]},
+            {"paraphrase_g"},
+        )
+        self.assertEqual(
+            {row["prompt_style"] for row in splits["test-paraphrase-h"]},
+            {"paraphrase_h"},
+        )
+        self.assertFalse(train_styles & set(luau_tasks.HELD_OUT_STYLES))
 
     def test_unseen_split_uses_other_identifiers(self) -> None:
         splits = self.generate()

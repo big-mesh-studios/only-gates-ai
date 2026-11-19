@@ -39,7 +39,9 @@ animation frame.
 
 Runtime: **GPU (T4 is enough)**. The default configuration is about 9.6M
 parameters with a 128-token context, which fits the generated Luau answers
-(median 28 tokens, max 42) and keeps the live animation fast.
+(median 28 tokens, max 42) and keeps the live animation fast. The committed
+dataset has 30,000 training rows and 3,000 validation rows, with six training
+prompt styles and three held-out styles for evaluation.
 
 Files are written to `MyDrive/masked-diffusion-luau` when Drive is mounted;
 otherwise they stay under `/content`.
@@ -82,9 +84,11 @@ print("working directory:", os.getcwd())
     md(
         """## 3. Check the data and tokenizer
 
-The task JSONL files and the 1,721-token Luau BPE model are committed. The
+The task JSONL files and the 1,722-token Luau BPE model are committed. The
 masked trainer appends `<|mask|>` at the end of the vocabulary (id 1,721), so
-existing prompt ids do not move.
+existing prompt ids do not move. Training uses canonical, `paraphrase_a`,
+`paraphrase_c`, `paraphrase_d`, `paraphrase_e`, and `paraphrase_f`; the
+`paraphrase_b`, `paraphrase_g`, and `paraphrase_h` splits are held out.
 """
     ),
     code(

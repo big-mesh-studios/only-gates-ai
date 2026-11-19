@@ -7,10 +7,12 @@ and an execution harness. The harness is for evaluation only.
 
 ## Counts
 
-- `train.jsonl`: 12,000 rows
-- `val.jsonl`: 1,200 rows
+- `train.jsonl`: 30,000 rows
+- `val.jsonl`: 3,000 rows
 - `test-seen.jsonl`: 300 rows
 - `test-paraphrase.jsonl`: 200 rows
+- `test-paraphrase-g.jsonl`: 200 rows
+- `test-paraphrase-h.jsonl`: 200 rows
 - `test-question.jsonl`: 200 rows
 - `test-unseen.jsonl`: 100 rows
 
@@ -39,10 +41,12 @@ and an execution harness. The harness is for evaluation only.
 
 ## Splits
 
-- `train.jsonl`: canonical, `paraphrase_a`, `paraphrase_c`, and `paraphrase_d` instructions.
+- `train.jsonl`: canonical, `paraphrase_a`, `paraphrase_c`, `paraphrase_d`, `paraphrase_e`, and `paraphrase_f` instructions.
 - `val.jsonl`: same distribution as training.
 - `test-seen.jsonl`: canonical prompts with unseen values.
 - `test-paraphrase.jsonl`: held-out `paraphrase_b` wording.
+- `test-paraphrase-g.jsonl`: held-out `paraphrase_g` wording.
+- `test-paraphrase-h.jsonl`: held-out `paraphrase_h` wording.
 - `test-question.jsonl`: `paraphrase_d` question prompts with unseen values.
 - `test-unseen.jsonl`: canonical prompts with a held-out identifier pool.
 
@@ -55,6 +59,8 @@ Regenerate with:
 
 ```sh
 python3 scripts/luau_tasks.py --out data/luau-tasks \
-  --train 12000 --val 1200 --test-seen 300 \
-  --test-paraphrase 200 --test-question 200 --test-unseen 100 --seed 1337
+  --train 30000 --val 3000 --test-seen 300 \
+  --test-paraphrase 200 --test-paraphrase-g 200 \
+  --test-paraphrase-h 200 --test-question 200 \
+  --test-unseen 100 --seed 1337
 ```

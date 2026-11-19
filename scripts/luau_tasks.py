@@ -16,8 +16,11 @@ Design rules
 - Every generated answer is short enough for the 256-token model context.
 - Splits are separated by seed and identifier pool, not by random row.
 - Prompt styles are split: training sees ``canonical``, ``paraphrase_a``,
-  ``paraphrase_c`` (imperative) and ``paraphrase_d`` (question form); the
-  held-out evaluation split uses ``paraphrase_b``.
+  ``paraphrase_c`` (imperative), ``paraphrase_d`` (question form),
+  ``paraphrase_e`` (first-person request), and ``paraphrase_f`` (polite
+  question); the held-out evaluation splits use ``paraphrase_b``,
+  ``paraphrase_g`` (formal specification), and ``paraphrase_h``
+  (third-person request).
 - Train and validation rows use ``FAMILY_WEIGHTS`` so weak families get more
   examples; test splits stay equal per family for comparability.
 """
@@ -61,8 +64,16 @@ FAMILIES = (
     "nested_loop",
 )
 
-TRAIN_STYLES = ("canonical", "paraphrase_a", "paraphrase_c", "paraphrase_d")
+TRAIN_STYLES = (
+    "canonical",
+    "paraphrase_a",
+    "paraphrase_c",
+    "paraphrase_d",
+    "paraphrase_e",
+    "paraphrase_f",
+)
 HELD_OUT_STYLE = "paraphrase_b"
+HELD_OUT_STYLES = ("paraphrase_b", "paraphrase_g", "paraphrase_h")
 
 # Training-row budget by family. Run 4 failed most held-out paraphrase and
 # question rows in these families, so they get the largest share. Families at
@@ -256,6 +267,22 @@ def family_for_print_range(rng: random.Random, names: NamePool) -> FamilyResult:
             f"What Luau loop prints the values from {start} to {finish}"
             f"{step_phrase}?"
         ),
+        "paraphrase_e": (
+            f"I need Luau code that loops from {start} to {finish}"
+            f"{step_phrase} and prints each number."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to write a for loop in Luau from {start} to "
+            f"{finish}{step_phrase} that prints every number?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that iterates from {start} to "
+            f"{finish}{step_phrase} and outputs every value."
+        ),
+        "paraphrase_h": (
+            f"A beginner wants to print the numbers from {start} to {finish}"
+            f"{step_phrase} in Luau. What code should they write?"
+        ),
     }
     return FamilyResult(
         family="for_print_range",
@@ -297,6 +324,22 @@ def family_for_sum_all(rng: random.Random, names: NamePool) -> FamilyResult:
         ),
         "paraphrase_b": (
             f"What Luau code totals all the values in the `{array}` table?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that totals every value in `{array}` and "
+            f"prints the sum."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to add up all the values in `{array}` with "
+            f"Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that sums all elements of "
+            f"`{array}` and outputs the total."
+        ),
+        "paraphrase_h": (
+            f"A script needs the total of every number in `{array}`. What "
+            f"Luau code should it use?"
         ),
     }
     return FamilyResult(
@@ -344,6 +387,22 @@ def family_for_sum_first_n(rng: random.Random, names: NamePool) -> FamilyResult:
         "paraphrase_b": (
             f"What Luau loop totals the first {n} values of the `{array}` "
             f"table?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that totals the first {n} entries of `{array}` "
+            f"and prints the sum."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to add the first {n} values of `{array}` "
+            f"in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that sums the first {n} elements "
+            f"of `{array}` and prints the total."
+        ),
+        "paraphrase_h": (
+            f"A script has at least {n} values in `{array}` and needs the "
+            f"total of the first {n}. What Luau code should it use?"
         ),
     }
     return FamilyResult(
@@ -393,6 +452,22 @@ def family_for_count_above(rng: random.Random, names: NamePool) -> FamilyResult:
             f"What Luau code counts the values in `{array}` that are over "
             f"{threshold}?"
         ),
+        "paraphrase_e": (
+            f"I need Luau code that counts the values in `{array}` above "
+            f"{threshold} and prints the total."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to count the entries in `{array}` greater "
+            f"than {threshold} using Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that counts the elements of "
+            f"`{array}` over {threshold} and outputs the count."
+        ),
+        "paraphrase_h": (
+            f"A report needs to know how many values in `{array}` exceed "
+            f"{threshold}. What Luau code should it use?"
+        ),
     }
     return FamilyResult(
         family="for_count_above",
@@ -436,6 +511,22 @@ def family_for_find_max(rng: random.Random, names: NamePool) -> FamilyResult:
         ),
         "paraphrase_b": (
             f"What Luau loop returns the maximum value in `{array}`?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that finds the largest value in `{array}` and "
+            f"prints it."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to get the maximum value from `{array}` in "
+            f"Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that returns the largest element "
+            f"of `{array}`."
+        ),
+        "paraphrase_h": (
+            f"A script needs the highest number in `{array}`. What Luau code "
+            f"should it use?"
         ),
     }
     return FamilyResult(
@@ -481,6 +572,22 @@ def family_for_find_min(rng: random.Random, names: NamePool) -> FamilyResult:
         "paraphrase_b": (
             f"What Luau loop returns the minimum value in `{array}`?"
         ),
+        "paraphrase_e": (
+            f"I need Luau code that finds the smallest value in `{array}` and "
+            f"prints it."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to get the minimum value from `{array}` in "
+            f"Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that returns the smallest element "
+            f"of `{array}`."
+        ),
+        "paraphrase_h": (
+            f"A script needs the lowest number in `{array}`. What Luau code "
+            f"should it use?"
+        ),
     }
     return FamilyResult(
         family="for_find_min",
@@ -525,6 +632,22 @@ def family_for_product(rng: random.Random, names: NamePool) -> FamilyResult:
         ),
         "paraphrase_b": (
             f"What Luau loop computes the product of the values in `{array}`?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that multiplies all the values in `{array}` "
+            f"and prints the product."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to compute the product of every value in "
+            f"`{array}` with Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that multiplies the elements of "
+            f"`{array}` and outputs the product."
+        ),
+        "paraphrase_h": (
+            f"A script needs the product of all numbers in `{array}`. What "
+            f"Luau code should it use?"
         ),
     }
     return FamilyResult(
@@ -575,6 +698,22 @@ def family_while_accumulate(rng: random.Random, names: NamePool) -> FamilyResult
         "paraphrase_b": (
             f"What Luau while loop sums the numbers from 1 to {limit}?"
         ),
+        "paraphrase_e": (
+            f"I need Luau code that uses a while loop to total the numbers "
+            f"from 1 to {limit} and prints the sum."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to add 1 through {limit} with a while loop "
+            f"in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that sums 1 to {limit} using a "
+            f"while loop and prints the total."
+        ),
+        "paraphrase_h": (
+            f"A beginner wants to add every number from 1 to {limit} with a "
+            f"while loop in Luau. What code should they write?"
+        ),
     }
     return FamilyResult(
         family="while_accumulate",
@@ -617,6 +756,22 @@ def family_repeat_until(rng: random.Random, names: NamePool) -> FamilyResult:
         "paraphrase_b": (
             f"What Luau repeat loop increments a counter until it reaches "
             f"{limit}?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that uses a repeat loop to count up to {limit} "
+            f"and prints the count."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to count to {limit} with a repeat-until "
+            f"loop in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that increments a counter until "
+            f"it reaches {limit} and prints it."
+        ),
+        "paraphrase_h": (
+            f"A script needs to count from 0 until it reaches {limit} using "
+            f"a repeat loop in Luau. What code should it use?"
         ),
     }
     return FamilyResult(
@@ -664,6 +819,22 @@ def family_iterate_print(rng: random.Random, names: NamePool) -> FamilyResult:
         "paraphrase_b": (
             f"What Luau loop prints every key and value in the `{table}` "
             f"table?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that loops over `{table}` and prints each "
+            f"index and value."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to print every index and value of "
+            f"`{table}` in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that iterates over `{table}` and "
+            f"outputs each key with its value."
+        ),
+        "paraphrase_h": (
+            f"A script needs to list every index and value in `{table}`. "
+            f"What Luau code should it use?"
         ),
     }
     return FamilyResult(
@@ -716,6 +887,24 @@ def family_iterate_filter(rng: random.Random, names: NamePool) -> FamilyResult:
             f"What Luau loop filters `{table}` to values over {threshold} and "
             f"prints the size of `{filtered}`?"
         ),
+        "paraphrase_e": (
+            f"I need Luau code that copies the values in `{table}` above "
+            f"{threshold} into `{filtered}` and prints its size."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to filter `{table}` to values over "
+            f"{threshold} and print the size of `{filtered}` in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that keeps the elements of "
+            f"`{table}` greater than {threshold} in `{filtered}` and outputs "
+            f"the size."
+        ),
+        "paraphrase_h": (
+            f"A script needs a new table `{filtered}` containing only the "
+            f"values from `{table}` above {threshold}, then wants its size. "
+            f"What Luau code should it use?"
+        ),
     }
     return FamilyResult(
         family="iterate_filter",
@@ -761,6 +950,23 @@ def family_if_elseif_grade(rng: random.Random, names: NamePool) -> FamilyResult:
         "paraphrase_b": (
             f"What Luau if/elseif prints A for 90 or above, B for 80 or "
             f"above, and C otherwise for `{score_name} = {score}`?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that prints A when `{score_name} = {score}` "
+            f"is 90 or above, B when it is 80 or above, and C otherwise."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to grade `{score_name} = {score}` in Luau "
+            f"with A at 90, B at 80, and C otherwise?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that maps `{score_name} = "
+            f"{score}` to A at 90 or above, B at 80 or above, and C "
+            f"otherwise."
+        ),
+        "paraphrase_h": (
+            f"A script has `{score_name} = {score}` and must print A, B, or C "
+            f"using the cutoffs 90 and 80. What Luau code should it use?"
         ),
     }
     return FamilyResult(
@@ -809,6 +1015,22 @@ def family_if_else_health(rng: random.Random, names: NamePool) -> FamilyResult:
         "paraphrase_b": (
             f"What Luau if/else prints low below {limit} and ok otherwise for "
             f"`{health_name} = {health}`?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that prints low when `{health_name} = "
+            f"{health}` is below {limit} and ok otherwise."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to print low or ok for `{health_name} = "
+            f"{health}` using a {limit} threshold in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that outputs low when "
+            f"`{health_name} = {health}` is under {limit} and ok otherwise."
+        ),
+        "paraphrase_h": (
+            f"A script has `{health_name} = {health}` and must print low "
+            f"below {limit}, otherwise ok. What Luau code should it use?"
         ),
     }
     return FamilyResult(
@@ -869,6 +1091,25 @@ def family_function_add(rng: random.Random, names: NamePool) -> FamilyResult:
             f"What Luau code defines `{function}({a}, {b})` and prints "
             f"`{function}({left}, {right})`?"
         ),
+        "paraphrase_e": (
+            f"I need Luau code that defines `{function}` to add `{a}` and "
+            f"`{b}`, then prints `{function}({left}, {right})`."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to write a local function `{function}` in "
+            f"Luau that adds `{a}` and `{b}` and then prints "
+            f"`{function}({left}, {right})`?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that defines `{function}({a}, "
+            f"{b})` returning their sum and prints `{function}({left}, "
+            f"{right})`."
+        ),
+        "paraphrase_h": (
+            f"A script needs a local function `{function}` that adds `{a}` "
+            f"and `{b}`, then prints `{function}({left}, {right})`. What "
+            f"Luau code should it use?"
+        ),
     }
     return FamilyResult(
         family="function_add",
@@ -922,6 +1163,26 @@ def family_function_typed(rng: random.Random, names: NamePool) -> FamilyResult:
             f"What Luau code declares a typed function `{function}` returning "
             f"`\"Hello, \" .. {param}` and prints "
             f"`{function}({lua_string(person)})`?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code with a typed function `{function}` that "
+            f"returns `\"Hello, \" .. {param}` and prints "
+            f"`{function}({lua_string(person)})`."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to add `string` types to a Luau function "
+            f"`{function}` returning `\"Hello, \" .. {param}` and print "
+            f"`{function}({lua_string(person)})`?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that declares `{function}"
+            f"({param}: string): string` returning `\"Hello, \" .. {param}` "
+            f"and prints `{function}({lua_string(person)})`."
+        ),
+        "paraphrase_h": (
+            f"A script needs a typed Luau function `{function}` returning "
+            f"`\"Hello, \" .. {param}` and then prints "
+            f"`{function}({lua_string(person)})`. What code should it use?"
         ),
     }
     return FamilyResult(
@@ -978,6 +1239,26 @@ def family_table_literal(rng: random.Random, names: NamePool) -> FamilyResult:
             f"`{name_field} = {lua_string(name_value)}` and "
             f"`{age_field} = {age_value}` and prints both values?"
         ),
+        "paraphrase_e": (
+            f"I need Luau code that creates `{table}` with "
+            f"`{name_field} = {lua_string(name_value)}` and "
+            f"`{age_field} = {age_value}`, then prints both fields."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to build a Luau table `{table}` with "
+            f"`{name_field} = {lua_string(name_value)}` and "
+            f"`{age_field} = {age_value}`, then print both values?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that declares `{table}` "
+            f"containing `{name_field} = {lua_string(name_value)}` and "
+            f"`{age_field} = {age_value}`, then outputs both fields."
+        ),
+        "paraphrase_h": (
+            f"A script needs a table `{table}` with `{name_field} = "
+            f"{lua_string(name_value)}` and `{age_field} = {age_value}`, then "
+            f"prints both values. What Luau code should it use?"
+        ),
     }
     return FamilyResult(
         family="table_literal",
@@ -1026,6 +1307,25 @@ def family_table_access(rng: random.Random, names: NamePool) -> FamilyResult:
         "paraphrase_b": (
             f"What Luau code creates `{table}` with `{field} = {field_value}`, "
             f"updates `{field}` to {new_value}, and prints the new value?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that creates `{table}` with `{field} = "
+            f"{field_value}`, changes `{field}` to {new_value}, then prints "
+            f"it."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to set `{field}` on `{table}` from "
+            f"{field_value} to {new_value} and print the result in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that initializes `{table}` with "
+            f"`{field} = {field_value}`, updates `{field}` to {new_value}, "
+            f"and prints it."
+        ),
+        "paraphrase_h": (
+            f"A script creates `{table}` with `{field} = {field_value}`, then "
+            f"changes `{field}` to {new_value} and prints it. What Luau code "
+            f"should it use?"
         ),
     }
     return FamilyResult(
@@ -1079,6 +1379,26 @@ def family_string_concat(rng: random.Random, names: NamePool) -> FamilyResult:
             f"`{first_var} = {lua_string(first_name)}` and "
             f"`{last_var} = {lua_string(last_name)}` with a space?"
         ),
+        "paraphrase_e": (
+            f"I need Luau code that joins `{first_var} = "
+            f"{lua_string(first_name)}` and `{last_var} = "
+            f"{lua_string(last_name)}` with a space and prints the full name."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to concatenate `{first_var} = "
+            f"{lua_string(first_name)}` and `{last_var} = "
+            f"{lua_string(last_name)}` with a space in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that combines `{first_var} = "
+            f"{lua_string(first_name)}` and `{last_var} = "
+            f"{lua_string(last_name)}` into a space-separated full name."
+        ),
+        "paraphrase_h": (
+            f"A script has `{first_var} = {lua_string(first_name)}` and "
+            f"`{last_var} = {lua_string(last_name)}` and needs one full name "
+            f"with a space. What Luau code should it use?"
+        ),
     }
     return FamilyResult(
         family="string_concat",
@@ -1124,6 +1444,23 @@ def family_string_interp(rng: random.Random, names: NamePool) -> FamilyResult:
         "paraphrase_b": (
             f"What Luau code interpolates `{var} = {lua_string(person)}` into "
             f"`{text}`?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that interpolates `{var} = "
+            f"{lua_string(person)}` into a string and prints `{text}`."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to build `{text}` from `{var} = "
+            f"{lua_string(person)}` using Luau string interpolation?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that interpolates `{var} = "
+            f"{lua_string(person)}` into `{text}` and prints the result."
+        ),
+        "paraphrase_h": (
+            f"A script has `{var} = {lua_string(person)}` and needs to print "
+            f"`{text}` using an interpolated string. What Luau code should it "
+            f"use?"
         ),
     }
     return FamilyResult(
@@ -1176,6 +1513,25 @@ def family_nested_loop(rng: random.Random, names: NamePool) -> FamilyResult:
         "paraphrase_b": (
             f"What Luau code nests a {outer_n}-iteration loop inside a "
             f"{inner_n}-iteration loop and prints both indexes?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code with nested loops where `{outer}` runs from 1 "
+            f"to {outer_n} and `{inner}` runs from 1 to {inner_n}, printing "
+            f"both variables."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to nest a loop of {outer_n} inside a loop "
+            f"of {inner_n} in Luau and print both indexes?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation with an outer loop from 1 to "
+            f"{outer_n} and an inner loop from 1 to {inner_n} that outputs "
+            f"every pair."
+        ),
+        "paraphrase_h": (
+            f"A script needs two nested loops with bounds {outer_n} and "
+            f"{inner_n} that print both indexes. What Luau code should it "
+            f"use?"
         ),
     }
     return FamilyResult(
@@ -1383,11 +1739,13 @@ def write_readme(path: Path, counts: Dict[str, int], families: Sequence[str]) ->
         "",
         "## Splits",
         "",
-        "- `train.jsonl`: canonical, `paraphrase_a`, `paraphrase_c`, and "
-        "`paraphrase_d` instructions.",
+        "- `train.jsonl`: canonical, `paraphrase_a`, `paraphrase_c`, "
+        "`paraphrase_d`, `paraphrase_e`, and `paraphrase_f` instructions.",
         "- `val.jsonl`: same distribution as training.",
         "- `test-seen.jsonl`: canonical prompts with unseen values.",
         "- `test-paraphrase.jsonl`: held-out `paraphrase_b` wording.",
+        "- `test-paraphrase-g.jsonl`: held-out `paraphrase_g` wording.",
+        "- `test-paraphrase-h.jsonl`: held-out `paraphrase_h` wording.",
         "- `test-question.jsonl`: `paraphrase_d` question prompts with unseen values.",
         "- `test-unseen.jsonl`: canonical prompts with a held-out identifier pool.",
         "",
@@ -1400,8 +1758,10 @@ def write_readme(path: Path, counts: Dict[str, int], families: Sequence[str]) ->
         "",
         "```sh",
         "python3 scripts/luau_tasks.py --out data/luau-tasks \\",
-        "  --train 12000 --val 1200 --test-seen 300 \\",
-        "  --test-paraphrase 200 --test-question 200 --test-unseen 100 --seed 1337",
+        "  --train 30000 --val 3000 --test-seen 300 \\",
+        "  --test-paraphrase 200 --test-paraphrase-g 200 \\",
+        "  --test-paraphrase-h 200 --test-question 200 \\",
+        "  --test-unseen 100 --seed 1337",
         "```",
         "",
     ]
@@ -1423,6 +1783,8 @@ def main() -> None:
     parser.add_argument("--val", type=int, default=1200)
     parser.add_argument("--test-seen", type=int, default=300)
     parser.add_argument("--test-paraphrase", type=int, default=200)
+    parser.add_argument("--test-paraphrase-g", type=int, default=200)
+    parser.add_argument("--test-paraphrase-h", type=int, default=200)
     parser.add_argument("--test-question", type=int, default=200)
     parser.add_argument("--test-unseen", type=int, default=100)
     parser.add_argument("--seed", type=int, default=1337)
@@ -1497,6 +1859,28 @@ def main() -> None:
             args.seed + 3,
             "test-paraphrase",
             (HELD_OUT_STYLE,),
+            COMMON_NAMES,
+        ),
+    )
+    counts["test-paraphrase-g"] = write_jsonl(
+        args.out / "test-paraphrase-g.jsonl",
+        generate_split(
+            families,
+            args.test_paraphrase_g,
+            args.seed + 6,
+            "test-paraphrase-g",
+            ("paraphrase_g",),
+            COMMON_NAMES,
+        ),
+    )
+    counts["test-paraphrase-h"] = write_jsonl(
+        args.out / "test-paraphrase-h.jsonl",
+        generate_split(
+            families,
+            args.test_paraphrase_h,
+            args.seed + 7,
+            "test-paraphrase-h",
+            ("paraphrase_h",),
             COMMON_NAMES,
         ),
     )
