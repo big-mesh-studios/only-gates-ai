@@ -16,6 +16,7 @@ import {
 } from "../lib/maskedDiffusion";
 import { LUAU_PRESETS, type LuauMode } from "../lib/luauConfig";
 
+import MaskedDiffusionTrainingPanel from "./MaskedDiffusionTrainingPanel";
 interface MaskedDiffusionPanelProps {
   /** The tab is selected. The model loads lazily on first open. */
   readonly active: boolean;
@@ -474,6 +475,7 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
           </pre>
         </div>
       </Show>
+      <MaskedDiffusionTrainingPanel />
 
       <Show when={model()}>
         <p class="hint luau-model-meta">

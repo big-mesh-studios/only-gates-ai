@@ -1,0 +1,216 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Train the masked-diffusion Luau model\n",
+    "\n",
+    "This notebook builds the model used by the **Masked diffusion** tab. It is a\n",
+    "bidirectional Tiny GPT trained with an absorbing `<|mask|>` token: the whole\n",
+    "answer region is masked, then each denoising step fills the next block of\n",
+    "positions left to right. The browser runs one integer-only WASM pass per\n",
+    "animation frame.\n",
+    "\n",
+    "Runtime: **GPU (T4 is enough)**. The default configuration is about 9.6M\n",
+    "parameters with a 128-token context, which fits the generated Luau answers\n",
+    "(median 28 tokens, max 42) and keeps the live animation fast. The committed\n",
+    "dataset has 30,000 training rows and 3,000 validation rows, with six training\n",
+    "prompt styles and three held-out styles for evaluation.\n",
+    "\n",
+    "Files are written to `MyDrive/masked-diffusion-luau` when Drive is mounted;\n",
+    "otherwise they stay under `/content`.\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 1. Check the runtime\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import os, sys, subprocess\n",
+    "import torch\n",
+    "\n",
+    "print(sys.version)\n",
+    "print(\"torch\", torch.__version__, \"cuda\", torch.cuda.is_available())\n",
+    "if torch.cuda.is_available():\n",
+    "    print(torch.cuda.get_device_name(0))\n",
+    "else:\n",
+    "    print(\"No GPU found. Runtime -> Change runtime type -> T4 GPU.\")\n",
+    "    print(\"Training will still run on CPU, just much more slowly.\")\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 2. Get the repository\n",
+    "\n",
+    "Set `REPO_URL` to a clone URL you can reach. The masked trainer only needs the\n",
+    "new script, but the notebook also uses the committed tokenizer and task data.\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "REPO_URL = \"https://github.com/clinuxrulz/only-gates-ai.git\"\n",
+    "REPO_DIR = \"/content/only-gates-ai\"\n",
+    "\n",
+    "if os.path.isdir(os.path.join(REPO_DIR, \".git\")):\n",
+    "    subprocess.run([\"git\", \"-C\", REPO_DIR, \"pull\", \"--ff-only\"], check=True)\n",
+    "else:\n",
+    "    subprocess.run([\"git\", \"clone\", \"--depth\", \"1\", REPO_URL, REPO_DIR], check=True)\n",
+    "\n",
+    "os.chdir(REPO_DIR)\n",
+    "print(\"working directory:\", os.getcwd())\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 3. Check the data and tokenizer\n",
+    "\n",
+    "The task JSONL files and the 1,722-token Luau BPE model are committed. The\n",
+    "masked trainer appends `<|mask|>` at the end of the vocabulary (id 1,721), so\n",
+    "existing prompt ids do not move. Training uses canonical, `paraphrase_a`,\n",
+    "`paraphrase_c`, `paraphrase_d`, `paraphrase_e`, and `paraphrase_f`; the\n",
+    "`paraphrase_b`, `paraphrase_g`, and `paraphrase_h` splits are held out.\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(open(\"data/luau-tasks/train.jsonl\", encoding=\"utf-8\").readline()[:200])\n",
+    "print(open(\"apps/only-gates-ai/public/models/tiny-gpt-luau/tokenizer.json\", encoding=\"utf-8\").read()[:200])\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 4. Train\n",
+    "\n",
+    "`--max-minutes` stops cleanly before Colab disconnects. Re-run the same cell\n",
+    "with `--resume` to continue from `latest.pt`.\n",
+    "\n",
+    "The trainer exports the best-validation checkpoint by default. It stops early\n",
+    "after `--early-stop-patience` epochs without improvement (default 6; `0`\n",
+    "disables).\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from google.colab import drive\n",
+    "drive.mount(\"/content/drive\")\n",
+    "\n",
+    "OUT_DIR = \"/content/drive/MyDrive/masked-diffusion-luau\"\n",
+    "os.makedirs(OUT_DIR, exist_ok=True)\n",
+    "\n",
+    "!python3 scripts/train_masked_diffusion_luau_colab.py \\\n",
+    "  --tasks data/luau-tasks \\\n",
+    "  --out \"{OUT_DIR}\" \\\n",
+    "  --tokenizer apps/only-gates-ai/public/models/tiny-gpt-luau/tokenizer.json \\\n",
+    "  --context 128 --dim 384 --layers 6 --heads 6 --mlp 1152 \\\n",
+    "  --epochs 40 --batch 24 --lr 3e-4 \\\n",
+    "  --dropout 0.1 --faq-repeat 20 --steps 16 \\\n",
+    "  --save-every 250 --max-minutes 180\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 5. Inspect a few denoised samples\n",
+    "\n",
+    "The checkpoint stores samples produced by a PyTorch mirror of the C denoiser:\n",
+    "start with a fully masked answer region and fill the next left-to-right block\n",
+    "on each step.\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import json, os\n",
+    "\n",
+    "checkpoint = json.load(open(os.path.join(OUT_DIR, \"checkpoint.json\"), encoding=\"utf-8\"))\n",
+    "print(\"config:\", checkpoint[\"config\"])\n",
+    "print(\"parameters:\", f\"{checkpoint['parameterCount']:,}\")\n",
+    "print(\"mask id:\", checkpoint[\"diffusion\"][\"maskTokenId\"])\n",
+    "for sample in checkpoint.get(\"samples\", []):\n",
+    "    print(\"\\nPROMPT:\", sample[\"prompt\"])\n",
+    "    print(sample[\"text\"][:600])\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 6. Publish\n",
+    "\n",
+    "Copy `checkpoint.json`, `tokenizer.json`, and `weights.bin` into\n",
+    "`apps/only-gates-ai/public/models/masked-diffusion-luau/`, commit them, and\n",
+    "rebuild the app. The Masked diffusion tab loads that folder lazily.\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import shutil\n",
+    "\n",
+    "target = os.path.join(REPO_DIR, \"apps/only-gates-ai/public/models/masked-diffusion-luau\")\n",
+    "os.makedirs(target, exist_ok=True)\n",
+    "for name in (\"checkpoint.json\", \"tokenizer.json\", \"weights.bin\"):\n",
+    "    source = os.path.join(OUT_DIR, name)\n",
+    "    if os.path.exists(source):\n",
+    "        shutil.copy2(source, target)\n",
+    "        print(\"copied\", source)\n",
+    "    else:\n",
+    "        print(\"missing\", source)\n",
+    "\n",
+    "# Convenience download if you are not using Drive.\n",
+    "shutil.make_archive(\"/content/masked-diffusion-luau\", \"zip\", OUT_DIR)\n",
+    "from google.colab import files\n",
+    "files.download(\"/content/masked-diffusion-luau.zip\")\n"
+   ]
+  }
+ ],
+ "metadata": {
+  "accelerator": "GPU",
+  "colab": {
+   "provenance": []
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 0
+}
