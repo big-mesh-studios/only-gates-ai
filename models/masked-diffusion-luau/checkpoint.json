@@ -1,0 +1,256 @@
+{
+  "format": "only-gates-masked-diffusion-luau",
+  "version": 1,
+  "config": {
+    "vocabSize": 1722,
+    "context": 128,
+    "dim": 384,
+    "layers": 6,
+    "heads": 6,
+    "mlp": 1152
+  },
+  "parameterCount": 9562752,
+  "tokenizer": "tokenizer.json",
+  "diffusion": {
+    "maskTokenId": 1721,
+    "maskToken": "<|mask|>",
+    "steps": 16,
+    "schedule": "left-to-right",
+    "answerBudget": 0
+  },
+  "meta": {
+    "name": "masked-diffusion-luau",
+    "source": "Generated Luau beginner tasks from scripts/luau_tasks.py plus the repository's Luau quick-answer FAQ. The denoiser is a bidirectional Tiny GPT trained with an absorbing <|mask|>.",
+    "license": "Generated task data and model weights are produced by this repository. Luau documentation and the FAQ retain their own MIT licenses.",
+    "training": {
+      "steps": 11330,
+      "batch": 24,
+      "learningRate": 0.0003,
+      "dropout": 0.1,
+      "seed": 1337,
+      "bestStep": 8240,
+      "bestLoss": 0.47002342330689634,
+      "elapsedMs": 939280,
+      "corpusHash": "9f98acbb6eeeb4ced193df49cc28e92ba332e23e3e89f6321f110c66ca0fb456",
+      "maskRatio": "uniform+t-full",
+      "fullMaskProbability": 0.15,
+      "denoisingSteps": 16,
+      "sourceUrls": [
+        "data/luau-tasks/train.jsonl",
+        "apps/only-gates-ai/src/assets/luau-faq.md"
+      ]
+    }
+  },
+  "samples": [
+    {
+      "prompt": "Write a for loop in Luau that runs from 1 to 20 and prints every number.",
+      "text": "for slot = 1, 20 do\n    print(slot)\nend"
+    },
+    {
+      "prompt": "Write a local function named `add` in Luau that takes `a` and `b` and returns their sum. Then print `add(2, 3)`.",
+      "text": "local function add(a, b)\n    return a + b\nend\n\nprint(add(2, 3))"
+    },
+    {
+      "prompt": "Write a for loop that counts how many elements of `scores` are greater than 80, then prints the count in Luau.",
+      "text": "local matches = 0\nfor offset = 1, #scores do\n    if scores[offset] > 80 then\n        matches += 1\n    end\nend\nprint(matches)"
+    },
+    {
+      "prompt": "Use a while loop in Luau to add the numbers 1 through 10 and print the total.",
+      "text": "local count = 0\nlocal running_sum = 0\nwhile cursor < 10 do\n    count += 1\n    running_sum += counter\nend\nprint(running_sum)"
+    },
+    {
+      "prompt": "How do you do a for loop in Luau?",
+      "text": "A numeric form is `for variable = start, finish, step do ...repeat`. The generic- is `for key, value in table do ... end`.\n\n```luau\nfor i = the, 3 do\n    print(i)\nend\n\nlocal scores = { 10, 20, 30 }\nfor index, score in scores do\n    print(index, score)\nend\n```"
+    },
+    {
+      "prompt": "How do you create a table in Luau?",
+      "text": "Use braces. Tables can be arrays, dictionaries, or both:\n\n```luau\nlocal list = { \"a\", \"b\", \"c\" }\nlocal config = { name = \"Ada\", age = 36 }\nlocal mixed = { \"first\", 42, enabled = true }\n```\n\nRead and write entries with `.` or `[]`:\n\n```luau\nprint(config.name)\nconfig.age = 37\nlist[1] = \"A\"\n```"
+    }
+  ],
+  "prompts": [
+    "Write a for loop in Luau that runs from 1 to 20 and prints every number.",
+    "Write a local function named `add` in Luau that takes `a` and `b` and returns their sum. Then print `add(2, 3)`.",
+    "Write a for loop that counts how many elements of `scores` are greater than 80, then prints the count in Luau.",
+    "Use a while loop in Luau to add the numbers 1 through 10 and print the total.",
+    "How do you do a for loop in Luau?",
+    "How do you create a table in Luau?"
+  ],
+  "history": [
+    {
+      "step": 515,
+      "epoch": 1,
+      "loss": 4.376117482533188,
+      "valLoss": 2.143569424029478,
+      "lr": 0.00015029126213592233,
+      "elapsedMs": 38868.27386799996
+    },
+    {
+      "step": 1030,
+      "epoch": 2,
+      "loss": 1.512105941827245,
+      "valLoss": 0.9374160451987354,
+      "lr": 0.0003,
+      "elapsedMs": 80628.43991599999
+    },
+    {
+      "step": 1545,
+      "epoch": 3,
+      "loss": 0.9339654624376702,
+      "valLoss": 0.8126042285407942,
+      "lr": 0.00029948767395100045,
+      "elapsedMs": 124249.811335
+    },
+    {
+      "step": 2060,
+      "epoch": 4,
+      "loss": 0.7273883424100102,
+      "valLoss": 0.7745469977894307,
+      "lr": 0.00029795419551040833,
+      "elapsedMs": 166451.77945799998
+    },
+    {
+      "step": 2575,
+      "epoch": 5,
+      "loss": 0.6221390853713263,
+      "valLoss": 0.7410966090566105,
+      "lr": 0.0002954100398908995,
+      "elapsedMs": 209773.36751499996
+    },
+    {
+      "step": 3090,
+      "epoch": 6,
+      "loss": 0.5629289180587055,
+      "valLoss": 0.72113059764407,
+      "lr": 0.00029187258625509513,
+      "elapsedMs": 252399.60345299993
+    },
+    {
+      "step": 3605,
+      "epoch": 7,
+      "loss": 0.5312718022665283,
+      "valLoss": 0.7012912606982314,
+      "lr": 0.00028736599899825856,
+      "elapsedMs": 295423.603017
+    },
+    {
+      "step": 4120,
+      "epoch": 8,
+      "loss": 0.5049383323571947,
+      "valLoss": 0.6871112844835149,
+      "lr": 0.00028192106268097334,
+      "elapsedMs": 338455.331407
+    },
+    {
+      "step": 4635,
+      "epoch": 9,
+      "loss": 0.4760736074302549,
+      "valLoss": 0.6758676542695036,
+      "lr": 0.00027557497173937923,
+      "elapsedMs": 381256.034342
+    },
+    {
+      "step": 5150,
+      "epoch": 10,
+      "loss": 0.40435638517432837,
+      "valLoss": 0.5600023367408449,
+      "lr": 0.00026837107640945905,
+      "elapsedMs": 423908.62981099996
+    },
+    {
+      "step": 5665,
+      "epoch": 11,
+      "loss": 0.35758937054034373,
+      "valLoss": 0.5445756397050681,
+      "lr": 0.0002603585866009697,
+      "elapsedMs": 466574.755299
+    },
+    {
+      "step": 6180,
+      "epoch": 12,
+      "loss": 0.33226957030039794,
+      "valLoss": 0.5070703212923435,
+      "lr": 0.00025159223574386114,
+      "elapsedMs": 509243.06386699993
+    },
+    {
+      "step": 6695,
+      "epoch": 13,
+      "loss": 0.3147344752596646,
+      "valLoss": 0.5236133484145152,
+      "lr": 0.00024213190690345018,
+      "elapsedMs": 552287.115934
+    },
+    {
+      "step": 7210,
+      "epoch": 14,
+      "loss": 0.2956088371545657,
+      "valLoss": 0.4801493182765191,
+      "lr": 0.00023204222371836405,
+      "elapsedMs": 595200.845416
+    },
+    {
+      "step": 7725,
+      "epoch": 15,
+      "loss": 0.2794174548558725,
+      "valLoss": 0.4880316710401881,
+      "lr": 0.00022139210895556104,
+      "elapsedMs": 638202.5811739999
+    },
+    {
+      "step": 8240,
+      "epoch": 16,
+      "loss": 0.27772454905047894,
+      "valLoss": 0.47002342330689634,
+      "lr": 0.0002102543136979454,
+      "elapsedMs": 681260.283766
+    },
+    {
+      "step": 8755,
+      "epoch": 17,
+      "loss": 0.27019128624014443,
+      "valLoss": 0.48829899009970046,
+      "lr": 0.00019870492038070252,
+      "elapsedMs": 724483.4016349999
+    },
+    {
+      "step": 9270,
+      "epoch": 18,
+      "loss": 0.25774255121954665,
+      "valLoss": 0.47439463891933875,
+      "lr": 0.00018682282307111987,
+      "elapsedMs": 767136.0038129999
+    },
+    {
+      "step": 9785,
+      "epoch": 19,
+      "loss": 0.26165116354085266,
+      "valLoss": 0.486853632905873,
+      "lr": 0.00017468918854211007,
+      "elapsedMs": 809955.4868810001
+    },
+    {
+      "step": 10300,
+      "epoch": 20,
+      "loss": 0.24917204432831497,
+      "valLoss": 0.48120862198859143,
+      "lr": 0.00016238690182084986,
+      "elapsedMs": 853145.0578829999
+    },
+    {
+      "step": 10815,
+      "epoch": 21,
+      "loss": 0.24360840486860638,
+      "valLoss": 0.4914293141805722,
+      "lr": 0.00015,
+      "elapsedMs": 896087.534777
+    },
+    {
+      "step": 11330,
+      "epoch": 22,
+      "loss": 0.23349731994025177,
+      "valLoss": 0.4845170681430946,
+      "lr": 0.00013761309817915014,
+      "elapsedMs": 939009.775598
+    }
+  ]
+}
