@@ -17,6 +17,7 @@ export const BPE_SPECIAL_TOKENS = [
   "<|assistant|>",
   "<|end|>",
   "<|facts|>",
+  "<|mask|>",
 ] as const;
 
 export type BpeSpecialToken = (typeof BPE_SPECIAL_TOKENS)[number];

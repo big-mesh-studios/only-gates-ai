@@ -88,6 +88,22 @@ export interface OnlyGatesWasmModule {
     start: number,
     count: number,
   ): void;
+  _tiny_gpt_set_bidirectional(model: number, enabled: number): void;
+  _tiny_gpt_forward_bidirectional(
+    model: number,
+    tokensPointer: number,
+    length: number,
+  ): void;
+  _tiny_masked_diffusion_step(
+    model: number,
+    tokensPointer: number,
+    length: number,
+    promptLength: number,
+    maskId: number,
+    temperatureQ16: number,
+    step: number,
+    totalSteps: number,
+  ): number;
   _tiny_gpt_reset_cache(model: number): void;
   _tiny_gpt_logits(model: number): number;
   _tiny_gpt_logits_row(model: number, position: number): number;

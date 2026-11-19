@@ -6,6 +6,7 @@ set(TEST_NAMES
     test_attention
     test_attention_vectors
     test_tiny_gpt
+    test_masked_diffusion
 )
 
 foreach(test_name IN LISTS TEST_NAMES)

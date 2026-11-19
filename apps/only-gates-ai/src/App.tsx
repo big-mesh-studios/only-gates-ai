@@ -16,6 +16,7 @@ import LanguageModelPanel from "./components/LanguageModelPanel";
 import LivePrediction from "./components/LivePrediction";
 import LuauPanel from "./components/LuauPanel";
 import LuauQaPanel from "./components/LuauQaPanel";
+import MaskedDiffusionPanel from "./components/MaskedDiffusionPanel";
 import ModelStoragePanel from "./components/ModelStoragePanel";
 import SettingsPanel from "./components/SettingsPanel";
 import TestingPanel from "./components/TestingPanel";
@@ -103,7 +104,9 @@ export default function App() {
   const [runtimeError, setRuntimeError] = createSignal("");
   const [instance, setInstance] = createSignal<OnlyGatesAI | null>(null);
 
-  const [activeTab, setActiveTab] = createSignal<"symbols" | "language" | "integer" | "luau" | "luau-qa">("symbols");
+  const [activeTab, setActiveTab] = createSignal<
+    "symbols" | "language" | "integer" | "luau" | "luau-qa" | "masked"
+  >("symbols");
   const [mode, setMode] = createSignal<"train" | "test">("train");
   const [inferenceMode, setInferenceMode] = createSignal<InferenceMode>("hard");
 
@@ -938,7 +941,9 @@ export default function App() {
             <h1>Gate Forest</h1>
             <p>
               Draw a symbol and grow a forest of boolean circuits, or train a
-              tiny binary language model on your own text.
+              tiny binary language model on your own text. Luau demos show
+              integer transformers and a masked-diffusion denoiser running in
+              WASM.
             </p>
           </div>
         </div>
@@ -1022,6 +1027,15 @@ export default function App() {
           onClick={() => setActiveTab("luau-qa")}
         >
           Luau Q&A
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab() === "masked" ? "true" : "false"}
+          class={{ active: activeTab() === "masked" }}
+          onClick={() => setActiveTab("masked")}
+        >
+          Masked diffusion
         </button>
       </nav>
 
@@ -1206,57 +1220,78 @@ export default function App() {
         <LuauQaPanel />
       </div>
 
+      <div class="tab-panel" hidden={activeTab() !== "masked"}>
+        <MaskedDiffusionPanel active={activeTab() === "masked"} />
+      </div>
+
       <footer class="app-footer">
         <Show
-          when={activeTab() === "luau-qa"}
+          when={activeTab() === "masked"}
           fallback={
             <Show
-              when={activeTab() === "luau"}
+              when={activeTab() === "luau-qa"}
               fallback={
                 <Show
-                  when={activeTab() === "symbols"}
+                  when={activeTab() === "luau"}
                   fallback={
-                    <>
+                    <Show
+                      when={activeTab() === "symbols"}
+                      fallback={
+                        <>
+                          <span>
+                            Word vectors: a Word2Bits subset (Apache-2.0).
+                            Autocomplete trains with floats and predicts with
+                            popcount and Q15 fixed-point softmax.
+                          </span>
+                          <span>
+                            Q&A mode retrieves the trained answer closest to your
+                            question. Nothing is uploaded; everything stays in
+                            this browser tab.
+                          </span>
+                        </>
+                      }
+                    >
                       <span>
-                        Word vectors: a Word2Bits subset (Apache-2.0). Autocomplete
-                        trains with floats and predicts with popcount and Q15
-                        fixed-point softmax.
+                        {CIRCUITS_PER_LABEL} circuits per label · saved strokes
+                        are replayed, never re-rasterised from the display
+                        canvas.
                       </span>
                       <span>
-                        Q&A mode retrieves the trained answer closest to your
-                        question. Nothing is uploaded; everything stays in this
-                        browser tab.
+                        Soft circuits weigh every gate; hard circuits lock each
+                        wire and gate to its most likely choice.
                       </span>
-                    </>
+                    </Show>
                   }
                 >
                   <span>
-                    {CIRCUITS_PER_LABEL} circuits per label · saved strokes are
-                    replayed, never re-rasterised from the display canvas.
+                    Luau answers come from a task-tuned tiny GPT. Write prompts
+                    use a `Task:` prefix, question prompts use `Question:`; both
+                    run through the same integer-only WASM inference path.
                   </span>
                   <span>
-                    Soft circuits weigh every gate; hard circuits lock each wire and
-                    gate to its most likely choice.
+                    Generated code is shown for reading and copying. It is not
+                    executed in the browser; run it in the Luau CLI or Roblox
+                    Studio.
                   </span>
                 </Show>
               }
             >
               <span>
-                Luau answers come from a task-tuned tiny GPT. Write prompts use a
-                `Task:` prefix, question prompts use `Question:`; both run through
-                the same integer-only WASM inference path.
-              </span>
-              <span>
-                Generated code is shown for reading and copying. It is not executed
-                in the browser; run it in the Luau CLI or Roblox Studio.
+                Answers from the official Luau documentation at luau.org.
+                Retrieval over curated concepts; no answer text is generated.
+                Everything stays in this browser tab.
               </span>
             </Show>
           }
         >
           <span>
-            Answers from the official Luau documentation at luau.org. Retrieval
-            over curated concepts; no answer text is generated. Everything stays
-            in this browser tab.
+            Masked diffusion: a bidirectional integer transformer fills an
+            answer region of `&lt;|mask|&gt;` tokens, one WASM denoising pass per
+            animation frame. Text updates live as masks resolve into tokens.
+          </span>
+          <span>
+            Trained on the same Luau corpus as the tiny GPT. Everything runs
+            locally in this browser tab; nothing is uploaded.
           </span>
         </Show>
       </footer>

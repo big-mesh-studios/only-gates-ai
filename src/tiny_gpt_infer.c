@@ -256,6 +256,114 @@ static void attention_q16(TinyGpt *model, int layer, const int32_t *qkv,
 }
 
 /*
+ * Bidirectional attention for masked diffusion. Unlike the causal path, all
+ * keys and values for the window are quantized first, then every query reads
+ * the whole window. There is no cache reuse: each denoising step changes the
+ * masked tokens, so keys and values must be recomputed.
+ */
+static void attention_bidirectional_q16(TinyGpt *model, int layer,
+                                        const int32_t *qkv, int length) {
+  const TinyGptConfig *config = &model->config;
+  const int context = config->context;
+  const int dim = config->dim;
+  const int heads = config->heads;
+  const int head_dim = dim / heads;
+  const int qkv_stride = dim * 3;
+  const size_t layer_base = (size_t)layer * context;
+
+  for (int head = 0; head < heads; ++head) {
+    const int head_offset = head * head_dim;
+
+    /* Cache every key and value in the window before any query is scored. */
+    for (int t = 0; t < length; ++t) {
+      const size_t cache_row =
+          (layer_base + (size_t)t) * dim + (size_t)head_offset;
+      const size_t scale_index =
+          (layer_base + (size_t)t) * heads + (size_t)head;
+      const int32_t *key = qkv + (size_t)t * qkv_stride + dim + head_offset;
+      const int32_t *value =
+          qkv + (size_t)t * qkv_stride + dim * 2 + head_offset;
+      quantize_activation_row(key, head_dim, model->kv_k + cache_row,
+                              &model->kv_k_scale[scale_index]);
+      quantize_activation_row(value, head_dim, model->kv_v + cache_row,
+                              &model->kv_v_scale[scale_index]);
+    }
+
+    for (int t = 0; t < length; ++t) {
+      const int32_t *query = qkv + (size_t)t * qkv_stride + head_offset;
+      int32_t query_scale = 0;
+      quantize_activation_row(query, head_dim, model->q8, &query_scale);
+
+      int32_t row_max = -2147483647;
+      for (int j = 0; j < length; ++j) {
+        const size_t cache_row =
+            (layer_base + (size_t)j) * dim + (size_t)head_offset;
+        const size_t scale_index =
+            (layer_base + (size_t)j) * heads + (size_t)head;
+        const int8_t *key8 = model->kv_k + cache_row;
+        const int32_t dot = tiny_gpt_dot_i8(model->q8, key8, head_dim);
+        const int64_t product = (int64_t)dot * query_scale *
+                                model->kv_k_scale[scale_index] *
+                                model->inv_sqrt_head_dim_q16;
+        int64_t score = int_shift_round(product, 36);
+        if (score > TINY_GPT_SOFTMAX_CLIP_Q12) {
+          score = TINY_GPT_SOFTMAX_CLIP_Q12;
+        } else if (score < -TINY_GPT_SOFTMAX_CLIP_Q12) {
+          score = -TINY_GPT_SOFTMAX_CLIP_Q12;
+        }
+        model->scores[j] = (int32_t)score;
+        if (model->scores[j] > row_max) {
+          row_max = model->scores[j];
+        }
+      }
+
+      int32_t total = 0;
+      for (int j = 0; j < length; ++j) {
+        int32_t delta = row_max - model->scores[j];
+        if (delta < 0) {
+          delta = 0;
+        } else if (delta > TINY_GPT_SOFTMAX_CLIP_Q12) {
+          delta = TINY_GPT_SOFTMAX_CLIP_Q12;
+        }
+        const int32_t weight = int_exp_neg_q15_q12(delta);
+        model->attn_prob[j] = weight;
+        total += weight;
+      }
+      for (int j = length; j < context; ++j) {
+        model->attn_prob[j] = 0;
+      }
+
+      if (total > 0) {
+        for (int j = 0; j < length; ++j) {
+          model->attn_prob[j] = (int32_t)int_div_round(
+              (int64_t)model->attn_prob[j] * INT_Q15_ONE, total);
+        }
+      } else {
+        const int32_t uniform = INT_Q15_ONE / length;
+        for (int j = 0; j < length; ++j) {
+          model->attn_prob[j] = uniform;
+        }
+      }
+
+      for (int d = 0; d < head_dim; ++d) {
+        int64_t accumulator = 0;
+        for (int j = 0; j < length; ++j) {
+          const size_t cache_row =
+              (layer_base + (size_t)j) * dim + (size_t)head_offset;
+          const size_t scale_index =
+              (layer_base + (size_t)j) * heads + (size_t)head;
+          accumulator += (int64_t)model->attn_prob[j] *
+                         (int64_t)model->kv_v[cache_row + d] *
+                         model->kv_v_scale[scale_index];
+        }
+        model->attn[(size_t)t * dim + head_offset + d] =
+            (int32_t)int_shift_round(accumulator, 15);
+      }
+    }
+  }
+}
+
+/*
  * Applies a Q16 repetition penalty to the score of each distinct recent token.
  * Positive scores are divided by the penalty, negative scores are multiplied,
  * which is the usual CTRL-style repetition penalty.
@@ -436,6 +544,98 @@ static void forward_range_impl(TinyGpt *model, const int32_t *tokens,
              model->head_scale, vocab, model->q8, model->logits + (size_t)start * vocab);
 
   tiny_gpt_error_code = TINY_GPT_OK;
+}
+
+/*
+ * Full-sequence masked-diffusion forward pass. It shares the embedding, norm,
+ * matrix-multiply and MLP stages with the causal path; only attention differs.
+ */
+static void forward_bidirectional_impl(TinyGpt *model, const int32_t *tokens,
+                                       int length) {
+  const TinyGptConfig *config = &model->config;
+  const int dim = config->dim;
+  const int mlp = config->mlp;
+  const int vocab = config->vocab_size;
+
+  for (int t = 0; t < length; ++t) {
+    int token = tokens[t];
+    if (token < 0 || token >= vocab) {
+      token = 0;
+    }
+    const int8_t *token_row = model->token_emb + (size_t)token * dim;
+    const int32_t token_scale = model->token_emb_scale[token];
+    const int8_t *position_row = model->pos_emb + (size_t)t * dim;
+    const int32_t position_scale = model->pos_emb_scale[t];
+    for (int d = 0; d < dim; ++d) {
+      int64_t value = (int64_t)token_row[d] * token_scale +
+                      (int64_t)position_row[d] * position_scale;
+      if (value > 2147483647) {
+        value = 2147483647;
+      } else if (value < -2147483647) {
+        value = -2147483647;
+      }
+      model->x[(size_t)t * dim + d] = (int32_t)value;
+    }
+  }
+
+  for (int layer = 0; layer < config->layers; ++layer) {
+    const TinyGptLayer *weights = &model->layers[layer];
+
+    rmsnorm_q16(model->x, length, dim, weights->g1, model->h);
+    matmul_q16(model->h, length, dim, weights->wqkv, weights->wqkv_scale,
+               dim * 3, model->q8, model->qkv);
+    attention_bidirectional_q16(model, layer, model->qkv, length);
+    matmul_q16(model->attn, length, dim, weights->wo, weights->wo_scale, dim,
+               model->q8, model->y);
+
+    for (int i = 0; i < length * dim; ++i) {
+      model->x1[i] = model->x[i] + model->y[i];
+    }
+
+    rmsnorm_q16(model->x1, length, dim, weights->g2, model->h);
+    matmul_q16(model->h, length, dim, weights->w1, weights->w1_scale, mlp,
+               model->q8, model->z);
+
+    for (int i = 0; i < length * mlp; ++i) {
+      model->gz[i] = gelu_q16(model, model->z[i]);
+    }
+
+    matmul_q16(model->gz, length, mlp, weights->w2, weights->w2_scale, dim,
+               model->q8, model->m);
+
+    for (int i = 0; i < length * dim; ++i) {
+      model->x[i] = model->x1[i] + model->m[i];
+    }
+  }
+
+  rmsnorm_q16(model->x, length, dim, model->g_final, model->h);
+  matmul_q16(model->h, length, dim, model->head, model->head_scale, vocab,
+             model->q8, model->logits);
+
+  tiny_gpt_error_code = TINY_GPT_OK;
+}
+
+void tiny_gpt_set_bidirectional(TinyGpt *model, int enabled) {
+  if (model == NULL) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+  model->bidirectional = enabled != 0;
+  tiny_gpt_error_code = TINY_GPT_OK;
+}
+
+void tiny_gpt_forward_bidirectional(TinyGpt *model, const int32_t *tokens,
+                                    int length) {
+  if (model == NULL || tokens == NULL || length < 0 ||
+      length > model->config.context) {
+    tiny_gpt_error_code = TINY_GPT_ERROR_ARGUMENT;
+    return;
+  }
+  if (length == 0) {
+    tiny_gpt_error_code = TINY_GPT_OK;
+    return;
+  }
+  forward_bidirectional_impl(model, tokens, length);
 }
 
 void tiny_gpt_forward_range(TinyGpt *model, const int32_t *tokens, int start,

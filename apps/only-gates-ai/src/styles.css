@@ -246,8 +246,11 @@ button {
 }
 
 .app-tabs {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   gap: 4px;
+  width: fit-content;
+  max-width: 100%;
   margin-bottom: 22px;
   padding: 4px;
   border: 1px solid var(--border);
@@ -2240,13 +2243,12 @@ input:disabled {
   }
 
   .app-tabs {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
   }
 
   .app-tabs button {
-    flex: 1;
     padding: 10px 8px;
     font-size: 0.76rem;
   }
@@ -2540,5 +2542,203 @@ input:disabled {
 
   .luau-output .chat-code {
     max-height: 300px;
+  }
+}
+
+/* Masked diffusion tab */
+.masked-panel .hint {
+  max-width: 82ch;
+}
+
+.masked-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  margin: 4px 0 16px;
+}
+
+.masked-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.masked-control strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.masked-control select {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.masked-temperature {
+  flex: 1 1 220px;
+  max-width: 340px;
+}
+
+.masked-temperature span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.masked-temperature input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.masked-animation {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.masked-animation-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+}
+
+.masked-animation-head span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.masked-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.masked-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #79c0ff, #7ee787);
+  transition: width 0.18s ease;
+}
+
+.masked-token-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  max-height: 128px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.24);
+  scrollbar-width: thin;
+}
+
+.masked-token {
+  display: block;
+  width: 9px;
+  height: 14px;
+  border-radius: 2px;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.masked-token.masked {
+  border: 1px dashed rgba(121, 192, 255, 0.4);
+  background: rgba(121, 192, 255, 0.08);
+  animation: masked-pulse 1.4s ease-in-out infinite;
+}
+
+.masked-token.filled {
+  background: linear-gradient(180deg, #8df197, #5bdd79);
+  box-shadow: 0 0 6px rgba(126, 231, 135, 0.28);
+}
+
+@keyframes masked-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .masked-token.masked {
+    animation: none;
+    opacity: 0.6;
+  }
+
+  .masked-progress-fill {
+    transition: none;
+  }
+}
+
+.masked-preview {
+  min-height: 92px;
+  max-height: 260px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.masked-preview code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.masked-animation .chat-meta {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+@media (max-width: 640px) {
+  .masked-controls {
+    gap: 10px;
+  }
+
+  .masked-temperature {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .masked-preview {
+    max-height: 200px;
   }
 }

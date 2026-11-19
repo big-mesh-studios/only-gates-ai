@@ -57,6 +57,14 @@ typedef struct {
 typedef struct {
   TinyGptConfig config;
 
+  /*
+   * When non-zero, `tiny_gpt_forward_bidirectional` is the supported
+   * inference path for this checkpoint. The flag does not change the packed
+   * weights: masked-diffusion training uses the same pre-norm transformer
+   * layout as the causal Tiny GPT, with the attention mask removed.
+   */
+  int bidirectional;
+
   int8_t *token_emb;        /* vocab x dim, one scale per row */
   int32_t *token_emb_scale; /* vocab, Q16 */
   int8_t *pos_emb;          /* context x dim, one scale per row */
@@ -135,6 +143,25 @@ void tiny_gpt_forward(TinyGpt *model, const int32_t *tokens);
  */
 void tiny_gpt_forward_range(TinyGpt *model, const int32_t *tokens, int start,
                             int count);
+
+/*
+ * Marks a checkpoint as a masked-diffusion denoiser. The weights are layout
+ * compatible with a causal Tiny GPT, but every position attends to every other
+ * position in `[0, length)`. This is the full-sequence pass used by the
+ * masked-diffusion sampler; there is no KV-cache reuse because every denoising
+ * step changes the sequence.
+ */
+void tiny_gpt_set_bidirectional(TinyGpt *model, int enabled);
+
+/*
+ * Runs one bidirectional forward pass over the first `length` positions.
+ * Positions `[0, context)` remain addressable by `tiny_gpt_logits_row` and
+ * `tiny_gpt_probabilities_at`, but only `[0, length)` contain this pass's
+ * logits. `length` may be smaller than the context: the learned position
+ * embeddings are absolute and no sliding window is applied.
+ */
+void tiny_gpt_forward_bidirectional(TinyGpt *model, const int32_t *tokens,
+                                    int length);
 
 /* Clears the KV cache. Not required before a full `tiny_gpt_forward`. */
 void tiny_gpt_reset_cache(TinyGpt *model);

@@ -6,6 +6,7 @@ export const BPE_SPECIAL = {
   assistant: "<|assistant|>",
   end: "<|end|>",
   facts: "<|facts|>",
+  mask: "<|mask|>",
 } as const;
 
 export type BpeTokenizer = ByteLevelBpe;
@@ -45,8 +46,15 @@ export function decodeGenerated(
   const userId = tokenizer.idFor(BPE_SPECIAL.user);
   const asstId = tokenizer.idFor(BPE_SPECIAL.assistant);
   const factsId = tokenizer.idFor(BPE_SPECIAL.facts);
+  const maskId = tokenizer.idFor(BPE_SPECIAL.mask);
   const filtered = ids.filter(
-    (id) => id !== endId && id !== padId && id !== userId && id !== asstId && id !== factsId,
+    (id) =>
+      id !== endId &&
+      id !== padId &&
+      id !== userId &&
+      id !== asstId &&
+      id !== factsId &&
+      id !== maskId,
   );
   return tokenizer.decode(filtered);
 }

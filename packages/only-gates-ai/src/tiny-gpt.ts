@@ -147,6 +147,97 @@ export class TinyGpt {
     );
   }
 
+  /**
+   * Marks the checkpoint as a masked-diffusion denoiser. The weights are the
+   * same layout as a causal Tiny GPT; only the attention mask differs.
+   */
+  setBidirectional(enabled = true): void {
+    this.assertAlive();
+    this.module._tiny_gpt_set_bidirectional(this.modelPointer, enabled ? 1 : 0);
+  }
+
+  /**
+   * Runs one full bidirectional pass over `[0, length)`. Every position
+   * attends to every other position, so this is the masked-diffusion
+   * denoising pass rather than the causal decode path.
+   */
+  forwardBidirectional(tokens: ArrayLike<number>, length: number): void {
+    this.assertAlive();
+    if (
+      !Number.isInteger(length) ||
+      length < 0 ||
+      length > this.config.context ||
+      tokens.length < length
+    ) {
+      throw new OnlyGatesError(
+        OnlyGatesErrorCode.InvalidParams,
+        `forwardBidirectional(${length}) is outside the ${this.config.context}-position context`,
+      );
+    }
+    this.module.HEAP32.set(tokens, this.tokensPointer >>> 2);
+    this.module._tiny_gpt_forward_bidirectional(
+      this.modelPointer,
+      this.tokensPointer,
+      length,
+    );
+  }
+
+  /**
+   * Runs one integer denoising step: a bidirectional forward pass and a
+   * left-to-right block unmask. The updated token ids are returned so the UI
+   * can animate the partial answer.
+   */
+  maskedStep(
+    tokens: ArrayLike<number>,
+    length: number,
+    promptLength: number,
+    maskId: number,
+    temperature = 1,
+    step = 0,
+    totalSteps = 8,
+  ): { remaining: number; tokens: Int32Array } {
+    this.assertAlive();
+    if (
+      !Number.isInteger(length) ||
+      length <= 0 ||
+      length > this.config.context ||
+      !Number.isInteger(promptLength) ||
+      promptLength < 0 ||
+      promptLength >= length ||
+      !Number.isInteger(step) ||
+      step < 0 ||
+      !Number.isInteger(totalSteps) ||
+      totalSteps <= 0 ||
+      tokens.length < length
+    ) {
+      throw new OnlyGatesError(
+        OnlyGatesErrorCode.InvalidParams,
+        "maskedStep received an invalid window or schedule",
+      );
+    }
+    this.module.HEAP32.set(tokens, this.tokensPointer >>> 2);
+    const remaining = this.module._tiny_masked_diffusion_step(
+      this.modelPointer,
+      this.tokensPointer,
+      length,
+      promptLength,
+      maskId,
+      temperatureToQ16(temperature),
+      step,
+      totalSteps,
+    );
+    if (remaining < 0) {
+      throw new OnlyGatesError(
+        OnlyGatesErrorCode.InvalidParams,
+        `masked diffusion step failed with error ${this.module._tiny_gpt_last_error()}`,
+      );
+    }
+    return {
+      remaining,
+      tokens: readInts(this.module, this.tokensPointer, length),
+    };
+  }
+
   /** Clears cached keys/values. Not required before a full `forward`. */
   resetCache(): void {
     this.assertAlive();
