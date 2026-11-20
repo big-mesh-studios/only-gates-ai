@@ -23,15 +23,15 @@
     "source": "Generated Luau beginner tasks from scripts/luau_tasks.py plus the repository's Luau quick-answer FAQ. The denoiser is a bidirectional Tiny GPT trained with an absorbing <|mask|>.",
     "license": "Generated task data and model weights are produced by this repository. Luau documentation and the FAQ retain their own MIT licenses.",
     "training": {
-      "steps": 11330,
+      "steps": 40480,
       "batch": 24,
       "learningRate": 0.0003,
       "dropout": 0.1,
       "seed": 1337,
-      "bestStep": 8240,
-      "bestLoss": 0.47002342330689634,
-      "elapsedMs": 939280,
-      "corpusHash": "9f98acbb6eeeb4ced193df49cc28e92ba332e23e3e89f6321f110c66ca0fb456",
+      "bestStep": 32890,
+      "bestLoss": 0.36527233923915253,
+      "elapsedMs": 3132733,
+      "corpusHash": "ae51e9895772b5391a6b6d56cd956924a0045e1ce9dc07876a7c9a3cede19aae",
       "maskRatio": "uniform+t-full",
       "fullMaskProbability": 0.15,
       "denoisingSteps": 16,
@@ -44,7 +44,7 @@
   "samples": [
     {
       "prompt": "Write a for loop in Luau that runs from 1 to 20 and prints every number.",
-      "text": "for slot = 1, 20 do\n    print(slot)\nend"
+      "text": "for index = 1, 20 do\n    print(index)\nend"
     },
     {
       "prompt": "Write a local function named `add` in Luau that takes `a` and `b` and returns their sum. Then print `add(2, 3)`.",
@@ -52,15 +52,15 @@
     },
     {
       "prompt": "Write a for loop that counts how many elements of `scores` are greater than 80, then prints the count in Luau.",
-      "text": "local matches = 0\nfor offset = 1, #scores do\n    if scores[offset] > 80 then\n        matches += 1\n    end\nend\nprint(matches)"
+      "text": "local count = 0\nfor index = 1, #scores do\n    if scores[index] > 80 then\n        count += 1\n    end\nend\nprint(count)"
     },
     {
       "prompt": "Use a while loop in Luau to add the numbers 1 through 10 and print the total.",
-      "text": "local count = 0\nlocal running_sum = 0\nwhile cursor < 10 do\n    count += 1\n    running_sum += counter\nend\nprint(running_sum)"
+      "text": "local position = 0\nlocal running_total = 0\nwhile position < 10 do\n    position += 1\n    running_total += position\nend\nprint(running_total)"
     },
     {
       "prompt": "How do you do a for loop in Luau?",
-      "text": "A numeric form is `for variable = start, finish, step do ...repeat`. The generic- is `for key, value in table do ... end`.\n\n```luau\nfor i = the, 3 do\n    print(i)\nend\n\nlocal scores = { 10, 20, 30 }\nfor index, score in scores do\n    print(index, score)\nend\n```"
+      "text": "A ` form` `` loop runs, body finish, step do ` starts` The for form is `for key, value in table do ... end`.,\n```luau\nfor i = 1, 3 do\n    print(i)\nend\n)local scores = { 10,```,local }\nfor indexend score in scores do i print(index, score)\nend\n```"
     },
     {
       "prompt": "How do you create a table in Luau?",
@@ -77,180 +77,260 @@
   ],
   "history": [
     {
-      "step": 515,
+      "step": 1265,
       "epoch": 1,
-      "loss": 4.376117482533188,
-      "valLoss": 2.143569424029478,
-      "lr": 0.00015029126213592233,
-      "elapsedMs": 38868.27386799996
+      "loss": 3.30097339527315,
+      "valLoss": 1.0089975623655774,
+      "lr": 0.0001501185770750988,
+      "elapsedMs": 90769.67504499998
     },
     {
-      "step": 1030,
+      "step": 2530,
       "epoch": 2,
-      "loss": 1.512105941827245,
-      "valLoss": 0.9374160451987354,
+      "loss": 0.9087855717837842,
+      "valLoss": 0.7422988317616013,
       "lr": 0.0003,
-      "elapsedMs": 80628.43991599999
+      "elapsedMs": 185534.97751299993
     },
     {
-      "step": 1545,
+      "step": 3795,
       "epoch": 3,
-      "loss": 0.9339654624376702,
-      "valLoss": 0.8126042285407942,
+      "loss": 0.7212086740254987,
+      "valLoss": 0.6430973996343207,
       "lr": 0.00029948767395100045,
-      "elapsedMs": 124249.811335
+      "elapsedMs": 281654.856117
     },
     {
-      "step": 2060,
+      "step": 5060,
       "epoch": 4,
-      "loss": 0.7273883424100102,
-      "valLoss": 0.7745469977894307,
+      "loss": 0.6157671197729968,
+      "valLoss": 0.6291980690047396,
       "lr": 0.00029795419551040833,
-      "elapsedMs": 166451.77945799998
+      "elapsedMs": 378484.999527
     },
     {
-      "step": 2575,
+      "step": 6325,
       "epoch": 5,
-      "loss": 0.6221390853713263,
-      "valLoss": 0.7410966090566105,
+      "loss": 0.5346546863172446,
+      "valLoss": 0.5355709021388684,
       "lr": 0.0002954100398908995,
-      "elapsedMs": 209773.36751499996
+      "elapsedMs": 476207.01815400005
     },
     {
-      "step": 3090,
+      "step": 7590,
       "epoch": 6,
-      "loss": 0.5629289180587055,
-      "valLoss": 0.72113059764407,
+      "loss": 0.39674342424770964,
+      "valLoss": 0.46856810212257105,
       "lr": 0.00029187258625509513,
-      "elapsedMs": 252399.60345299993
+      "elapsedMs": 573858.1415599999
     },
     {
-      "step": 3605,
+      "step": 8855,
       "epoch": 7,
-      "loss": 0.5312718022665283,
-      "valLoss": 0.7012912606982314,
+      "loss": 0.34719290287576793,
+      "valLoss": 0.3994973178582696,
       "lr": 0.00028736599899825856,
-      "elapsedMs": 295423.603017
+      "elapsedMs": 671946.665341
     },
     {
-      "step": 4120,
+      "step": 10120,
       "epoch": 8,
-      "loss": 0.5049383323571947,
-      "valLoss": 0.6871112844835149,
+      "loss": 0.30315677127832025,
+      "valLoss": 0.4042706722251795,
       "lr": 0.00028192106268097334,
-      "elapsedMs": 338455.331407
+      "elapsedMs": 769659.998241
     },
     {
-      "step": 4635,
+      "step": 11385,
       "epoch": 9,
-      "loss": 0.4760736074302549,
-      "valLoss": 0.6758676542695036,
+      "loss": 0.2924657968586864,
+      "valLoss": 0.38822515507720856,
       "lr": 0.00027557497173937923,
-      "elapsedMs": 381256.034342
+      "elapsedMs": 867404.9241989999
     },
     {
-      "step": 5150,
+      "step": 12650,
       "epoch": 10,
-      "loss": 0.40435638517432837,
-      "valLoss": 0.5600023367408449,
+      "loss": 0.28664434032753583,
+      "valLoss": 0.4034255656942071,
       "lr": 0.00026837107640945905,
-      "elapsedMs": 423908.62981099996
+      "elapsedMs": 965519.4804749999
     },
     {
-      "step": 5665,
+      "step": 13915,
       "epoch": 11,
-      "loss": 0.35758937054034373,
-      "valLoss": 0.5445756397050681,
+      "loss": 0.27472975215160317,
+      "valLoss": 0.387246694737895,
       "lr": 0.0002603585866009697,
-      "elapsedMs": 466574.755299
+      "elapsedMs": 1063269.170952
     },
     {
-      "step": 6180,
+      "step": 15180,
       "epoch": 12,
-      "loss": 0.33226957030039794,
-      "valLoss": 0.5070703212923435,
+      "loss": 0.26904469464030145,
+      "valLoss": 0.379179543857352,
       "lr": 0.00025159223574386114,
-      "elapsedMs": 509243.06386699993
+      "elapsedMs": 1161352.481124
     },
     {
-      "step": 6695,
+      "step": 16445,
       "epoch": 13,
-      "loss": 0.3147344752596646,
-      "valLoss": 0.5236133484145152,
+      "loss": 0.26227079237449413,
+      "valLoss": 0.42207873989534855,
       "lr": 0.00024213190690345018,
-      "elapsedMs": 552287.115934
+      "elapsedMs": 1259362.469034
     },
     {
-      "step": 7210,
+      "step": 17710,
       "epoch": 14,
-      "loss": 0.2956088371545657,
-      "valLoss": 0.4801493182765191,
+      "loss": 0.25858535054232945,
+      "valLoss": 0.4084793031435172,
       "lr": 0.00023204222371836405,
-      "elapsedMs": 595200.845416
+      "elapsedMs": 1357357.195785
     },
     {
-      "step": 7725,
+      "step": 18975,
       "epoch": 15,
-      "loss": 0.2794174548558725,
-      "valLoss": 0.4880316710401881,
+      "loss": 0.26168903893607354,
+      "valLoss": 0.37569885949830734,
       "lr": 0.00022139210895556104,
-      "elapsedMs": 638202.5811739999
+      "elapsedMs": 1455746.292718
     },
     {
-      "step": 8240,
+      "step": 20240,
       "epoch": 16,
-      "loss": 0.27772454905047894,
-      "valLoss": 0.47002342330689634,
+      "loss": 0.24484679257337877,
+      "valLoss": 0.373524543859776,
       "lr": 0.0002102543136979454,
-      "elapsedMs": 681260.283766
+      "elapsedMs": 1553729.2864030001
     },
     {
-      "step": 8755,
+      "step": 21505,
       "epoch": 17,
-      "loss": 0.27019128624014443,
-      "valLoss": 0.48829899009970046,
+      "loss": 0.21783385037388606,
+      "valLoss": 0.3737946282272547,
       "lr": 0.00019870492038070252,
-      "elapsedMs": 724483.4016349999
+      "elapsedMs": 1651817.794081
     },
     {
-      "step": 9270,
+      "step": 22770,
       "epoch": 18,
-      "loss": 0.25774255121954665,
-      "valLoss": 0.47439463891933875,
+      "loss": 0.2122067512261134,
+      "valLoss": 0.4025646271035169,
       "lr": 0.00018682282307111987,
-      "elapsedMs": 767136.0038129999
+      "elapsedMs": 1749845.0477190001
     },
     {
-      "step": 9785,
+      "step": 24035,
       "epoch": 19,
-      "loss": 0.26165116354085266,
-      "valLoss": 0.486853632905873,
+      "loss": 0.2095675160704209,
+      "valLoss": 0.37084825594213516,
       "lr": 0.00017468918854211007,
-      "elapsedMs": 809955.4868810001
+      "elapsedMs": 1847958.910396
     },
     {
-      "step": 10300,
+      "step": 25300,
       "epoch": 20,
-      "loss": 0.24917204432831497,
-      "valLoss": 0.48120862198859143,
+      "loss": 0.19873071273988266,
+      "valLoss": 0.4083742774149524,
       "lr": 0.00016238690182084986,
-      "elapsedMs": 853145.0578829999
+      "elapsedMs": 1945856.7050559998
     },
     {
-      "step": 10815,
+      "step": 26565,
       "epoch": 21,
-      "loss": 0.24360840486860638,
-      "valLoss": 0.4914293141805722,
+      "loss": 0.1950819477413994,
+      "valLoss": 0.36783764701718186,
       "lr": 0.00015,
-      "elapsedMs": 896087.534777
+      "elapsedMs": 2044666.835885
     },
     {
-      "step": 11330,
+      "step": 27830,
       "epoch": 22,
-      "loss": 0.23349731994025177,
-      "valLoss": 0.4845170681430946,
+      "loss": 0.19406625013218345,
+      "valLoss": 0.36746467404175853,
       "lr": 0.00013761309817915014,
-      "elapsedMs": 939009.775598
+      "elapsedMs": 2143487.007768
+    },
+    {
+      "step": 29095,
+      "epoch": 23,
+      "loss": 0.1923887452882066,
+      "valLoss": 0.37280595487843926,
+      "lr": 0.00012531081145788987,
+      "elapsedMs": 2242298.1964950003
+    },
+    {
+      "step": 30360,
+      "epoch": 24,
+      "loss": 0.18794870481571854,
+      "valLoss": 0.36850155128602036,
+      "lr": 0.00011317717692888012,
+      "elapsedMs": 2341235.0070579997
+    },
+    {
+      "step": 31625,
+      "epoch": 25,
+      "loss": 0.19045280446579643,
+      "valLoss": 0.3691281775995481,
+      "lr": 0.00010129507961929748,
+      "elapsedMs": 2439815.7723550005
+    },
+    {
+      "step": 32890,
+      "epoch": 26,
+      "loss": 0.18046984775571034,
+      "valLoss": 0.36527233923915253,
+      "lr": 8.97456863020546e-05,
+      "elapsedMs": 2538581.6642010002
+    },
+    {
+      "step": 34155,
+      "epoch": 27,
+      "loss": 0.17943577716974085,
+      "valLoss": 0.3805135900539993,
+      "lr": 7.860789104443896e-05,
+      "elapsedMs": 2637846.4083629996
+    },
+    {
+      "step": 35420,
+      "epoch": 28,
+      "loss": 0.17462793731145504,
+      "valLoss": 0.36812724329087493,
+      "lr": 6.795777628163599e-05,
+      "elapsedMs": 2736915.301141
+    },
+    {
+      "step": 36685,
+      "epoch": 29,
+      "loss": 0.1772679148838664,
+      "valLoss": 0.3675390456379192,
+      "lr": 5.786809309654982e-05,
+      "elapsedMs": 2835647.782629
+    },
+    {
+      "step": 37950,
+      "epoch": 30,
+      "loss": 0.1762319614177711,
+      "valLoss": 0.3795676632476702,
+      "lr": 4.840776425613886e-05,
+      "elapsedMs": 2934421.1042589997
+    },
+    {
+      "step": 39215,
+      "epoch": 31,
+      "loss": 0.1762812760732562,
+      "valLoss": 0.37042465892167836,
+      "lr": 3.964141339903026e-05,
+      "elapsedMs": 3033380.291206
+    },
+    {
+      "step": 40480,
+      "epoch": 32,
+      "loss": 0.17450696661920384,
+      "valLoss": 0.36841451085266513,
+      "lr": 3.162892359054098e-05,
+      "elapsedMs": 3131963.4706730004
     }
   ]
 }
