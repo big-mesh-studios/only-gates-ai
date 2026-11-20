@@ -15,6 +15,11 @@ import {
   type MaskedDiffusionSnapshot,
 } from "../lib/maskedDiffusion";
 import { LUAU_PRESETS, type LuauMode } from "../lib/luauConfig";
+import {
+  SOLID2_MASKED_PRESETS as SOLID2_PRESETS,
+  SOLID2_MASKED_MODEL_BASE as SOLID2_MODEL_BASE,
+  solid2MaskedParameterCount as solid2ParameterCount,
+} from "../lib/solid2MaskedConfig";
 
 import MaskedDiffusionTrainingPanel from "./MaskedDiffusionTrainingPanel";
 interface MaskedDiffusionPanelProps {
@@ -23,6 +28,7 @@ interface MaskedDiffusionPanelProps {
 }
 
 const MASKED_MODEL_BASE = `${import.meta.env.BASE_URL}models/masked-diffusion-luau/`;
+const SOLID2_MASKED_MODEL_BASE = SOLID2_MODEL_BASE;
 
 function copyText(value: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
@@ -43,6 +49,7 @@ function copyText(value: string): Promise<void> {
 }
 
 export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
+  const [subTab, setSubTab] = createSignal<"luau" | "solid2">("luau");
   const [mode, setMode] = createSignal<LuauMode>("write");
   // Start on a prompt the denoiser handles cleanly; the first preset ("Sum
   // first 50") is a harder case for left-to-right block filling.
@@ -68,12 +75,22 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let loadInFlight = false;
 
-  const visiblePresets = createMemo(() =>
-    LUAU_PRESETS.filter((preset) => preset.mode === mode()),
-  );
+  const visiblePresets = createMemo(() => {
+    if (subTab() === "solid2") {
+      return SOLID2_PRESETS;
+    }
+    return LUAU_PRESETS.filter((preset) => preset.mode === mode());
+  });
 
   const activeConfig = createMemo(() => model()?.config);
-  const activeParameters = createMemo(() => model()?.parameterCount ?? 0);
+  const activeParameters = createMemo(() => {
+    const m = model();
+    if (!m) return 0;
+    if (subTab() === "solid2") {
+      return solid2ParameterCount(m.config);
+    }
+    return m.parameterCount;
+  });
   const maskId = createMemo(() => model()?.maskId ?? -1);
 
   /*
@@ -111,7 +128,12 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
         : "Starting denoiser";
     }
     if (output()) return "Answer complete";
-    if (model()) return "Integer WASM ready";
+    if (model()) {
+      if (subTab() === "solid2") {
+        return `Solid 2 model — ${activeParameters().toLocaleString()} parameters`;
+      }
+      return "Integer WASM ready";
+    }
     if (loading()) return "Loading model";
     if (error()) return "Model missing";
     return "Idle";
@@ -148,14 +170,19 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
     );
   };
 
+  const modelBase = createMemo(() =>
+    subTab() === "solid2" ? SOLID2_MASKED_MODEL_BASE : MASKED_MODEL_BASE,
+  );
+
   createEffect(
-    () => ({ active: props.active, attempt: reload() }),
-    ({ active, attempt }) => {
-      if (!active || attempt < 0 || model() || loadInFlight) return;
+    () => ({ active: props.active, attempt: reload(), subTab: subTab() }),
+    ({ active, attempt, subTab }) => {
+      if (!active || attempt < 0 || loadInFlight) return;
       loadInFlight = true;
       setLoading(true);
       setError(null);
-      loadMaskedDiffusionWasm(MASKED_MODEL_BASE)
+      setModel(null);
+      loadMaskedDiffusionWasm(modelBase())
         .then((loaded) => {
           setModel(loaded);
           setSteps(
@@ -168,9 +195,9 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
         })
         .catch((reason: unknown) => {
           setError(
-            `Could not load the masked-diffusion model from ${MASKED_MODEL_BASE}: ${
+            `Could not load the masked-diffusion model from ${modelBase()}: ${
               (reason as Error).message
-            }. Train it with scripts/train_masked_diffusion_luau_colab.py, then copy ` +
+            }. Train it with the appropriate training script, then copy ` +
               "checkpoint.json, tokenizer.json, and weights.bin into that folder and rebuild.",
           );
         })
@@ -200,7 +227,7 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
       current = createMaskedDiffusionDecoder(currentModel, input, {
         steps: steps(),
         temperature: temperature(),
-        mode: mode(),
+        mode: subTab() === "solid2" ? "ask" : mode(),
       });
     } catch (reason) {
       setGenerating(false);
@@ -255,8 +282,7 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
     }
   };
 
-  const choosePreset = (preset: (typeof LUAU_PRESETS)[number]): void => {
-    setMode(preset.mode);
+  const choosePreset = (preset: any): void => {
     setPrompt(preset.prompt);
     setError(null);
   };
@@ -266,7 +292,11 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
       <div class="card-heading compact">
         <div>
           <span class="eyebrow">Masked diffusion</span>
-          <h2>Denoise a Luau answer in parallel</h2>
+          <h2>
+            {subTab() === "solid2"
+              ? "Denoise a Solid 2 answer in parallel"
+              : "Denoise a Luau answer in parallel"}
+          </h2>
         </div>
         <div
           class={
@@ -290,32 +320,63 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
         each step.
       </p>
 
-      <div class="luau-mode" role="tablist" aria-label="Masked answer mode">
+      <div class="luau-mode" role="tablist" aria-label="Masked diffusion subtab">
         <button
           type="button"
           role="tab"
-          aria-selected={mode() === "write" ? "true" : "false"}
-          class={{ active: mode() === "write" }}
+          aria-selected={subTab() === "luau" ? "true" : "false"}
+          class={{ active: subTab() === "luau" }}
           onClick={() => {
+            setSubTab("luau");
             setMode("write");
             setPrompt(LUAU_PRESETS[1]!.prompt);
+            setReload((v) => v + 1);
           }}
         >
-          Write code
+          Luau
         </button>
         <button
           type="button"
           role="tab"
-          aria-selected={mode() === "ask" ? "true" : "false"}
-          class={{ active: mode() === "ask" }}
+          aria-selected={subTab() === "solid2" ? "true" : "false"}
+          class={{ active: subTab() === "solid2" }}
           onClick={() => {
-            setMode("ask");
-            setPrompt(LUAU_PRESETS.find((preset) => preset.mode === "ask")!.prompt);
+            setSubTab("solid2");
+            setPrompt(SOLID2_PRESETS[1]!.prompt);
+            setReload((v) => v + 1);
           }}
         >
-          Ask a question
+          Solid 2
         </button>
       </div>
+      <Show when={subTab() === "luau"}>
+        <div class="luau-mode" role="tablist" aria-label="Masked answer mode">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode() === "write" ? "true" : "false"}
+            class={{ active: mode() === "write" }}
+            onClick={() => {
+              setMode("write");
+              setPrompt(LUAU_PRESETS[1]!.prompt);
+            }}
+          >
+            Write code
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode() === "ask" ? "true" : "false"}
+            class={{ active: mode() === "ask" }}
+            onClick={() => {
+              setMode("ask");
+              setPrompt(LUAU_PRESETS.find((preset) => preset.mode === "ask")!.prompt);
+            }}
+          >
+            Ask a question
+          </button>
+        </div>
+      </Show>
 
       <div class="luau-presets">
         <span class="muted">Examples:</span>
@@ -334,7 +395,7 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
       </div>
 
       <label class="luau-field">
-        {mode() === "write" ? "Task" : "Question"}
+        {subTab() === "solid2" ? "Question" : mode() === "write" ? "Task" : "Question"}
         <textarea
           rows={4}
           value={prompt()}
@@ -342,9 +403,11 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
           onInput={(event) => setPrompt(event.currentTarget.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            mode() === "write"
-              ? "Write a for loop that sums the first 50 elements of `values`..."
-              : "How do I write a for loop in Luau?"
+            subTab() === "solid2"
+              ? "Ask a question about Solid 2..."
+              : mode() === "write"
+                ? "Write a for loop that sums the first 50 elements of `values`..."
+                : "How do I write a for loop in Luau?"
           }
         />
       </label>
@@ -391,9 +454,11 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
         >
           {generating()
             ? "Denoising..."
-            : mode() === "write"
-              ? "Denoise Luau"
-              : "Denoise answer"}
+            : subTab() === "solid2"
+              ? "Denoise Solid 2"
+              : mode() === "write"
+                ? "Denoise Luau"
+                : "Denoise answer"}
         </button>
         <Show when={generating()}>
           <button type="button" class="button ghost" onClick={stop}>
@@ -489,7 +554,13 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
       <Show when={output()}>
         <div class="luau-output">
           <div class="luau-output-head">
-            <strong>{mode() === "write" ? "Denoised Luau" : "Denoised answer"}</strong>
+            <strong>
+              {subTab() === "solid2"
+                ? "Denoised Solid 2"
+                : mode() === "write"
+                  ? "Denoised Luau"
+                  : "Denoised answer"}
+            </strong>
             <button
               type="button"
               class="button ghost"
@@ -514,7 +585,9 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
           {activeConfig()!.vocabSize.toLocaleString()} BPE tokens (including
           `&lt;|mask|&gt;`) · {activeConfig()!.context}-token context ·{" "}
           {model()!.backend === "wasm-simd" ? "WASM SIMD" : "WASM scalar"} ·{" "}
-          {model()!.checkpoint.meta?.name ?? "masked-diffusion-luau"}
+          {model()!.checkpoint.meta?.name ?? (subTab() === "solid2"
+            ? "Solid 2 masked diffusion"
+            : "masked-diffusion-luau")}
         </p>
       </Show>
     </section>
