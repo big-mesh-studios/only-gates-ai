@@ -574,11 +574,15 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
           </pre>
         </div>
       </Show>
-      <MaskedDiffusionTrainingPanel
-        active={props.active}
-        onUseModel={handleUseModel}
-        variant={subTab() === "solid2" ? "solid2" : "luau"}
-      />
+      <Show when={subTab()} keyed>
+        {(tab) => (
+          <MaskedDiffusionTrainingPanel
+            active={props.active}
+            onUseModel={handleUseModel}
+            variant={tab === "solid2" ? "solid2" : "luau"}
+          />
+        )}
+      </Show>
 
       <Show when={model()}>
         <p class="hint luau-model-meta">

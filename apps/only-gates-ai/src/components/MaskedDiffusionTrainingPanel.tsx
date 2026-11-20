@@ -389,7 +389,9 @@ export default function MaskedDiffusionTrainingPanel(props: {
       <div class="card-heading compact">
         <div>
           <span class="eyebrow">Masked-Diffusion Training</span>
-          <h2>Fine-tune in the browser</h2>
+          <h2>
+            {isSolid2() ? "Fine-tune Solid 2 in the browser" : "Fine-tune Luau in the browser"}
+          </h2>
         </div>
         <div class={`runtime-pill ${busy() ? "warning" : "ready"}`}>
           <span class="runtime-dot" />
@@ -398,14 +400,14 @@ export default function MaskedDiffusionTrainingPanel(props: {
       </div>
 
       <p class="hint">
-        This is a real TensorFlow.js fine-tune of the bidirectional Luau
-        denoiser, not a simulated loss curve. It trains on the repository's
-        generated Luau tasks plus the Luau FAQ, using the same absorbing{" "}
+        {isSolid2()
+          ? "This is a real TensorFlow.js fine-tune of the bidirectional Solid 2 denoiser, not a simulated loss curve. It trains on the Solid 2 documentation Q&A, using the same absorbing "
+          : "This is a real TensorFlow.js fine-tune of the bidirectional Luau denoiser, not a simulated loss curve. It trains on the repository's generated Luau tasks plus the Luau FAQ, using the same absorbing "}
         <code>&lt;|mask|&gt;</code> objective as the Colab trainer: a random
         fraction of the answer region is masked, and only those masked, non-pad
         positions contribute to the loss. Backend order is WebGPU → WebGL →
-        CPU; the deployed 9.56M-parameter checkpoint is warm-started by default,
-        so a short run is a fine-tune rather than a from-scratch train.
+        CPU; the deployed checkpoint is warm-started by default, so a short run
+        is a fine-tune rather than a from-scratch train.
       </p>
 
       <Show when={error()}>
@@ -574,9 +576,11 @@ export default function MaskedDiffusionTrainingPanel(props: {
         <span>
           <b>Warm start from the deployed masked-diffusion checkpoint</b>
           <small>
-            Starts from the bundled 9.56M-parameter Luau denoiser and a fresh
-            optimizer. Uncheck to train a smaller model from random weights.
-            Resuming a saved run ignores this.
+            {isSolid2()
+              ? "Starts from the bundled Solid 2 denoiser and a fresh optimizer."
+              : "Starts from the bundled 9.56M-parameter Luau denoiser and a fresh optimizer."}{" "}
+            Uncheck to train a smaller model from random weights. Resuming a
+            saved run ignores this.
           </small>
         </span>
       </label>
