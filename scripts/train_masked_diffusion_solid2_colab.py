@@ -435,10 +435,10 @@ def main() -> None:
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--context", "--ctx", dest="context", type=int, default=256)
-    parser.add_argument("--dim", type=int, default=128)
-    parser.add_argument("--layers", type=int, default=3)
-    parser.add_argument("--heads", type=int, default=4)
-    parser.add_argument("--mlp", type=int, default=256)
+    parser.add_argument("--dim", type=int, default=384)
+    parser.add_argument("--layers", type=int, default=6)
+    parser.add_argument("--heads", type=int, default=6)
+    parser.add_argument("--mlp", type=int, default=1152)
     parser.add_argument("--steps", type=int, default=16, help="denoising steps at inference")
     parser.add_argument(
         "--full-mask-prob",
