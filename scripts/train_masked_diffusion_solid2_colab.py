@@ -609,7 +609,34 @@ def main() -> None:
                 "mode": "ask",
             })
 
-    all_items = qa_items + doc_items
+    # Build story examples for grammar/coherence
+    # Load stories from the data directory
+    story_items = []
+    stories_path = None
+    for p in [Path("data/solid2/tinystories.txt"), REPO_ROOT / "data" / "solid2" / "tinystories.txt", Path("/content/data/solid2/tinystories.txt")]:
+        if p.exists():
+            stories_path = p
+            break
+    if stories_path:
+        stories_text = stories_path.read_text(encoding="utf-8", errors="replace")
+        # Limit to 200K chars for manageable training
+        if len(stories_text) > 200000:
+            stories_text = stories_text[:200000]
+        # Split into paragraphs and create training examples
+        paragraphs = [p.strip() for p in stories_text.split("\n\n") if p.strip()]
+        for para in paragraphs[:500]:  # Limit to 500 paragraphs
+            if len(para) < 30 or len(para) > 400:
+                continue
+            story_items.append({
+                "instruction": "Continue the story",
+                "answer": para,
+                "mode": "ask",
+            })
+        print(f"loaded {len(story_items)} story examples from {stories_path}", flush=True)
+    else:
+        print("WARNING: no stories file found, skipping story examples", flush=True)
+
+    all_items = qa_items + doc_items + story_items
 
     # Build examples
     examples, skipped = build_examples(tokenizer, all_items, config["context"])
