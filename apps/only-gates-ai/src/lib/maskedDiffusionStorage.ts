@@ -14,6 +14,7 @@ const DB_NAME = "gate-forest-masked-diffusion-training";
 const DB_VERSION = 1;
 const STORE_NAME = "runs";
 const RUN_KEY = "current";
+const SOLID2_RUN_KEY = "solid2";
 
 export interface MaskedDiffusionOptimizerState {
   readonly m: Float32Array;
@@ -220,15 +221,24 @@ function parseState(value: unknown): MaskedDiffusionTrainingState {
   };
 }
 
-export async function saveMaskedDiffusionTrainingState(
-  state: MaskedDiffusionTrainingState,
-): Promise<void> {
-  await withStore("readwrite", (store) => store.put(state, RUN_KEY));
+function runKeyFor(variant: "luau" | "solid2" = "luau"): string {
+  return variant === "solid2" ? SOLID2_RUN_KEY : RUN_KEY;
 }
 
-export async function loadMaskedDiffusionTrainingState(): Promise<MaskedDiffusionTrainingState | null> {
+export async function saveMaskedDiffusionTrainingState(
+  state: MaskedDiffusionTrainingState,
+  variant: "luau" | "solid2" = "luau",
+): Promise<void> {
+  await withStore("readwrite", (store) =>
+    store.put(state, runKeyFor(variant)),
+  );
+}
+
+export async function loadMaskedDiffusionTrainingState(
+  variant: "luau" | "solid2" = "luau",
+): Promise<MaskedDiffusionTrainingState | null> {
   const value = await withStore<unknown>("readonly", (store) =>
-    store.get(RUN_KEY),
+    store.get(runKeyFor(variant)),
   );
   if (value === undefined) {
     return null;
@@ -236,6 +246,8 @@ export async function loadMaskedDiffusionTrainingState(): Promise<MaskedDiffusio
   return parseState(value);
 }
 
-export async function deleteMaskedDiffusionTrainingState(): Promise<void> {
-  await withStore("readwrite", (store) => store.delete(RUN_KEY));
+export async function deleteMaskedDiffusionTrainingState(
+  variant: "luau" | "solid2" = "luau",
+): Promise<void> {
+  await withStore("readwrite", (store) => store.delete(runKeyFor(variant)));
 }

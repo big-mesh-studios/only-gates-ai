@@ -577,6 +577,7 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
       <MaskedDiffusionTrainingPanel
         active={props.active}
         onUseModel={handleUseModel}
+        variant={subTab() === "solid2" ? "solid2" : "luau"}
       />
 
       <Show when={model()}>

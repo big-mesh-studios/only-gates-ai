@@ -36,7 +36,12 @@ export default function MaskedDiffusionTrainingPanel(props: {
   onUseModel?: (model: MaskedDiffusionModel) => void;
   /** Restores the saved run only once the masked tab is visible. */
   active?: boolean;
+  /** Which masked-diffusion model to train: "luau" or "solid2". */
+  variant?: "luau" | "solid2";
 }) {
+  const variant = (): "luau" | "solid2" => props.variant ?? "luau";
+  const isSolid2 = (): boolean => variant() === "solid2";
+
   // ==== Controls ==== //
   const [steps, setSteps] = createSignal(400);
   const [batch, setBatch] = createSignal(4);
@@ -88,7 +93,7 @@ export default function MaskedDiffusionTrainingPanel(props: {
           const state = pendingState;
           pendingState = null;
           try {
-            await saveMaskedDiffusionTrainingState(state);
+            await saveMaskedDiffusionTrainingState(state, variant());
           } catch (reason) {
             setError(
               `Training continues, but the run could not be saved: ${
@@ -109,12 +114,12 @@ export default function MaskedDiffusionTrainingPanel(props: {
     void flushSaves();
   };
 
-  let restored = false;
+  let restoredVariant: string | null = null;
   const restoreSavedRun = (): void => {
-    if (restored) return;
-    restored = true;
+    if (restoredVariant === variant()) return;
+    restoredVariant = variant();
     setRestoring(true);
-    void loadMaskedDiffusionTrainingState()
+    void loadMaskedDiffusionTrainingState(variant())
       .then((state) => {
         if (!state) return;
         setSaved(state);
@@ -158,6 +163,28 @@ export default function MaskedDiffusionTrainingPanel(props: {
     },
   );
 
+  let lastVariant = variant();
+  createEffect(
+    () => variant(),
+    (v) => {
+      if (v === lastVariant) {
+        lastVariant = v;
+        return;
+      }
+      lastVariant = v;
+      setSaved(null);
+      setHistory([]);
+      setProgress(null);
+      setTrained(null);
+      setTrainedModel(null);
+      setSample(null);
+      setError(null);
+      setStatus(null);
+      restoredVariant = null;
+      if (settled && props.active !== false) restoreSavedRun();
+    },
+  );
+
   const startTraining = async (resume: boolean): Promise<void> => {
     if (busy()) return;
     const initial = resume ? saved() : null;
@@ -184,6 +211,7 @@ export default function MaskedDiffusionTrainingPanel(props: {
       const result = await trainMaskedDiffusion({
         // Resuming must keep the dataset the saved run was trained on; the
         // dataset radios only choose the data for a fresh run.
+        variant: variant(),
         fullData: initial?.fullData ?? useFull(),
         steps: steps(),
         batch: batch(),
@@ -219,11 +247,13 @@ export default function MaskedDiffusionTrainingPanel(props: {
         const prompt =
           result.prompts[1] ??
           result.prompts[0] ??
-          "Write a for loop in Luau that runs from 1 to 20 and prints every number.";
+          (isSolid2()
+            ? "What are split effects in Solid 2?"
+            : "Write a for loop in Luau that runs from 1 to 20 and prints every number.");
         const generated = createMaskedDiffusionDecoder(model, prompt, {
           steps: 8,
           temperature: 0.01,
-          mode: "write",
+          mode: isSolid2() ? "ask" : "write",
         }).run();
         setSample({
           prompt,
@@ -270,7 +300,7 @@ export default function MaskedDiffusionTrainingPanel(props: {
   const clearRun = async (): Promise<void> => {
     try {
       await flushSaves();
-      await deleteMaskedDiffusionTrainingState();
+      await deleteMaskedDiffusionTrainingState(variant());
       setSaved(null);
       setHistory([]);
       setProgress(null);
@@ -298,7 +328,9 @@ export default function MaskedDiffusionTrainingPanel(props: {
       downloadMaskedDiffusionBundle(bundle);
       setStatus(
         `Exported ${bundle.filename}. Copy the three model files into ` +
-          "public/models/masked-diffusion-luau/ to publish it.",
+          (isSolid2()
+            ? "public/models/solid2-masked-diffusion/"
+            : "public/models/masked-diffusion-luau/") + " to publish it.",
       );
     } catch (reason) {
       setError(`Export failed: ${(reason as Error).message}`);
@@ -395,28 +427,30 @@ export default function MaskedDiffusionTrainingPanel(props: {
         </div>
       </Show>
 
-      <div class="training-data">
-        <label style={{ "margin-right": "1rem" }}>
-          <input
-            type="radio"
-            name="masked-dataset"
-            checked={!useFull()}
-            disabled={busy()}
-            onChange={() => setUseFull(false)}
-          />
-          Small data (2,000 bundled tasks)
-        </label>
-        <label>
-          <input
-            type="radio"
-            name="masked-dataset"
-            checked={useFull()}
-            disabled={busy()}
-            onChange={() => setUseFull(true)}
-          />
-          Full data (30,000 tasks, 14 MB download)
-        </label>
-      </div>
+      <Show when={!isSolid2()}>
+        <div class="training-data">
+          <label style={{ "margin-right": "1rem" }}>
+            <input
+              type="radio"
+              name="masked-dataset"
+              checked={!useFull()}
+              disabled={busy()}
+              onChange={() => setUseFull(false)}
+            />
+            Small data (2,000 bundled tasks)
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="masked-dataset"
+              checked={useFull()}
+              disabled={busy()}
+              onChange={() => setUseFull(true)}
+            />
+            Full data (30,000 tasks, 14 MB download)
+          </label>
+        </div>
+      </Show>
 
       <div class="training-grid">
         <label class="training-field">

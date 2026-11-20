@@ -71,6 +71,14 @@ export const MASKED_DIFFUSION_DATA_BASE =
 /** Small bundled slice, copied from the same dataset at build time. */
 export const MASKED_DIFFUSION_SMALL_DATA_BASE = `${import.meta.env.BASE_URL}data/luau-tasks/`;
 
+/** Solid 2 masked-diffusion model base (deployed checkpoint). */
+export const SOLID2_MASKED_DIFFUSION_MODEL_BASE =
+  `${import.meta.env.BASE_URL}models/solid2-masked-diffusion/`;
+
+/** Solid 2 data served from the repository. */
+export const SOLID2_MASKED_DIFFUSION_DATA_BASE =
+  "https://raw.githubusercontent.com/clinuxrulz/only-gates-ai/main/data/solid2/";
+
 /**
  * Fallback architecture when the user starts from random weights. The deployed
  * checkpoint is 9.56M parameters; this smaller config is friendlier to a first
@@ -104,6 +112,7 @@ export interface MaskedDiffusionDataInfo {
 export interface MaskedDiffusionDataOptions {
   readonly fullData?: boolean;
   readonly modelBaseUrl?: string;
+  readonly variant?: "luau" | "solid2";
   readonly context: number;
   readonly tokenizer?: BpeTokenizer;
   readonly onStatus?: (status: string) => void;
@@ -327,11 +336,141 @@ async function buildExamples(
   return { examples, skipped };
 }
 
+function parseSolid2TaskRows(text: string, label: string): TrainingItem[] {
+  const items: TrainingItem[] = [];
+  const lines = text.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!.trim();
+    if (line.length === 0) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      throw new Error(`${label} line ${index + 1} is not valid JSON.`);
+    }
+    if (!isRecord(value)) {
+      throw new Error(`${label} line ${index + 1} is not an object.`);
+    }
+    const question =
+      typeof value.question === "string"
+        ? value.question
+        : typeof value.instruction === "string"
+          ? value.instruction
+          : null;
+    const answer = typeof value.answer === "string" ? value.answer : null;
+    if (question === null || answer === null) {
+      throw new Error(
+        `${label} line ${index + 1} is missing question/answer.`,
+      );
+    }
+    items.push({ instruction: question, answer, mode: "ask" });
+  }
+  if (items.length === 0) {
+    throw new Error(`${label} is empty.`);
+  }
+  return items;
+}
+
+async function loadSolid2MaskedDiffusionTrainingData(
+  options: MaskedDiffusionDataOptions,
+  tokenizer: BpeTokenizer,
+  modelBase: string,
+  fullData: boolean,
+): Promise<MaskedDiffusionTrainingData> {
+  const dataBase = SOLID2_MASKED_DIFFUSION_DATA_BASE;
+  options.onStatus?.("Loading the Solid 2 Q&A dataset...");
+  const [trainText, valText] = await Promise.all([
+    fetchText(`${dataBase}qa-train.jsonl`),
+    fetchText(`${dataBase}qa-val.jsonl`),
+  ]);
+  if (options.shouldCancel?.()) {
+    throw new Error("Training was cancelled.");
+  }
+
+  options.onStatus?.("Parsing Solid 2 Q&A examples...");
+  const trainTasks = parseSolid2TaskRows(trainText, "qa-train.jsonl");
+  const valTasks = parseSolid2TaskRows(valText, "qa-val.jsonl");
+
+  const trainItems: TrainingItem[] = [...trainTasks];
+  const valItems: TrainingItem[] = [...valTasks];
+
+  options.onStatus?.(
+    `Packing ${trainItems.length.toLocaleString()} training examples for ` +
+      `${options.context}-token context...`,
+  );
+  const train = await buildExamples(tokenizer, trainItems, options.context, {
+    shouldCancel: options.shouldCancel,
+    onProgress: (fraction) =>
+      options.onStatus?.(
+        `Packing training examples (${Math.round(fraction * 100)}%)...`,
+      ),
+  });
+  const val = await buildExamples(tokenizer, valItems, options.context, {
+    shouldCancel: options.shouldCancel,
+    onProgress: (fraction) =>
+      options.onStatus?.(
+        `Packing validation examples (${Math.round(fraction * 100)}%)...`,
+      ),
+  });
+  if (train.examples.length === 0) {
+    throw new Error(
+      "No training examples fit the context. Increase the context.",
+    );
+  }
+  if (val.examples.length === 0) {
+    throw new Error("No validation examples fit the context.");
+  }
+
+  const corpusHash = hashString(
+    `solid2\u0000${trainText.length}\u0000${valText.length}` +
+      `\u0000${trainTasks.length}\u0000${tokenizer.vocab.length}\u0000${options.context}`,
+  );
+
+  // Prompts: use the bundled Solid 2 masked presets when available.
+  let prompts: string[] = [];
+  try {
+    // Lazy import to avoid a hard dependency at module load.
+    const { SOLID2_MASKED_PRESETS } = await import("./solid2MaskedConfig");
+    prompts = [...new Set(SOLID2_MASKED_PRESETS.map((preset) => preset.prompt))];
+  } catch {
+    prompts = trainTasks.slice(0, 5).map((item) => item.instruction);
+  }
+
+  const info: MaskedDiffusionDataInfo = {
+    fullData: true,
+    taskRows: trainTasks.length,
+    valRows: valTasks.length,
+    faqPairs: 0,
+    trainExamples: train.examples.length,
+    valExamples: val.examples.length,
+    skippedTrain: train.skipped,
+    skippedVal: val.skipped,
+  };
+  options.onStatus?.(
+    `Ready: ${info.trainExamples.toLocaleString()} training examples, ` +
+      `${info.valExamples.toLocaleString()} validation examples.`,
+  );
+
+  return {
+    tokenizer,
+    train: train.examples,
+    val: val.examples,
+    info,
+    corpusHash,
+    prompts,
+  };
+}
+
 export async function loadMaskedDiffusionTrainingData(
   options: MaskedDiffusionDataOptions,
 ): Promise<MaskedDiffusionTrainingData> {
+  const variant = options.variant ?? "luau";
   const fullData = options.fullData ?? false;
-  const modelBase = (options.modelBaseUrl ?? MASKED_DIFFUSION_MODEL_BASE).replace(
+  const defaultModelBase =
+    variant === "solid2"
+      ? SOLID2_MASKED_DIFFUSION_MODEL_BASE
+      : MASKED_DIFFUSION_MODEL_BASE;
+  const modelBase = (options.modelBaseUrl ?? defaultModelBase).replace(
     /\/?$/,
     "/",
   );
@@ -340,6 +479,10 @@ export async function loadMaskedDiffusionTrainingData(
   if (!tokenizer) {
     options.onStatus?.("Loading the masked-diffusion BPE tokenizer...");
     tokenizer = await loadBpeTokenizer(`${modelBase}tokenizer.json`);
+  }
+
+  if (variant === "solid2") {
+    return loadSolid2MaskedDiffusionTrainingData(options, tokenizer, modelBase, fullData);
   }
 
   const dataBase = fullData
@@ -775,9 +918,12 @@ function makeCheckpoint(
     readonly fullData: boolean;
   },
   prompts: readonly string[],
+  solid2: boolean = false,
 ): MaskedDiffusionCheckpoint {
   return {
-    format: "only-gates-masked-diffusion-luau",
+    format: solid2
+      ? "only-gates-masked-diffusion-solid2"
+      : "only-gates-masked-diffusion-luau",
     version: 1,
     config,
     parameterCount: maskedDiffusionParameterCount(config),
@@ -790,11 +936,16 @@ function makeCheckpoint(
       answerBudget: 0,
     },
     meta: {
-      name: "masked-diffusion-luau-browser",
-      source:
-        "Luau task data and the repository FAQ, trained in the browser with " +
-        "TensorFlow.js. The denoiser is a bidirectional Tiny GPT trained with " +
-        "an absorbing <|mask|> token.",
+      name: solid2
+        ? "masked-diffusion-solid2-browser"
+        : "masked-diffusion-luau-browser",
+      source: solid2
+        ? "Solid 2 documentation and curated Q&A, trained in the browser with " +
+          "TensorFlow.js. The denoiser is a bidirectional Tiny GPT trained with " +
+          "an absorbing <|mask|> token."
+        : "Luau task data and the repository FAQ, trained in the browser with " +
+          "TensorFlow.js. The denoiser is a bidirectional Tiny GPT trained with " +
+          "an absorbing <|mask|> token.",
       license:
         "Generated task data and model weights are produced by this repository. " +
         "Luau documentation and the FAQ retain their own MIT licenses.",
@@ -811,12 +962,14 @@ function makeCheckpoint(
         maskRatio: "uniform+t-full",
         fullMaskProbability: meta.fullMaskProbability,
         denoisingSteps: DEFAULT_DENOISING_STEPS,
-        sourceUrls: [
-          meta.fullData
-            ? "data/luau-tasks/train.jsonl"
-            : "data/luau-tasks/train-small.jsonl",
-          "apps/only-gates-ai/src/assets/luau-faq.md",
-        ],
+        sourceUrls: solid2
+          ? ["data/solid2/qa-train.jsonl", "data/solid2/qa-val.jsonl"]
+          : [
+              meta.fullData
+                ? "data/luau-tasks/train.jsonl"
+                : "data/luau-tasks/train-small.jsonl",
+              "apps/only-gates-ai/src/assets/luau-faq.md",
+            ],
         backend: "tensorflow.js",
       },
     },
@@ -833,7 +986,12 @@ export async function trainMaskedDiffusion(
   options: MaskedDiffusionTrainingOptions = {},
 ): Promise<MaskedDiffusionTrainingResult> {
   const initial = options.initialState ?? null;
-  const modelBase = (options.modelBaseUrl ?? MASKED_DIFFUSION_MODEL_BASE).replace(
+  const variant = options.variant ?? "luau";
+  const isSolid2 = variant === "solid2";
+  const defaultModelBase = isSolid2
+    ? SOLID2_MASKED_DIFFUSION_MODEL_BASE
+    : MASKED_DIFFUSION_MODEL_BASE;
+  const modelBase = (options.modelBaseUrl ?? defaultModelBase).replace(
     /\/?$/,
     "/",
   );
@@ -868,6 +1026,7 @@ export async function trainMaskedDiffusion(
   const data = await loadMaskedDiffusionTrainingData({
     fullData: options.fullData,
     modelBaseUrl: modelBase,
+    variant,
     context: config.context,
     tokenizer,
     onStatus: options.onStatus,
@@ -1189,6 +1348,7 @@ export async function trainMaskedDiffusion(
           fullData: data.info.fullData,
         },
         data.prompts,
+        isSolid2,
       ),
       tokenizer,
       weights: finalWeights,
@@ -1327,8 +1487,13 @@ export async function importMaskedDiffusionBundle(
   const checkpoint = JSON.parse(
     decoder.decode(checkpointBytes),
   ) as MaskedDiffusionCheckpoint;
-  if (checkpoint.format !== "only-gates-masked-diffusion-luau") {
-    throw new Error("checkpoint.json is not a masked-diffusion Luau model.");
+  if (
+    checkpoint.format !== "only-gates-masked-diffusion-luau" &&
+    checkpoint.format !== "only-gates-masked-diffusion-solid2"
+  ) {
+    throw new Error(
+      "checkpoint.json is not a masked-diffusion Luau or Solid 2 model.",
+    );
   }
   const tokenizerModel = JSON.parse(
     decoder.decode(tokenizerBytes),
