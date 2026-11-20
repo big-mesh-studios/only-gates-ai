@@ -427,7 +427,7 @@ def main() -> None:
     parser.add_argument("--docs-dir", type=Path, default=None, help="Local dir with Solid 2 docs")
     parser.add_argument("--qa-json", type=Path, default=None, help="Path to qa.json or qa-compact list")
     parser.add_argument("--batch", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=40)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--warmup-fraction", type=float, default=0.05)
     parser.add_argument("--weight-decay", type=float, default=0.01)
@@ -573,17 +573,41 @@ def main() -> None:
     docs = t2.load_docs(docs_dir)
     qa = t2.load_qa(args.qa_json)
 
-    # Build QA examples
+    # Build QA examples - oversample to balance with doc chunks
     qa_items = []
     for d in qa:
         for q in d["questions"]:
             qa_items.append({"instruction": q, "answer": d["answer"], "mode": "ask"})
+    # Oversample QA 8x to match the integer GPT trainer
+    qa_items = qa_items * 8
 
-    # Build doc examples (use docs as training data)
+    # Build doc examples by splitting docs into sections by headings
     doc_items = []
     for name, text in docs:
-        # Create Q&A style examples from docs
-        doc_items.append({"instruction": f"What is {name}?", "answer": text[:500], "mode": "ask"})
+        # Skip supplemental docs for training (they're too noisy)
+        if name.startswith("[SUPPLEMENTAL"):
+            continue
+        # Split by headings to create smaller, focused chunks
+        import re
+        sections = re.split(r'\n(?=#{1,3} )', text)
+        for section in sections:
+            section = section.strip()
+            if len(section) < 50:
+                continue
+            # Use first line as topic, rest as content
+            lines = section.split('\n', 1)
+            topic = lines[0].strip().lstrip('#').strip()
+            content = lines[1].strip() if len(lines) > 1 else section
+            if len(content) < 30:
+                continue
+            # Truncate content to fit context
+            if len(content) > 400:
+                content = content[:400]
+            doc_items.append({
+                "instruction": f"Explain {topic} in Solid 2",
+                "answer": content,
+                "mode": "ask",
+            })
 
     all_items = qa_items + doc_items
 
