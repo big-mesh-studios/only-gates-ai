@@ -174,7 +174,7 @@ interface ParamSpec {
   readonly shape: number[];
 }
 
-interface ModelVars {
+export interface ModelVars {
   readonly tokenEmb: Variable;
   readonly posEmb: Variable;
   readonly gFinal: Variable;
@@ -188,7 +188,7 @@ interface ModelVars {
   }[];
 }
 
-interface OptimizerVars {
+export interface OptimizerVars {
   readonly m: readonly Variable[];
   readonly v: readonly Variable[];
 }
@@ -202,7 +202,7 @@ interface WindowData extends BatchData {
   readonly count: number;
 }
 
-type TfModule = typeof import("@tensorflow/tfjs");
+export type TfModule = typeof import("@tensorflow/tfjs");
 
 let tfPromise: Promise<TfModule> | null = null;
 
@@ -449,7 +449,7 @@ function makeVariable(
   return variable;
 }
 
-function createModel(
+export function createModel(
   tf: TfModule,
   config: TinyGptConfig,
   seed: number,
@@ -493,7 +493,7 @@ function restoreModel(
   return modelFromVariables(config, variables);
 }
 
-function restoreModelFromPacked(
+export function restoreModelFromPacked(
   tf: TfModule,
   config: TinyGptConfig,
   packed: Float32Array,
@@ -535,7 +535,7 @@ function serializeWeights(
   return serializedWeightsFromFlat(config, flat, specs);
 }
 
-function createOptimizer(
+export function createOptimizer(
   tf: TfModule,
   config: TinyGptConfig,
   model: ModelVars,
@@ -633,16 +633,104 @@ export function flattenSerializedWeights(
   ];
 }
 
-function disposeModel(model: ModelVars): void {
+export function disposeModel(model: ModelVars): void {
   for (const variable of flattenModel(model)) {
     variable.dispose();
   }
 }
 
-function disposeOptimizer(optimizer: OptimizerVars): void {
+export function disposeOptimizer(optimizer: OptimizerVars): void {
   for (const variable of [...optimizer.m, ...optimizer.v]) {
     variable.dispose();
   }
+}
+
+function readVariable(variable: Variable): Float32Array {
+  const data = variable.dataSync();
+  return data instanceof Float32Array ? data : Float32Array.from(data);
+}
+
+/**
+ * Packs model variables into the flat `tiny_gpt_create` order used by
+ * `weights.bin` and the WASM quantizer. Unlike the base64 checkpoint fields,
+ * this is the compact representation the masked-diffusion trainer stores in
+ * IndexedDB and exports in a model zip.
+ */
+export function packModelWeights(
+  config: TinyGptConfig,
+  model: ModelVars,
+): Float32Array {
+  const specs = paramSpecs(config);
+  const total = specs.reduce(
+    (sum, spec) => sum + spec.shape.reduce((a, b) => a * b, 1),
+    0,
+  );
+  const packed = new Float32Array(total);
+  let offset = 0;
+  for (const variable of flattenModel(model)) {
+    const values = readVariable(variable);
+    packed.set(values, offset);
+    offset += values.length;
+  }
+  return packed;
+}
+
+export function packOptimizerWeights(
+  config: TinyGptConfig,
+  optimizer: OptimizerVars,
+): { readonly m: Float32Array; readonly v: Float32Array } {
+  const specs = paramSpecs(config);
+  const total = specs.reduce(
+    (sum, spec) => sum + spec.shape.reduce((a, b) => a * b, 1),
+    0,
+  );
+  const pack = (variables: readonly Variable[]): Float32Array => {
+    const packed = new Float32Array(total);
+    let offset = 0;
+    for (const variable of variables) {
+      const values = readVariable(variable);
+      packed.set(values, offset);
+      offset += values.length;
+    }
+    return packed;
+  };
+  return { m: pack(optimizer.m), v: pack(optimizer.v) };
+}
+
+export function restoreOptimizerFromPacked(
+  tf: TfModule,
+  config: TinyGptConfig,
+  m: Float32Array,
+  v: Float32Array,
+): OptimizerVars {
+  const specs = paramSpecs(config);
+  const expected = specs.reduce(
+    (sum, spec) => sum + spec.shape.reduce((a, b) => a * b, 1),
+    0,
+  );
+  if (m.length !== expected || v.length !== expected) {
+    throw new Error(
+      `Optimizer state has ${m.length.toLocaleString()}/${v.length.toLocaleString()} values ` +
+        `but the config needs ${expected.toLocaleString()}.`,
+    );
+  }
+  let offset = 0;
+  const restore = (source: Float32Array, prefix: string): Variable[] =>
+    specs.map((spec) => {
+      const length = spec.shape.reduce((a, b) => a * b, 1);
+      const values = source.slice(offset, offset + length);
+      offset += length;
+      return makeVariable(
+        tf,
+        `${prefix}_${spec.name}`,
+        tf.tensor(values, spec.shape, "float32"),
+        false,
+      );
+    });
+  const momentsM = restore(m, "m");
+  offset = 0;
+  const momentsV = restore(v, "v");
+  return { m: momentsM, v: momentsV };
 }
 
 /* ------------------------------------------------------------------ */
@@ -706,7 +794,7 @@ function causalMask(tf: TfModule, context: number): Tensor {
   return tf.tensor2d(values, [context, context], "float32");
 }
 
-function forward(
+export function forward(
   tf: TfModule,
   model: ModelVars,
   tokens: Tensor,
@@ -714,6 +802,7 @@ function forward(
   training: boolean,
   dropoutSeed: number,
   dropoutRate: number,
+  bidirectional = false,
 ): Tensor {
   const batch = tokens.shape[0]!;
   const context = tokens.shape[1]!;
@@ -729,7 +818,7 @@ function forward(
     tf.gather(model.posEmb, positions),
   );
 
-  const negativeMask = causalMask(tf, context);
+  const negativeMask = bidirectional ? null : causalMask(tf, context);
 
   for (const layer of model.layers) {
     const normalized = rmsNorm(tf, hidden, layer.g1);
@@ -749,7 +838,10 @@ function forward(
       tf.matMul(query, key, false, true),
       Math.sqrt(headDim),
     );
-    const probabilities = tf.softmax(tf.add(scores, negativeMask), -1);
+    const probabilities = tf.softmax(
+      negativeMask === null ? scores : tf.add(scores, negativeMask),
+      -1,
+    );
     const attended = tf.matMul(probabilities, value);
     const merged = tf.reshape(
       tf.transpose(attended, [0, 2, 1, 3]),
@@ -815,7 +907,7 @@ function lossForBatch(
   });
 }
 
-function clipGradients(
+export function clipGradients(
   tf: TfModule,
   grads: readonly Tensor[],
   maxNorm: number,
@@ -827,17 +919,27 @@ function clipGradients(
   });
 }
 
-function applyAdam(
+export interface AdamOptions {
+  readonly beta1?: number;
+  readonly beta2?: number;
+  readonly epsilon?: number;
+  /** Decoupled AdamW weight decay applied to the parameter itself. */
+  readonly weightDecay?: number;
+}
+
+export function applyAdam(
   tf: TfModule,
   params: readonly Variable[],
   grads: readonly Tensor[],
   optimizer: OptimizerVars,
   step: number,
   learningRate: number,
+  options: AdamOptions = {},
 ): void {
-  const beta1 = 0.9;
-  const beta2 = 0.999;
-  const epsilon = 1e-8;
+  const beta1 = options.beta1 ?? 0.9;
+  const beta2 = options.beta2 ?? 0.999;
+  const epsilon = options.epsilon ?? 1e-8;
+  const weightDecay = options.weightDecay ?? 0;
   const bias1 = 1 - Math.pow(beta1, step);
   const bias2 = 1 - Math.pow(beta2, step);
 
@@ -856,11 +958,17 @@ function applyAdam(
       v.assign(nextV);
       const mHat = tf.div(nextM, bias1);
       const vHat = tf.div(nextV, bias2);
-      const update = tf.div(
+      const adam = tf.div(
         tf.mul(learningRate, mHat),
         tf.add(tf.sqrt(vHat), epsilon),
       );
-      param.assign(tf.sub(param, update));
+      const decay =
+        weightDecay > 0
+          ? tf.mul(tf.mul(learningRate, weightDecay), param)
+          : null;
+      param.assign(
+        decay === null ? tf.sub(param, adam) : tf.sub(param, tf.add(adam, decay)),
+      );
     });
   }
 }

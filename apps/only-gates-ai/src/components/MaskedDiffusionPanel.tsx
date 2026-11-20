@@ -62,6 +62,7 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
   const [output, setOutput] = createSignal("");
   const [copied, setCopied] = createSignal(false);
   const [reload, setReload] = createSignal(0);
+  const [notice, setNotice] = createSignal<string | null>(null);
 
   let decoder: MaskedDiffusionDecoder | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -127,6 +128,26 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
 
   onCleanup(stop);
 
+  /**
+   * Called by the training panel when the user clicks "Use this model".
+   * Swap the active denoiser, reset any in-flight generation so it cannot
+   * keep drawing from the old model, and pick up the new checkpoint's
+   * recommended schedule.
+   */
+  const handleUseModel = (next: MaskedDiffusionModel): void => {
+    stop();
+    setSnapshot(null);
+    setPreview("");
+    setOutput("");
+    setCopied(false);
+    setError(null);
+    setModel(next);
+    setSteps(Math.max(1, Math.min(32, next.checkpoint.diffusion?.steps ?? 8)));
+    setNotice(
+      `Using ${next.checkpoint.meta?.name ?? "the trained model"} in this demo.`,
+    );
+  };
+
   createEffect(
     () => ({ active: props.active, attempt: reload() }),
     ({ active, attempt }) => {
@@ -171,6 +192,7 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
     setPreview("");
     setSnapshot(null);
     setCopied(false);
+    setNotice(null);
     setGenerating(true);
 
     let current: MaskedDiffusionDecoder;
@@ -410,6 +432,12 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
         </div>
       </Show>
 
+      <Show when={notice()}>
+        <div class="banner info">
+          <span>{notice()}</span>
+        </div>
+      </Show>
+
       <Show when={snapshot()}>
         {(current) => (
           <div class="masked-animation">
@@ -475,7 +503,10 @@ export default function MaskedDiffusionPanel(props: MaskedDiffusionPanelProps) {
           </pre>
         </div>
       </Show>
-      <MaskedDiffusionTrainingPanel />
+      <MaskedDiffusionTrainingPanel
+        active={props.active}
+        onUseModel={handleUseModel}
+      />
 
       <Show when={model()}>
         <p class="hint luau-model-meta">

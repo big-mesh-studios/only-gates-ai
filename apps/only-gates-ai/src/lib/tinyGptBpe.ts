@@ -18,6 +18,11 @@ export async function loadBpeTokenizer(url: string): Promise<ByteLevelBpe> {
   return parseBpeModel(json);
 }
 
+/** Builds a tokenizer from an already-parsed `tokenizer.json` payload. */
+export function parseBpeTokenizer(model: BpeModel): ByteLevelBpe {
+  return parseBpeModel(model);
+}
+
 /** Serializes a tokenizer back to the deployed `tokenizer.json` shape. */
 export function serializeBpeTokenizer(tokenizer: ByteLevelBpe): BpeModel {
   return {
