@@ -6,12 +6,12 @@ export const SOLID2_MASKED_DATA_BASE =
   "https://raw.githubusercontent.com/clinuxrulz/only-gates-ai/main/data/solid2/";
 
 export const SOLID2_MASKED_TRAIN_CONFIG: TinyGptConfig = {
-  vocabSize: 4096,
-  context: 128,
-  dim: 384,
-  layers: 6,
-  heads: 6,
-  mlp: 1152,
+  vocabSize: 4097,
+  context: 256,
+  dim: 128,
+  layers: 3,
+  heads: 4,
+  mlp: 256,
 };
 
 export type Solid2MaskedMode = "solid2";
