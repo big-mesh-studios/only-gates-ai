@@ -43,7 +43,7 @@ import train_tiny_gpt_solid2_colab as base
 
 
 CONFIG_KEYS = ("vocabSize", "context", "dim", "layers", "heads", "mlp")
-SPECIAL_TEXT = {"<|pad|>", "<|user|>", "<|assistant|>", ">", "<|facts|>"}
+SPECIAL_TEXT = {"<|pad|>", "<|user|>", "<|assistant|>", "|", "<|facts|>"}
 
 
 def iter_rows(path: Path) -> Iterable[Dict]:
@@ -197,9 +197,9 @@ def main() -> None:
     _ = temp_handle
     device = torch.device(args.device)
     model, config, tokenizer, base_seed = load_model_and_tokenizer(model_dir, device)
-    end_id = tokenizer.id_for(">")
+    end_id = tokenizer.id_for("|")
     if end_id is None:
-        raise SystemExit("tokenizer is missing >")
+        raise SystemExit("tokenizer is missing |")
     context = int(config["context"])
 
     task_paths = args.tasks or [Path("data/luau-tasks/train.jsonl")]
