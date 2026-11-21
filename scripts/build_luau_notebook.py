@@ -72,9 +72,11 @@ upload a zip of it to `/content` instead and unzip it into
 REPO_DIR = "/content/only-gates-ai"
 
 if os.path.isdir(os.path.join(REPO_DIR, ".git")):
+    subprocess.run(["git", "-C", REPO_DIR, "fetch", "origin", "wip"], check=True)
+    subprocess.run(["git", "-C", REPO_DIR, "checkout", "wip"], check=True)
     subprocess.run(["git", "-C", REPO_DIR, "pull", "--ff-only"], check=True)
 else:
-    subprocess.run(["git", "clone", "--depth", "1", REPO_URL, REPO_DIR], check=True)
+    subprocess.run(["git", "clone", "--depth", "1", "--branch", "wip", REPO_URL, REPO_DIR], check=True)
 
 os.chdir(REPO_DIR)
 print("working directory:", os.getcwd())
@@ -84,7 +86,7 @@ print("working directory:", os.getcwd())
     code(
         """# The JSONL files are committed, so this is optional but keeps the run
 # reproducible if the generator changed.
-!python3 scripts/luau_tasks.py --out data/luau-tasks --seed 1337
+!python3 scripts/luau_tasks.py --out data/luau-tasks --train 30000 --val 3000 --test-seen 300 --test-paraphrase 200 --test-paraphrase-g 200 --test-paraphrase-h 200 --test-question 200 --test-unseen 100 --seed 1337
 
 # Luau is required for execution checks and evaluation.
 LUAU_ZIP = "/content/luau-ubuntu.zip"
