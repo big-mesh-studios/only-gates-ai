@@ -18,13 +18,13 @@
     "training": {
       "assistant": true,
       "mode": "qa",
-      "steps": 4572,
-      "batch": 32,
-      "learningRate": 0.0003,
+      "steps": 45540,
+      "batch": 8,
+      "learningRate": 0.0001,
       "dropout": 0.1,
       "seed": 1337,
-      "bestStep": 3048,
-      "bestLoss": 0.1445682573595946,
+      "bestStep": 30360,
+      "bestLoss": 0.08549179607294588,
       "sourceUrls": [
         "data/luau-tasks/train.jsonl",
         "/content/only-gates-ai/apps/only-gates-ai/src/assets/luau-faq.md"
@@ -34,15 +34,15 @@
   "samples": [
     {
       "prompt": "Write a for loop that sums the first 50 elements of the array `values` and prints the result in Luau. The array has at least 50 elements.",
-      "text": "local score_total = 0\nfor j = 1, 50 do\n    score_total += values[j]\nend\nprint(score_total)"
+      "text": "local running_total = 0\nfor place = 1, 50 do\n    running_total += values[place]\nend\nprint(running_total)"
     },
     {
       "prompt": "Write a for loop that prints the numbers from 1 to 20 in Luau.",
-      "text": "local cursor = 0\nlocal output = 0\nwhile cursor < 20 do\n    cursor += 1\n    output += cursor\nend\nprint(output)"
+      "text": "local counter = 0\nfor k = 1, 20 do\n    counter += points[k]\nend\nprint(counter)"
     },
     {
       "prompt": "Write a for loop that counts how many elements of `scores` are greater than 80, then prints the count in Luau.",
-      "text": "local passing = 0\nfor place = 1, #scores do\n    if scores[place] > 80 then\n        passing += 1\n    end\nend\nprint(passing)"
+      "text": "local passing = 0\nfor step = 1, #scores do\n    if scores[step] > 80 then\n        passing += 1\n    end\nend\nprint(passing)"
     },
     {
       "prompt": "Write a local function named `add` in Luau that takes `a` and `b` and returns their sum. Then print `add(2, 3)`.",
@@ -50,11 +50,11 @@
     },
     {
       "prompt": "Given the array `items = { \"sword\", \"shield\", \"potion\" }`, write a loop in Luau that prints each index and value.",
-      "text": "for index, element in items do\n    print(index, element)\nend"
+      "text": "for label, element in items do\n    print(label, element)\nend"
     },
     {
       "prompt": "How do you do a for loop in Luau?",
-      "text": "A `while` loop repeats while its condition is true:\n\n```luau\nlocal count = 0\n\nwhile count < 3 do\n    print(count)\n    count += 1\nend\n```\n\nUse `break` to leave the loop early:\n\n```luau\nwhile true do\n    break\nend\n```"
+      "text": "A `repeat ... until` loop runs the body first and checks the condition at the end:\n\n```luau\nlocal count = 0\n\nrepeat\n    print(count)\n    count += 1\nuntil count >= 3\n```\n\nThe body always runs at least once, even when the condition starts out true."
     },
     {
       "prompt": "How do you create a table in Luau?",
