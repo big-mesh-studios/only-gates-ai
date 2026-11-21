@@ -215,7 +215,7 @@ def generate_greedy(
         next_id = int(torch.argmax(logits[0, -1]).item())
         generated.append(next_id)
         ids.append(next_id)
-        if next_id == end_id:
+        if next_id in end_ids:
             return generated, True
     return generated, False
 
@@ -250,7 +250,7 @@ def generate_sampled(
         next_id = int(torch.multinomial(probabilities, 1).item())
         generated.append(next_id)
         ids.append(next_id)
-        if next_id == end_id:
+        if next_id in end_ids:
             return generated, True
     return generated, False
 
@@ -261,6 +261,7 @@ def decode_generated(tokenizer: BpeTokenizer, ids: Sequence[int]) -> str:
         for text, token_id in tokenizer.token_to_id.items()
         if text in SPECIAL_TEXT
     }
+    special_ids |= {index for index, token in enumerate(tokenizer.vocab) if token == "|"}
     pieces = [
         tokenizer.vocab[token_id]
         for token_id in ids

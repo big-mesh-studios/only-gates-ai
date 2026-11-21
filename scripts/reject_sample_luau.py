@@ -109,6 +109,7 @@ def decode_generated(tokenizer: BpeTokenizer, ids: List[int]) -> str:
         token_id for text, token_id in tokenizer.token_to_id.items()
         if text in SPECIAL_TEXT
     }
+    special_ids |= {index for index, token in enumerate(tokenizer.vocab) if token == "|"}
     pieces = [
         tokenizer.vocab[token_id]
         for token_id in ids
@@ -133,7 +134,7 @@ def sample_candidates(
     temperature: float,
     top_k: int,
     device: torch.device,
-    end_id: int,
+    end_ids: set,
     count: int,
     seed: int,
 ) -> List[Tuple[List[int], bool]]:
@@ -160,7 +161,7 @@ def sample_candidates(
                 next_id = int(torch.argmax(logits).item())
             generated.append(next_id)
             ids.append(next_id)
-            if next_id == end_id:
+            if next_id in end_ids:
                 stopped = True
                 break
         results.append((generated, stopped))
@@ -197,9 +198,10 @@ def main() -> None:
     _ = temp_handle
     device = torch.device(args.device)
     model, config, tokenizer, base_seed = load_model_and_tokenizer(model_dir, device)
-    end_id = tokenizer.id_for("|")
-    if end_id is None:
+    end_ids = {index for index, token in enumerate(tokenizer.vocab) if token == "|"}
+    if not end_ids:
         raise SystemExit("tokenizer is missing |")
+    end_id = min(end_ids)
     context = int(config["context"])
 
     task_paths = args.tasks or [Path("data/luau-tasks/train.jsonl")]
@@ -231,7 +233,7 @@ def main() -> None:
                 model, tokenizer, prompt_ids,
                 context=context, max_new=args.max_new,
                 temperature=args.temperature, top_k=args.top_k,
-                device=device, end_id=end_id, count=args.samples,
+                device=device, end_ids=end_ids, count=args.samples,
                 seed=args.seed + index * 1009,
             )
             for generated, stopped in candidates:
