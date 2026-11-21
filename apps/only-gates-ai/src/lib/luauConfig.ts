@@ -137,6 +137,61 @@ export const LUAU_PRESETS: readonly LuauPreset[] = [
     mode: "ask",
     prompt: "How do you add type annotations in Luau?",
   },
+  {
+    label: "While loop",
+    mode: "ask",
+    prompt: "How do you do a while loop in Luau?",
+  },
+  {
+    label: "Repeat loop",
+    mode: "ask",
+    prompt: "How do you do a repeat loop in Luau?",
+  },
+  {
+    label: "Break loop",
+    mode: "ask",
+    prompt: "How do you break out of a loop in Luau?",
+  },
+  {
+    label: "Continue loop",
+    mode: "ask",
+    prompt: "How do you continue a loop in Luau?",
+  },
+  {
+    label: "Declare variable",
+    mode: "ask",
+    prompt: "How do you declare a variable in Luau?",
+  },
+  {
+    label: "Define function",
+    mode: "ask",
+    prompt: "How do you define a function in Luau?",
+  },
+  {
+    label: "Call function",
+    mode: "ask",
+    prompt: "How do I call a function in Luau?",
+  },
+  {
+    label: "Print value",
+    mode: "ask",
+    prompt: "How do I print something in Luau?",
+  },
+  {
+    label: "If statement",
+    mode: "ask",
+    prompt: "How do you write an if statement in Luau?",
+  },
+  {
+    label: "Concatenate strings",
+    mode: "ask",
+    prompt: "How do you concatenate strings in Luau?",
+  },
+  {
+    label: "Comments",
+    mode: "ask",
+    prompt: "How do you write a comment in Luau?",
+  },
 ];
 
 export function luauParameterCount(config: TinyGptConfig): number {
