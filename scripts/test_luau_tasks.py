@@ -154,6 +154,13 @@ class LuauTaskGeneratorTest(unittest.TestCase):
             "function_typed",
             "if_elseif_grade",
             "if_else_health",
+            "for_sum_above",
+            "function_returns_sum",
+            "function_returns_count_above",
+            "count_and_sum",
+            "transform_double",
+            "search_first_index",
+            "nested_loop_sum",
         }
         seen = set()
         for family, builder in luau_tasks.FAMILY_BUILDERS.items():
@@ -174,7 +181,7 @@ class LuauTaskGeneratorTest(unittest.TestCase):
 
     def test_family_allocation_sums_to_requested_count(self) -> None:
         families = luau_tasks.FAMILIES
-        for count in (20, 200, 1200, 12000):
+        for count in (40, 200, 1200, 12000):
             counts = luau_tasks.allocate_family_counts(families, count)
             self.assertEqual(sum(counts.values()), count)
             self.assertEqual(set(counts), set(families))

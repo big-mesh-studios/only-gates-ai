@@ -38,6 +38,14 @@ and an execution harness. The harness is for evaluation only.
 - `string_concat`
 - `string_interp`
 - `nested_loop`
+- `for_sum_above`
+- `function_returns_sum`
+- `function_returns_count_above`
+- `running_min_max`
+- `count_and_sum`
+- `transform_double`
+- `search_first_index`
+- `nested_loop_sum`
 
 ## Splits
 

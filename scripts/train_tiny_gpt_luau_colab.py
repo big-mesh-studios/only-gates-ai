@@ -538,6 +538,13 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--tasks", type=Path, default=REPO_ROOT / "data" / "luau-tasks")
+    parser.add_argument(
+        "--extra-tasks",
+        type=Path,
+        action="append",
+        default=None,
+        help="Additional JSONL files of verified rows to append to training.",
+    )
     parser.add_argument("--out", type=Path, default=Path("tiny-gpt-luau-out"))
     parser.add_argument("--init-from", type=Path, default=None)
     parser.add_argument("--tokenizer", type=Path, default=None)
@@ -665,6 +672,13 @@ def main() -> None:
     for pair in faq_train:
         train_items.extend([dict(pair) for _ in range(max(1, args.faq_repeat))])
     val_items.extend(faq_val)
+    if args.extra_tasks:
+        for extra_path in args.extra_tasks:
+            if not extra_path.exists():
+                raise SystemExit(f"extra tasks file not found: {extra_path}")
+            extra_rows = list(iter_jsonl(extra_path))
+            train_items.extend(task_item(row) for row in extra_rows)
+            print(f"loaded {len(extra_rows):,} extra training rows from {extra_path}", flush=True)
     if args.smoke:
         train_items = [task_item(row) for row in train_rows[:32]]
         val_items = [task_item(row) for row in val_rows[:8]]

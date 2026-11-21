@@ -62,6 +62,14 @@ FAMILIES = (
     "string_concat",
     "string_interp",
     "nested_loop",
+    "for_sum_above",
+    "function_returns_sum",
+    "function_returns_count_above",
+    "running_min_max",
+    "count_and_sum",
+    "transform_double",
+    "search_first_index",
+    "nested_loop_sum",
 )
 
 TRAIN_STYLES = (
@@ -101,6 +109,14 @@ FAMILY_WEIGHTS: Dict[str, float] = {
     "for_product": 0.75,
     "if_else_health": 0.75,
     "while_accumulate": 0.75,
+    "for_sum_above": 1.25,
+    "function_returns_sum": 1.5,
+    "function_returns_count_above": 1.5,
+    "running_min_max": 1.0,
+    "count_and_sum": 1.25,
+    "transform_double": 1.25,
+    "search_first_index": 1.25,
+    "nested_loop_sum": 1.25,
 }
 
 
@@ -1543,6 +1559,555 @@ def family_nested_loop(rng: random.Random, names: NamePool) -> FamilyResult:
     )
 
 
+def family_for_sum_above(rng: random.Random, names: NamePool) -> FamilyResult:
+    array = names.pick(rng, "arrays")
+    total = names.pick(rng, "accumulators")
+    var = names.pick(rng, "loop_vars")
+    threshold = rng.choice((5, 10, 15, 20, 30, 50))
+    values = [rng.randint(0, 60) for _ in range(rng.randint(5, 12))]
+    code = (
+        f"local {total} = 0\n"
+        f"for {var} = 1, #{array} do\n"
+        f"    if {array}[{var}] > {threshold} then\n"
+        f"        {total} += {array}[{var}]\n"
+        f"    end\n"
+        f"end\n"
+        f"print({total})"
+    )
+    expected = sum(value for value in values if value > threshold)
+    instructions = {
+        "canonical": (
+            f"Write a for loop in Luau that sums the elements of `{array}` "
+            f"greater than {threshold} and prints the total."
+        ),
+        "paraphrase_a": (
+            f"Show Luau code that adds up the values in `{array}` above "
+            f"{threshold} and prints the result."
+        ),
+        "paraphrase_c": (
+            f"Write Luau code that totals the elements of `{array}` greater "
+            f"than {threshold} and prints the sum."
+        ),
+        "paraphrase_d": (
+            f"How do I sum the elements of `{array}` greater than {threshold} "
+            f"in Luau?"
+        ),
+        "paraphrase_b": (
+            f"What Luau loop totals the values in `{array}` over {threshold}?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that adds up the values in `{array}` above "
+            f"{threshold} and prints the total."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to sum the entries of `{array}` greater than "
+            f"{threshold} in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that sums the elements of "
+            f"`{array}` over {threshold} and outputs the total."
+        ),
+        "paraphrase_h": (
+            f"A script needs the total of the values in `{array}` above "
+            f"{threshold}. What Luau code should it use?"
+        ),
+    }
+    return FamilyResult(
+        family="for_sum_above",
+        instructions=instructions,
+        code=code,
+        prelude=f"local {array} = {lua_array(values)}",
+        expect_stdout=str(expected),
+        tags={"threshold": threshold, "expected": expected, "required": (str(threshold),)},
+    )
+
+
+def family_function_returns_sum(rng: random.Random, names: NamePool) -> FamilyResult:
+    function = rng.choice(
+        tuple(name for name in names.functions if name not in ("sum", "total", "accumulate"))
+    )
+    array = names.pick(rng, "arrays")
+    param = rng.choice(("nums", "values", "items", "data"))
+    values = [rng.randint(0, 20) for _ in range(rng.randint(3, 8))]
+    code = (
+        f"local function {function}({param})\n"
+        f"    local total = 0\n"
+        f"    for i = 1, #{param} do\n"
+        f"        total += {param}[i]\n"
+        f"    end\n"
+        f"    return total\n"
+        f"end\n"
+        f"\n"
+        f"print({function}({array}))"
+    )
+    expected = sum(values)
+    instructions = {
+        "canonical": (
+            f"Write a local function named `{function}` in Luau that takes "
+            f"`{param}` and returns the sum of its elements. Then print "
+            f"`{function}({array})`."
+        ),
+        "paraphrase_a": (
+            f"Show Luau code that defines `{function}` to total the values in "
+            f"`{param}`, then calls it with `{array}`."
+        ),
+        "paraphrase_c": (
+            f"Write Luau code that defines a function `{function}` returning the "
+            f"sum of `{param}` and prints `{function}({array})`."
+        ),
+        "paraphrase_d": (
+            f"How do I write a Luau function `{function}` that sums `{param}` "
+            f"and prints `{function}({array})`?"
+        ),
+        "paraphrase_b": (
+            f"What Luau code defines `{function}({param})` returning the sum "
+            f"and prints `{function}({array})`?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that defines `{function}` to total `{param}` and "
+            f"prints `{function}({array})`."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to write a function `{function}` in Luau that "
+            f"sums `{param}` and prints `{function}({array})`?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that defines `{function}({param})` "
+            f"returning the sum and prints `{function}({array})`."
+        ),
+        "paraphrase_h": (
+            f"A script needs a function `{function}` that totals `{param}`, then "
+            f"prints `{function}({array})`. What Luau code should it use?"
+        ),
+    }
+    return FamilyResult(
+        family="function_returns_sum",
+        instructions=instructions,
+        code=code,
+        prelude=f"local {array} = {lua_array(values)}",
+        expect_stdout=str(expected),
+        tags={"expected": expected, "required": (function, array)},
+    )
+
+
+def family_function_returns_count_above(rng: random.Random, names: NamePool) -> FamilyResult:
+    function = rng.choice(
+        tuple(name for name in names.functions if name not in ("sum", "total", "accumulate"))
+    )
+    array = names.pick(rng, "arrays")
+    param = rng.choice(("nums", "values", "items", "data"))
+    threshold = rng.choice((5, 10, 20, 30, 50))
+    values = [rng.randint(0, 60) for _ in range(rng.randint(5, 12))]
+    code = (
+        f"local function {function}({param}, limit)\n"
+        f"    local count = 0\n"
+        f"    for i = 1, #{param} do\n"
+        f"        if {param}[i] > limit then\n"
+        f"            count += 1\n"
+        f"        end\n"
+        f"    end\n"
+        f"    return count\n"
+        f"end\n"
+        f"\n"
+        f"print({function}({array}, {threshold}))"
+    )
+    expected = sum(1 for value in values if value > threshold)
+    instructions = {
+        "canonical": (
+            f"Write a local function named `{function}` in Luau that takes "
+            f"`{param}` and `limit` and returns how many elements of `{param}` "
+            f"are greater than `limit`. Then print "
+            f"`{function}({array}, {threshold})`."
+        ),
+        "paraphrase_a": (
+            f"Show Luau code that defines `{function}` to count values in "
+            f"`{param}` above `limit`, then calls it with `{array}` and "
+            f"{threshold}."
+        ),
+        "paraphrase_c": (
+            f"Write Luau code that defines a function `{function}` returning the "
+            f"count of `{param}` over `limit` and prints "
+            f"`{function}({array}, {threshold})`."
+        ),
+        "paraphrase_d": (
+            f"How do I write a Luau function `{function}` that counts values in "
+            f"`{param}` above `limit` and prints "
+            f"`{function}({array}, {threshold})`?"
+        ),
+        "paraphrase_b": (
+            f"What Luau code defines `{function}({param}, limit)` returning the "
+            f"count over `limit` and prints "
+            f"`{function}({array}, {threshold})`?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that defines `{function}` to count `{param}` "
+            f"above `limit` and prints `{function}({array}, {threshold})`."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to write a function `{function}` in Luau that "
+            f"counts `{param}` over `limit` and prints "
+            f"`{function}({array}, {threshold})`?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that defines `{function}({param}, "
+            f"limit)` returning the count over `limit` and prints "
+            f"`{function}({array}, {threshold})`."
+        ),
+        "paraphrase_h": (
+            f"A script needs a function `{function}` that counts values in "
+            f"`{param}` above `limit`, then prints "
+            f"`{function}({array}, {threshold})`. What Luau code should it use?"
+        ),
+    }
+    return FamilyResult(
+        family="function_returns_count_above",
+        instructions=instructions,
+        code=code,
+        prelude=f"local {array} = {lua_array(values)}",
+        expect_stdout=str(expected),
+        tags={"threshold": threshold, "expected": expected, "required": (function, array, str(threshold))},
+    )
+
+
+def family_running_min_max(rng: random.Random, names: NamePool) -> FamilyResult:
+    array = names.pick(rng, "arrays")
+    min_name = rng.choice(("smallest", "minimum", "lowest", "min_value"))
+    max_name = rng.choice(("largest", "maximum", "highest", "max_value"))
+    while min_name == max_name:
+        max_name = rng.choice(("largest", "maximum", "highest", "max_value"))
+    values = [rng.randint(0, 100) for _ in range(rng.randint(4, 10))]
+    code = (
+        f"local {min_name} = {array}[1]\n"
+        f"local {max_name} = {array}[1]\n"
+        f"for i = 2, #{array} do\n"
+        f"    if {array}[i] < {min_name} then\n"
+        f"        {min_name} = {array}[i]\n"
+        f"    end\n"
+        f"    if {array}[i] > {max_name} then\n"
+        f"        {max_name} = {array}[i]\n"
+        f"    end\n"
+        f"end\n"
+        f"print({min_name})\n"
+        f"print({max_name})"
+    )
+    expected = stdout_lines([min(values), max(values)])
+    instructions = {
+        "canonical": (
+            f"Write a for loop that finds both the smallest and largest value "
+            f"in `{array}` and prints them on separate lines in Luau."
+        ),
+        "paraphrase_a": (
+            f"Show Luau code that scans `{array}` once and prints its minimum "
+            f"and maximum."
+        ),
+        "paraphrase_c": (
+            f"Write Luau code that tracks the min and max of `{array}` in a "
+            f"single loop and prints both."
+        ),
+        "paraphrase_d": (
+            f"How do I find the minimum and maximum of `{array}` in one Luau "
+            f"loop?"
+        ),
+        "paraphrase_b": (
+            f"What Luau code scans `{array}` once and prints both its smallest "
+            f"and largest value?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that finds the min and max of `{array}` in one "
+            f"pass and prints them."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to get both the minimum and maximum of "
+            f"`{array}` with a single Luau loop?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that computes the min and max of "
+            f"`{array}` in one loop and outputs both."
+        ),
+        "paraphrase_h": (
+            f"A script needs the smallest and largest values in `{array}`. What "
+            f"Luau code should it use?"
+        ),
+    }
+    return FamilyResult(
+        family="running_min_max",
+        instructions=instructions,
+        code=code,
+        prelude=f"local {array} = {lua_array(values)}",
+        expect_stdout=expected,
+        tags={"expected_min": min(values), "expected_max": max(values)},
+    )
+
+
+def family_count_and_sum(rng: random.Random, names: NamePool) -> FamilyResult:
+    array = names.pick(rng, "arrays")
+    count_name = rng.choice(("count", "matches", "hits"))
+    total_name = names.pick(rng, "accumulators")
+    while total_name == count_name:
+        total_name = names.pick(rng, "accumulators")
+    threshold = rng.choice((5, 10, 20, 30, 50))
+    values = [rng.randint(0, 60) for _ in range(rng.randint(5, 12))]
+    code = (
+        f"local {count_name} = 0\n"
+        f"local {total_name} = 0\n"
+        f"for i = 1, #{array} do\n"
+        f"    if {array}[i] > {threshold} then\n"
+        f"        {count_name} += 1\n"
+        f"        {total_name} += {array}[i]\n"
+        f"    end\n"
+        f"end\n"
+        f"print({count_name})\n"
+        f"print({total_name})"
+    )
+    kept = [value for value in values if value > threshold]
+    expected = stdout_lines([len(kept), sum(kept)])
+    instructions = {
+        "canonical": (
+            f"Write a for loop in Luau that counts how many elements of "
+            f"`{array}` are greater than {threshold} and also sums those "
+            f"elements, printing the count then the total."
+        ),
+        "paraphrase_a": (
+            f"Show Luau code that counts and totals the values in `{array}` "
+            f"above {threshold}, printing both results."
+        ),
+        "paraphrase_c": (
+            f"Write Luau code that counts the elements of `{array}` greater "
+            f"than {threshold} and sums them, printing count then total."
+        ),
+        "paraphrase_d": (
+            f"How do I count and sum the elements of `{array}` above "
+            f"{threshold} in Luau?"
+        ),
+        "paraphrase_b": (
+            f"What Luau code counts and totals the values in `{array}` over "
+            f"{threshold}?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that counts and sums the values in `{array}` "
+            f"above {threshold}, printing both."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to count and total the entries of `{array}` "
+            f"greater than {threshold} in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that counts and sums the elements "
+            f"of `{array}` over {threshold}, printing count then total."
+        ),
+        "paraphrase_h": (
+            f"A script needs the count and total of the values in `{array}` "
+            f"above {threshold}. What Luau code should it use?"
+        ),
+    }
+    return FamilyResult(
+        family="count_and_sum",
+        instructions=instructions,
+        code=code,
+        prelude=f"local {array} = {lua_array(values)}",
+        expect_stdout=expected,
+        tags={"threshold": threshold, "required": (str(threshold),)},
+    )
+
+
+def family_transform_double(rng: random.Random, names: NamePool) -> FamilyResult:
+    array = names.pick(rng, "arrays")
+    source = names.pick(rng, "arrays")
+    while source == array:
+        source = names.pick(rng, "arrays")
+    doubled_name = rng.choice(("doubled", "scaled", "result"))
+    values = [rng.randint(0, 20) for _ in range(rng.randint(3, 8))]
+    code = (
+        f"local {doubled_name} = {{}}\n"
+        f"for i = 1, #{source} do\n"
+        f"    {doubled_name}[#{doubled_name} + 1] = {source}[i] * 2\n"
+        f"end\n"
+        f"local total = 0\n"
+        f"for i = 1, #{doubled_name} do\n"
+        f"    total += {doubled_name}[i]\n"
+        f"end\n"
+        f"print(total)"
+    )
+    expected = 2 * sum(values)
+    instructions = {
+        "canonical": (
+            f"Given `{source} = {lua_array(values)}`, write Luau code that "
+            f"builds a new table `{doubled_name}` with every value doubled, "
+            f"then prints the total of `{doubled_name}`."
+        ),
+        "paraphrase_a": (
+            f"Show Luau code that doubles each value in `{source}` into "
+            f"`{doubled_name}` and prints their sum."
+        ),
+        "paraphrase_c": (
+            f"Write Luau code that creates `{doubled_name}` by doubling the "
+            f"values in `{source}`, then prints the total."
+        ),
+        "paraphrase_d": (
+            f"How do I double every value in `{source}` into `{doubled_name}` "
+            f"and print the sum in Luau?"
+        ),
+        "paraphrase_b": (
+            f"What Luau code doubles the values in `{source}` into "
+            f"`{doubled_name}` and prints the total?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that builds `{doubled_name}` by doubling "
+            f"`{source}` and prints the sum."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to double each value in `{source}` into "
+            f"`{doubled_name}` and print the total in Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that doubles the values of "
+            f"`{source}` into `{doubled_name}` and outputs their sum."
+        ),
+        "paraphrase_h": (
+            f"A script needs a table `{doubled_name}` with the doubled values "
+            f"of `{source}`, then its total. What Luau code should it use?"
+        ),
+    }
+    return FamilyResult(
+        family="transform_double",
+        instructions=instructions,
+        code=code,
+        prelude=f"local {source} = {lua_array(values)}",
+        expect_stdout=str(expected),
+        tags={"expected": expected, "required": (source, doubled_name)},
+    )
+
+
+def family_search_first_index(rng: random.Random, names: NamePool) -> FamilyResult:
+    array = names.pick(rng, "arrays")
+    target_name = rng.choice(("target", "needle", "wanted"))
+    values = [rng.randint(1, 9) for _ in range(rng.randint(5, 10))]
+    # Ensure the target occurs at least once.
+    target = values[rng.randrange(len(values))]
+    code = (
+        f"local found = 0\n"
+        f"for i = 1, #{array} do\n"
+        f"    if {array}[i] == {target} then\n"
+        f"        found = i\n"
+        f"        break\n"
+        f"    end\n"
+        f"end\n"
+        f"print(found)"
+    )
+    expected = next((i + 1 for i, value in enumerate(values) if value == target), 0)
+    instructions = {
+        "canonical": (
+            f"Given `{array} = {lua_array(values)}`, write a for loop in Luau "
+            f"that finds the first index where the value is {target} and prints "
+            f"it (or 0 if not found)."
+        ),
+        "paraphrase_a": (
+            f"Show Luau code that searches `{array}` for {target} and prints "
+            f"the first matching index."
+        ),
+        "paraphrase_c": (
+            f"Write Luau code that loops over `{array}` and prints the first "
+            f"index whose value is {target}."
+        ),
+        "paraphrase_d": (
+            f"How do I find the first position of {target} in `{array}` in "
+            f"Luau?"
+        ),
+        "paraphrase_b": (
+            f"What Luau code finds the first index of {target} in `{array}`?"
+        ),
+        "paraphrase_e": (
+            f"I need Luau code that searches `{array}` for {target} and prints "
+            f"the first index found."
+        ),
+        "paraphrase_f": (
+            f"Can you show me how to find the first occurrence of {target} in "
+            f"`{array}` using Luau?"
+        ),
+        "paraphrase_g": (
+            f"Provide a Luau implementation that returns the first index of "
+            f"{target} in `{array}`."
+        ),
+        "paraphrase_h": (
+            f"A script needs the first index where `{array}` equals {target}. "
+            f"What Luau code should it use?"
+        ),
+    }
+    return FamilyResult(
+        family="search_first_index",
+        instructions=instructions,
+        code=code,
+        prelude=f"local {array} = {lua_array(values)}",
+        expect_stdout=str(expected),
+        tags={"target": target, "required": (str(target),)},
+    )
+
+
+def family_nested_loop_sum(rng: random.Random, names: NamePool) -> FamilyResult:
+    matrix = names.pick(rng, "tables")
+    rows = rng.randint(2, 4)
+    cols = rng.randint(2, 5)
+    values = [[rng.randint(0, 9) for _ in range(cols)] for _ in range(rows)]
+    lua_matrix = "{ " + ", ".join(
+        "{ " + ", ".join(str(value) for value in row) + " }" for row in values
+    ) + " }"
+    code = (
+        "local total = 0\n"
+        "for i = 1, #" + matrix + " do\n"
+        "    for j = 1, #" + matrix + "[i] do\n"
+        "        total += " + matrix + "[i][j]\n"
+        "    end\n"
+        "end\n"
+        "print(total)"
+    )
+    expected = sum(sum(row) for row in values)
+    instructions = {
+        "canonical": (
+            "Given `" + matrix + " = " + lua_matrix + "`, write nested for loops in Luau "
+            "that sum every element of `" + matrix + "` and print the total."
+        ),
+        "paraphrase_a": (
+            "Show Luau code that loops over `" + matrix + "` with nested loops and "
+            "prints the sum of all elements."
+        ),
+        "paraphrase_c": (
+            "Write Luau code with nested loops over `" + matrix + "` that totals "
+            "every element and prints the result."
+        ),
+        "paraphrase_d": (
+            "How do I sum all elements of `" + matrix + "` with nested Luau loops?"
+        ),
+        "paraphrase_b": (
+            "What Luau code uses nested loops to total every element of "
+            "`" + matrix + "`?"
+        ),
+        "paraphrase_e": (
+            "I need Luau code that sums all entries of `" + matrix + "` with nested "
+            "loops and prints the total."
+        ),
+        "paraphrase_f": (
+            "Can you show me how to total every element of `" + matrix + "` using "
+            "nested loops in Luau?"
+        ),
+        "paraphrase_g": (
+            "Provide a Luau implementation that sums all elements of `" + matrix + "` "
+            "with nested loops and outputs the total."
+        ),
+        "paraphrase_h": (
+            "A script needs the total of every element in `" + matrix + "`. What "
+            "Luau code with nested loops should it use?"
+        ),
+    }
+    return FamilyResult(
+        family="nested_loop_sum",
+        instructions=instructions,
+        code=code,
+        prelude="local " + matrix + " = " + lua_matrix,
+        expect_stdout=str(expected),
+        tags={"rows": rows, "cols": cols, "required": (matrix,)},
+    )
+
+
 FAMILY_BUILDERS: Dict[str, Callable[[random.Random, NamePool], FamilyResult]] = {
     "for_print_range": family_for_print_range,
     "for_sum_all": family_for_sum_all,
@@ -1564,6 +2129,14 @@ FAMILY_BUILDERS: Dict[str, Callable[[random.Random, NamePool], FamilyResult]] = 
     "string_concat": family_string_concat,
     "string_interp": family_string_interp,
     "nested_loop": family_nested_loop,
+    "for_sum_above": family_for_sum_above,
+    "function_returns_sum": family_function_returns_sum,
+    "function_returns_count_above": family_function_returns_count_above,
+    "running_min_max": family_running_min_max,
+    "count_and_sum": family_count_and_sum,
+    "transform_double": family_transform_double,
+    "search_first_index": family_search_first_index,
+    "nested_loop_sum": family_nested_loop_sum,
 }
 
 
