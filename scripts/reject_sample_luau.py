@@ -43,7 +43,7 @@ import train_tiny_gpt_solid2_colab as base
 
 
 CONFIG_KEYS = ("vocabSize", "context", "dim", "layers", "heads", "mlp")
-SPECIAL_TEXT = {"<|pad|>", "<|user|>", "<|assistant|>", "|", "<|facts|>"}
+SPECIAL_TEXT = {"<|pad|>", "<|user|>", "<|assistant|>", "|", "<|end|>", "<|facts|>"}
 
 
 def iter_rows(path: Path) -> Iterable[Dict]:
@@ -109,7 +109,7 @@ def decode_generated(tokenizer: BpeTokenizer, ids: List[int]) -> str:
         token_id for text, token_id in tokenizer.token_to_id.items()
         if text in SPECIAL_TEXT
     }
-    special_ids |= {index for index, token in enumerate(tokenizer.vocab) if token == "|"}
+    special_ids |= {index for index, token in enumerate(tokenizer.vocab) if "|" in token}
     pieces = [
         tokenizer.vocab[token_id]
         for token_id in ids
@@ -198,7 +198,7 @@ def main() -> None:
     _ = temp_handle
     device = torch.device(args.device)
     model, config, tokenizer, base_seed = load_model_and_tokenizer(model_dir, device)
-    end_ids = {index for index, token in enumerate(tokenizer.vocab) if token == "|"}
+    end_ids = {index for index, token in enumerate(tokenizer.vocab) if "|" in token}
     if not end_ids:
         raise SystemExit("tokenizer is missing |")
     end_id = min(end_ids)
