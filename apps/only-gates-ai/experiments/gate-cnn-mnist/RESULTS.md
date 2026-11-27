@@ -419,14 +419,69 @@ layers.
 | Model | Cells | Soft | Hard | Est. 2-input gates |
 | --- | --- | --- | --- | --- |
 | `lut3` 512×512 | 1,104 | 90.8% | 90.0% | ~2,900 |
-| `lut3` 512×3 | 1,616 | 91.9% | **91.6%** | ~4,250 |
+| `lut3` 512×3 | 1,616 | 91.9% | **91.6%** | ~3,800 |
 | `lut4` 512×512 | 1,104 | 91.8% | **91.6%** | ~8,900 |
-| `lut4` 512×3 | 1,616 | 92.5% | **92.3%** | ~13,000 |
+| `lut4` 512×3 | 1,616 | 92.5% | **92.25%** | ~8,150 |
+| `lut4` 768×3 | 2,384 | 92.0% | 92.1% | 12,009 |
 
-LUT4 reaches 92.25% — the best accuracy in the experiment — but at 1,616 cells
-it essentially ties LUT3 on cells while costing ~3× more compiled gates.
-LUT3 is the efficient point: 91.6% for ~4,250 two-input gates versus 92.3% for
-~13,000. On a gate budget, the extra 0.7 points cost 3× the hardware.
+Widening LUT4 to 768 does not help: 92.1% at 2,384 cells versus 92.25% at
+1,616. The measured compiled cost of the trained LUT4 tables is **5.04 gates
+per cell**, not the 8.04 uniform bound — trained functions are simpler than
+random ones. So LUT4 512×3 is ~8,150 two-input gates, still about 2× LUT3 for
++0.7 points.
+
+## 2-bit ALU cells
+
+Signals are 2-bit values in `{0,1,2,3}`, held as 4-way one-hot distributions.
+Each cell picks two signals and one op from a cheap ALU set:
+
+| Op | AND, OR, XOR, NAND, NOR, XNOR | add mod 4, sub mod 4 |
+| --- | --- | --- |
+| ~2-input gates | 2 | ~6 |
+
+Mean ~3 gates/cell, close to LUT3. Soft mode mixes the op result distributions
+under independent pins; hard mode argmaxes pins and op and emits a one-hot
+2-bit result. The readout is `1 - p(value = 0)`, so the forest/vote machinery
+is unchanged.
+
+Why it might win: arithmetic gives a structured prior (cheap per gate) at
+4 states per signal. Why it might not: 4-level signals harden worse, the same
+failure mode that sank tri-logic.
+
+10,000 train / 20 epochs, K=8, pin 0.75:
+
+| Model | Cells | Soft | Hard |
+| --- | --- | --- | --- |
+| `dense-alut` 256×128 | 464 | 78.3% | 74.9% |
+| `dense-lut3` 256×128 | 464 | 89.2% | 88.2% |
+
+Negative result: the 2-bit cell is 13 points behind LUT3 at the same cell
+count. Four-level signals harden badly (the tri-logic failure again), and the
+op set is far smaller than a LUT's function space. The cheap-ALU prior does
+not pay.
+
+## Multi-scale input pyramid
+
+`--pyramid` stacks every coarser scale of the same image as extra input
+channels: at 14×14 the scales are 14, 7, 4, 2, 1, upsampled back to 14×14 and
+concatenated, so the first layer sees 5 × 196 = 980 inputs instead of 196.
+
+This costs input parameters and wiring (the first layer's fan-in is 5×), but
+**not gates per cell** — a LUT3 cell still costs ~2.6 two-input gates. It gives
+the first layer direct access to coarse shape statistics alongside fine detail,
+which a purely local LUT3 cannot synthesise without depth.
+
+First full result, `dense-lut3` 512×3, pin 0.75:
+
+| Variant | Cells | Soft | Hard | Compiled 2-input gates |
+| --- | --- | --- | --- | --- |
+| no pyramid | 1,616 | 91.9% | **91.6%** | ~3,800 (est.) |
+| pyramid | 1,616 | 91.3% | 90.4% | **2,768 (1.71/cell)** |
+
+Accuracy is flat (within single-seed noise), but compiled gates drop 27%:
+with coarse scales available directly, the trained tables get simpler (379
+cells fold to 0 gates, 395 to 1 gate). So the pyramid is a gate-efficiency
+tool, not an accuracy tool.
 
 ## Gate simplification
 

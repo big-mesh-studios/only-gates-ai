@@ -318,6 +318,109 @@ class GateDense3(nn.Module):
         ).squeeze(-1)
 
 
+def _alu_tables():
+    rows = []
+    for a in range(4):
+        for b in range(4):
+            rows.append(
+                [
+                    a & b,
+                    a | b,
+                    a ^ b,
+                    (~(a & b)) & 3,
+                    (~(a | b)) & 3,
+                    (~(a ^ b)) & 3,
+                    (a + b) & 3,
+                    (a - b) & 3,
+                ]
+            )
+    table = torch.tensor(rows).reshape(4, 4, 8).permute(2, 0, 1).contiguous()
+    return table
+
+
+ALU_OPS = _alu_tables()
+ALU_ONEHOT = F.one_hot(ALU_OPS, 4).float()
+
+
+class GateDenseAlu(nn.Module):
+    """Two 2-bit inputs, one cheap ALU op, 2-bit output.
+
+    Signals are 4-way one-hot distributions. Soft mode mixes the op
+    distributions and propagates the exact result distribution of each op
+    under independent pins; hard mode argmaxes pins and op.
+    """
+
+    def __init__(self, in_signals, out_signals, generator):
+        super().__init__()
+        self.in_signals = in_signals
+        self.out_signals = out_signals
+        self.out_features = out_signals
+        self.wire_a = random_logits([out_signals, in_signals], generator)
+        self.wire_b = random_logits([out_signals, in_signals], generator)
+        self.op_logits = random_logits([out_signals, ALU_OPS.shape[0]], generator)
+        self.register_buffer("op_table", ALU_OPS)
+        self.register_buffer("op_onehot", ALU_ONEHOT)
+        self.temperature = 1.0
+        self.ste = False
+
+    def forward(self, x):
+        wire_a = F.softmax(self.wire_a / self.temperature, dim=1)
+        wire_b = F.softmax(self.wire_b / self.temperature, dim=1)
+        a = torch.einsum("oi,niv->nov", wire_a, x)
+        b = torch.einsum("oi,niv->nov", wire_b, x)
+        op = F.softmax(self.op_logits / self.temperature, dim=1)
+        mixed = torch.einsum("ok,kabw->oabw", op, self.op_onehot)
+        return torch.einsum("noa,nob,oabw->now", a, b, mixed)
+
+    def hard_forward(self, x):
+        wire_a = self.wire_a.argmax(dim=1)
+        wire_b = self.wire_b.argmax(dim=1)
+        a = x[:, wire_a].argmax(dim=-1)
+        b = x[:, wire_b].argmax(dim=-1)
+        op = self.op_logits.argmax(dim=1)
+        table = self.op_table[op]  # [out,4,4]
+        flat = table.reshape(self.out_signals, 16)
+        index = (a * 4 + b).unsqueeze(-1)
+        result = torch.gather(
+            flat.unsqueeze(0).expand(x.shape[0], -1, -1), 2, index
+        ).squeeze(-1)
+        return F.one_hot(result, 4).float()
+
+
+class GateDenseNetAlu(nn.Module):
+    def __init__(self, signals, hidden, output_size, generator):
+        super().__init__()
+        layers = []
+        previous = signals
+        for size in [*hidden, output_size]:
+            layers.append(GateDenseAlu(previous, size, generator))
+            previous = size
+        self.layers = nn.ModuleList(layers)
+        self.output_size = output_size
+        self.register_buffer("input_signals", torch.tensor(signals))
+
+    def _encode(self, x):
+        bits = x.flatten(1)
+        zeros = torch.zeros_like(bits)
+        return torch.stack([1.0 - bits, bits, zeros, zeros], dim=-1)
+
+    def _encode_hard(self, x):
+        bits = x.bool().flatten(1).long()
+        return F.one_hot(bits, 4).float()
+
+    def forward(self, x):
+        value = self._encode(x)
+        for layer in self.layers:
+            value = layer(value)
+        return 1.0 - value[..., 0]
+
+    def hard_forward(self, x):
+        value = self._encode_hard(x)
+        for layer in self.layers:
+            value = layer.hard_forward(value)
+        return (value.argmax(dim=-1) != 0).float()
+
+
 class GateDense4(nn.Module):
     """Dense cell with four input pins and an arbitrary 4-input Boolean gate.
 
@@ -593,7 +696,38 @@ class FloatCNN(nn.Module):
 # ---------------------------------------------------------------------------
 
 
-def load_mnist(size, threshold, train_count, test_count, seed, device, augment=False):
+def pyramid_channels(size):
+    channels = 1
+    current = size
+    while current > 1:
+        current = math.ceil(current / 2)
+        channels += 1
+    return channels
+
+
+def build_features(images, size, threshold, pyramid):
+    """Pool to `size`, optionally stacking every coarser scale as a channel."""
+    pooled = F.avg_pool2d(images, 28 // size)
+    if not pyramid:
+        return (pooled >= threshold).float()
+    scales = []
+    current = pooled
+    while True:
+        scales.append((current >= threshold).float())
+        if current.shape[-1] <= 1:
+            break
+        current = F.avg_pool2d(current, 2, ceil_mode=True)
+    upsampled = [
+        F.interpolate(scale, size=(size, size), mode="nearest")
+        for scale in scales
+    ]
+    return torch.cat(upsampled, dim=1)
+
+
+def load_mnist(
+    size, threshold, train_count, test_count, seed, device, augment=False,
+    pyramid=False,
+):
     if 28 % size != 0:
         raise ValueError("size must divide 28")
     train_dataset = datasets.MNIST(
@@ -606,14 +740,10 @@ def load_mnist(size, threshold, train_count, test_count, seed, device, augment=F
     def raw(dataset):
         return dataset.data.float().unsqueeze(1) / 255.0
 
-    def prepare(images):
-        pooled = F.avg_pool2d(images, 28 // size)
-        return (pooled >= threshold).float()
-
     raw_train = raw(train_dataset)
     raw_test = raw(test_dataset)
-    train_x = prepare(raw_train)
-    test_x = prepare(raw_test)
+    train_x = build_features(raw_train, size, threshold, pyramid)
+    test_x = build_features(raw_test, size, threshold, pyramid)
     train_y = train_dataset.targets.long()
     test_y = test_dataset.targets.long()
 
@@ -639,19 +769,19 @@ def load_mnist(size, threshold, train_count, test_count, seed, device, augment=F
 
 def set_ste(model, enabled):
     for module in model.modules():
-        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4)):
+        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
             module.ste = enabled
 
 
 def set_temperature(model, value):
     for module in model.modules():
-        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4)):
+        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
             module.temperature = value
 
 
 def set_mask_constants(model, enabled):
     for module in model.modules():
-        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4)):
+        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
             module.mask_constants = enabled
 
 
@@ -673,7 +803,7 @@ def freeze_wires(model, generator, first_only=False):
     """
     seen = 0
     for module in model.modules():
-        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4)):
+        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
             continue
         if first_only and seen > 0:
             break
@@ -728,7 +858,9 @@ def stacked_readout(
     for epoch in range(steps):
         temperature = 1.0 * (0.25 ** (epoch / max(1, steps - 1)))
         for module in head.modules():
-            if isinstance(module, (GateDense, GateDenseTri, GateDense3, GateDense4)):
+            if isinstance(
+            module, (GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)
+        ):
                 module.temperature = temperature
         loss = F.cross_entropy(head(train_bits), train_y)
         optimiser.zero_grad()
@@ -839,7 +971,7 @@ def pin_wires(model, generator, fraction):
     re-imposed after every optimiser step (see ``reimpose_pinned``).
     """
     for module in model.modules():
-        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4)):
+        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
             continue
         for index, (_, parameter) in enumerate(wire_parameters(module)):
             name = f"pin_{index}"
@@ -861,7 +993,7 @@ def pin_wires(model, generator, fraction):
 def reimpose_pinned(model):
     """Restore pinned wire rows after an optimiser step."""
     for module in model.modules():
-        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4)):
+        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
             continue
         for index, (_, parameter) in enumerate(wire_parameters(module)):
             pinned = getattr(module, f"pin_{index}", None)
@@ -1180,8 +1312,9 @@ def train(model, train_x, train_y, test_x, test_y, args, hard_capable, train_raw
                     args.augment_scale,
                     args.augment_translate,
                 )
-                pooled = F.avg_pool2d(raw_batch, 28 // args.size)
-                batch_x = (pooled >= args.threshold).float()
+                batch_x = build_features(
+                    raw_batch, args.size, args.threshold, args.pyramid
+                )
             else:
                 batch_x = train_x[indices]
             output = model(batch_x)
@@ -1320,6 +1453,60 @@ def _build_lut3_costs():
 LUT3_COSTS = _build_lut3_costs()
 
 
+def _lut4_cost(table):
+    """Upper bound on two-input gates for a 16-bit 4-input truth table."""
+    best = 99
+    weights = (8, 4, 2, 1)
+    for var in range(4):
+        weight = weights[var]
+        others = [w for w in weights if w != weight]
+        g = h = 0
+        for rest in range(8):
+            index_one = weight
+            index_zero = 0
+            for position, other in enumerate(others):
+                if (rest >> (2 - position)) & 1:
+                    index_one |= other
+                    index_zero |= other
+            g |= ((table >> index_one) & 1) << rest
+            h |= ((table >> index_zero) & 1) << rest
+        cost_g, cost_h = LUT3_COSTS[g], LUT3_COSTS[h]
+        if g == 0 and h == 0:
+            cost = 0
+        elif g == 0:
+            cost = cost_h + 2
+        elif h == 0:
+            cost = cost_g + 1
+        elif g == 255:
+            cost = cost_h + 2
+        elif h == 255:
+            cost = cost_g + 2
+        else:
+            cost = cost_g + cost_h + 4
+        best = min(best, cost)
+    return best
+
+
+def lut4_gate_cost(model):
+    if not isinstance(model, GateDenseNet4):
+        return None
+    cells = 0
+    total = 0
+    for layer in model.layers:
+        bits = (layer.table > 0).long()
+        for row in bits:
+            table = 0
+            for index in range(16):
+                table |= int(row[index].item()) << index
+            total += _lut4_cost(table)
+            cells += 1
+    return {
+        "cells": cells,
+        "compiledGates": total,
+        "meanPerCell": total / cells if cells else 0.0,
+    }
+
+
 def lut3_gate_cost(model):
     """Compiled two-input gate count of a trained LUT3 circuit."""
     if not isinstance(model, GateDenseNet3):
@@ -1347,7 +1534,8 @@ def lut3_gate_cost(model):
 
 def gate_cell_count(model, input_size):
     if isinstance(
-        model, (GateDenseNet, GateDenseNetTri, GateDenseNet3, GateDenseNet4)
+        model,
+        (GateDenseNet, GateDenseNetTri, GateDenseNet3, GateDenseNet4, GateDenseNetAlu),
     ):
         return sum(layer.out_features for layer in model.layers)
 
@@ -1382,29 +1570,39 @@ def build_model(
     device,
     circuits_per_label=1,
     dense_hidden=(128, 64),
+    input_features=None,
 ):
+    features = (
+        input_features if input_features is not None else input_size * input_size
+    )
     outputs = 10 * circuits_per_label
+    if name.startswith("conv") and features != input_size * input_size:
+        raise ValueError("--pyramid is only supported for dense models")
     if name == "dense":
         model = GateDenseNet(
-            input_size * input_size, list(dense_hidden), outputs, generator
+            features, list(dense_hidden), outputs, generator
         )
     elif name == "dense-wide":
-        model = GateDenseNet(input_size * input_size, [256, 128], outputs, generator)
+        model = GateDenseNet(features, [256, 128], outputs, generator)
+    elif name == "dense-alut":
+        model = GateDenseNetAlu(
+            features, list(dense_hidden), outputs, generator
+        )
     elif name == "dense-lut4":
         model = GateDenseNet4(
-            input_size * input_size, list(dense_hidden), outputs, generator
+            features, list(dense_hidden), outputs, generator
         )
     elif name == "dense-lut3":
         model = GateDenseNet3(
-            input_size * input_size, list(dense_hidden), outputs, generator
+            features, list(dense_hidden), outputs, generator
         )
     elif name == "dense-tri":
         model = GateDenseNetTri(
-            input_size * input_size, list(dense_hidden), outputs, generator
+            features, list(dense_hidden), outputs, generator
         )
     elif name == "dense-small":
         # ~30k params, matched to conv-grid-head for a fair per-parameter test.
-        model = GateDenseNet(input_size * input_size, [48, 48], outputs, generator)
+        model = GateDenseNet(features, [48, 48], outputs, generator)
     elif name == "conv-shallow":
         model = GateConvNet(
             input_size,
@@ -1510,6 +1708,11 @@ def main():
     parser.add_argument("--t-min", type=float, default=0.25)
     parser.add_argument("--mask-constants", action="store_true")
     parser.add_argument(
+        "--pyramid",
+        action="store_true",
+        help="Stack every coarser scale (halving to 1x1) as extra input channels.",
+    )
+    parser.add_argument(
         "--stacked-readout",
         choices=["", "linear", "gate"],
         default="",
@@ -1595,6 +1798,7 @@ def main():
         args.seed,
         device,
         augment=args.augment,
+        pyramid=args.pyramid,
     )
     if args.augment:
         train_x, train_y, test_x, test_y, train_raw = loaded
@@ -1606,6 +1810,11 @@ def main():
         f"{args.size}x{args.size} binary"
     )
 
+    input_features = (
+        args.size * args.size * pyramid_channels(args.size)
+        if args.pyramid
+        else args.size * args.size
+    )
     models = [item.strip() for item in args.models.split(",") if item.strip()]
     circuit_counts = [
         int(item) for item in str(args.circuits_per_label).split(",") if item.strip()
@@ -1651,6 +1860,7 @@ def main():
             device,
             args.circuits_per_label,
             dense_hidden,
+            input_features,
         )
         hard_capable = not isinstance(model, FloatCNN)
         if hard_capable:
@@ -1705,6 +1915,7 @@ def main():
             stats["denseSimplify"] = dense_simplification(model)
             stats["receptiveField"] = receptive_field(model)
             stats["lut3"] = lut3_gate_cost(model)
+            stats["lut4"] = lut4_gate_cost(model)
             if args.stacked_readout:
                 stacked = stacked_readout(
                     model,
@@ -1808,6 +2019,13 @@ def main():
                 message += (
                     f", conv filters reading <=1 tap:"
                     f" {stats['convSingleTap'] / stats['convCells'] * 100:.1f}%"
+                )
+            lut4 = stats.get("lut4")
+            if lut4:
+                message += (
+                    f"\n  compiled: {lut4['cells']} LUT4 -> "
+                    f"~{lut4['compiledGates']} two-input gates"
+                    f" ({lut4['meanPerCell']:.2f}/cell)"
                 )
             lut3 = stats.get("lut3")
             if lut3:

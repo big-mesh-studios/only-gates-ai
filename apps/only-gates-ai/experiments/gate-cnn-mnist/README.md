@@ -561,12 +561,14 @@ two-input gates per LUT4 cell (worst case 15); better synthesis might reach
 | LUT3 | 256 | 2.63 (exact) | 6 |
 | LUT4 | 65,536 | 8.04 (bound) | 15 |
 
-So LUT4 wins on *cells* but loses on *compiled gates*: at ~92% LUT4 needs
-~13,000 two-input gates, while LUT3 hits 91.6% for ~4,250. If the currency is
-gates, LUT3 is the sweet spot.
+So LUT4 wins on *cells* but loses on *compiled gates*. Measured on trained
+tables, a LUT4 cell averages **5.04** two-input gates (not the 8.04 uniform
+bound), so LUT4 512×3 is ~8,150 gates; LUT3 512×3 is ~3,800. If the currency
+is gates, LUT3 is the sweet spot.
 
-LUT4 does hold the accuracy record — 92.25% hard at 512×3, 1,616 cells — but
-the last 0.7 points over LUT3 cost about 3× the hardware.
+LUT4 does hold the accuracy record — **92.25% hard at 512×3, 1,616 cells** —
+but the last 0.7 points over LUT3 cost about 2× the hardware. Widening to
+768×3 gives 92.1% at 2,384 cells, so width is exhausted.
 
 Implemented as `dense-lut3`. Constant width 512, K=8, 75% pinned:
 
@@ -581,6 +583,15 @@ This clears the 90% target: **91.6% hard at 1,616 LUT3 cells**, versus the best
 2-input circuit's 87.0% at 3,152 cells. Depth 4 is the peak; depth 5 gives a
 little back. The LUT3 model also hardens well — soft 91.9 → hard 91.6, a 0.3
 point gap.
+
+## Multi-scale input pyramid
+
+`--pyramid` gives the first layer every coarser scale of the image, not just the
+finest one: 14, 7, 4, 2, 1 upsampled back to 14×14 and stacked as channels, so
+980 inputs instead of 196. This is cheap in gates (a LUT3 cell still costs ~2.6
+two-input gates) and expensive only in first-layer parameters and wiring. It
+lets a shallow LUT circuit see coarse blob statistics that local taps cannot
+synthesise without depth.
 
 ## The soft-to-hard gap
 
