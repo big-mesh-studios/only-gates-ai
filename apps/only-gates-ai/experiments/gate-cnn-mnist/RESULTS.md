@@ -483,6 +483,14 @@ with coarse scales available directly, the trained tables get simpler (379
 cells fold to 0 gates, 395 to 1 gate). So the pyramid is a gate-efficiency
 tool, not an accuracy tool.
 
+## Demo export
+
+The LUT4 512×3 model is exported with `--export-hard` to
+`apps/only-gates-ai/public/models/lut4-mnist/model.json` (33 KB: wire indices
+plus 16-bit truth tables). Re-running the exported circuit in plain Python
+scores **92.13% on the full 10,000-image test set**, matching training, so the
+export is exact. The web app's Digit classifier tab runs that file in JS.
+
 ## Gate simplification
 
 Taxonomy of a hardened cell by argmax gate: constant (`0`,`15`) reads nothing;

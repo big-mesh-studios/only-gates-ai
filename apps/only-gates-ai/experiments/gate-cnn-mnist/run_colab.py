@@ -1532,6 +1532,40 @@ def lut3_gate_cost(model):
     }
 
 
+def export_hard_model(model):
+    """Export a hardened LUT3/LUT4 circuit as wire indices + truth tables."""
+    if isinstance(model, GateDenseNet4):
+        width = 4
+    elif isinstance(model, GateDenseNet3):
+        width = 3
+    else:
+        return None
+    layers = []
+    for layer in model.layers:
+        params = [getattr(layer, name) for name in
+                  ("wire_a", "wire_b", "wire_c", "wire_d")[:width]]
+        wires = torch.stack(
+            [param.argmax(dim=1) for param in params], dim=1
+        ).flatten().tolist()
+        bits = (layer.table > 0).long()
+        tables = [
+            sum(
+                int(bits[row, index].item()) << index
+                for index in range(2 ** width)
+            )
+            for row in range(bits.shape[0])
+        ]
+        layers.append({"wires": wires, "tables": tables})
+    input_size = model.layers[0].in_features
+    return {
+        "kind": f"lut{width}",
+        "shape": [input_size] + [len(layer["tables"]) for layer in layers],
+        "inputSize": input_size,
+        "circuitsPerLabel": model.output_size // 10,
+        "layers": layers,
+    }
+
+
 def gate_cell_count(model, input_size):
     if isinstance(
         model,
@@ -1719,6 +1753,11 @@ def main():
         help="Retrain a combiner on the hardened forest bits.",
     )
     parser.add_argument("--stacked-hidden", default="32")
+    parser.add_argument(
+        "--export-hard",
+        action="store_true",
+        help="Print the hardened circuit as EXPORT_HARD <json>.",
+    )
     parser.add_argument(
         "--tri-threshold",
         type=float,
@@ -1980,6 +2019,10 @@ def main():
             "history": history,
         }
         results.append(result)
+        if args.export_hard:
+            exported = export_hard_model(model)
+            if exported:
+                print("EXPORT_HARD " + json.dumps(exported, separators=(",", ":")))
         message = f"  final soft {result['softAccuracy'] * 100:.2f}%"
         if before:
             message += (

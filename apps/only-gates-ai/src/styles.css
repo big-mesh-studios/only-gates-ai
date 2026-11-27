@@ -1956,6 +1956,36 @@ input:disabled {
   transition: width 0.3s ease;
 }
 
+.digit-scores {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.digit-score {
+  display: grid;
+  grid-template-columns: 18px 1fr 26px;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.digit-score.best {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.digit-score-label,
+.digit-score-value {
+  text-align: right;
+}
+
+.digit-score .score-track {
+  height: 8px;
+}
+
 .prediction-meta {
   display: flex;
   flex-wrap: wrap;

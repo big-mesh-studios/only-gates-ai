@@ -11,6 +11,7 @@ import type { ForestLabelSource } from "@only-gates-ai/compiler";
 
 import CompileDialog from "./components/CompileDialog";
 import DrawingPad from "./components/DrawingPad";
+import DigitsPanel from "./components/DigitsPanel";
 import IntegerGptPanel from "./components/IntegerGptPanel";
 import LanguageModelPanel from "./components/LanguageModelPanel";
 import LivePrediction from "./components/LivePrediction";
@@ -105,7 +106,7 @@ export default function App() {
   const [instance, setInstance] = createSignal<OnlyGatesAI | null>(null);
 
   const [activeTab, setActiveTab] = createSignal<
-    "symbols" | "language" | "integer" | "luau" | "luau-qa" | "masked"
+    "symbols" | "digits" | "language" | "integer" | "luau" | "luau-qa" | "masked"
   >("symbols");
   const [mode, setMode] = createSignal<"train" | "test">("train");
   const [inferenceMode, setInferenceMode] = createSignal<InferenceMode>("hard");
@@ -995,6 +996,15 @@ export default function App() {
         <button
           type="button"
           role="tab"
+          aria-selected={activeTab() === "digits" ? "true" : "false"}
+          class={{ active: activeTab() === "digits" }}
+          onClick={() => setActiveTab("digits")}
+        >
+          Digit classifier
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={activeTab() === "language" ? "true" : "false"}
           class={{ active: activeTab() === "language" }}
           onClick={() => setActiveTab("language")}
@@ -1204,6 +1214,10 @@ export default function App() {
         />
       </div>
 
+      <div class="tab-panel" hidden={activeTab() !== "digits"}>
+        <DigitsPanel />
+      </div>
+
       <div class="tab-panel" hidden={activeTab() !== "language"}>
         <LanguageModelPanel />
       </div>
@@ -1237,18 +1251,33 @@ export default function App() {
                     <Show
                       when={activeTab() === "symbols"}
                       fallback={
-                        <>
+                        <Show
+                          when={activeTab() === "digits"}
+                          fallback={
+                            <>
+                              <span>
+                                Word vectors: a Word2Bits subset (Apache-2.0).
+                                Autocomplete trains with floats and predicts with
+                                popcount and Q15 fixed-point softmax.
+                              </span>
+                              <span>
+                                Q&A mode retrieves the trained answer closest to
+                                your question. Nothing is uploaded; everything
+                                stays in this browser tab.
+                              </span>
+                            </>
+                          }
+                        >
                           <span>
-                            Word vectors: a Word2Bits subset (Apache-2.0).
-                            Autocomplete trains with floats and predicts with
-                            popcount and Q15 fixed-point softmax.
+                            Hardened 4-input LUT forest: 1,616 cells, 8 circuits
+                            per label, 92.25% on the MNIST test split.
                           </span>
                           <span>
-                            Q&A mode retrieves the trained answer closest to your
-                            question. Nothing is uploaded; everything stays in
+                            Drawings are rasterised to 14×14 binary and run
+                            through three 512-cell LUT layers. Nothing leaves
                             this browser tab.
                           </span>
-                        </>
+                        </Show>
                       }
                     >
                       <span>
