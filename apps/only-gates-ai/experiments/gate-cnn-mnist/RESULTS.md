@@ -547,11 +547,16 @@ tool, not an accuracy tool.
 
 ## Demo export
 
-The LUT4 512×3 model is exported with `--export-hard` to
-`apps/only-gates-ai/public/models/lut4-mnist/model.json` (33 KB: wire indices
-plus 16-bit truth tables). Re-running the exported circuit in plain Python
-scores **92.13% on the full 10,000-image test set**, matching training, so the
-export is exact. The web app's Digit classifier tab runs that file in JS.
+The bundled model is exported with `--export-hard` to
+`apps/only-gates-ai/public/models/lut4-mnist/model.json`. It is the 28×28
+LUT4 512×4 forest: 44 KB of wire indices and 16-bit truth tables, 2,128 cells.
+Re-running the exported circuit in plain Python (`ensemble.py`) scores
+**94.20% on the full 10,000-image test set**, matching training exactly, so
+the export is exact. The web app's Digit classifier tab runs that file in JS
+and rasterises drawings to 28×28.
+
+The previous 14×14 LUT4 512×3 export was 33 KB and scored 92.13% before DRO
+and 92.26% after; it is kept in the log for comparison.
 
 ## Per-class accuracy
 
@@ -573,7 +578,8 @@ With `--class-dro 0.2` the full-test numbers become:
 
 Overall 92.26%, worst 88.30%. The gain is concentrated on the weak digits
 (8 +1.0, 9 +1.1, 5 +0.9) while 6 gives back 1.7, which is the intended
-worst-class trade. This is the model bundled in the demo.
+worst-class trade. This was the demo model until the 28×28 export superseded
+it.
 
 `--class-dro <eta>` adds a group-DRO step on the per-class training loss, and
 the runner now reports `perClassAccuracy` for every model so a weak class

@@ -26,7 +26,7 @@ export interface DigitPrediction {
   readonly totalCircuits: number;
 }
 
-export const DIGIT_GRID = 14;
+export const DIGIT_GRID = 28;
 export const DIGIT_LABELS = 10;
 
 const FRAME = 28;
@@ -94,12 +94,11 @@ export function predictDigit(
 }
 
 /**
- * Turns strokes into the 14×14 binary grid the circuit was trained on,
- * following MNIST's preprocessing: scale the bounding box to 20×20, centre by
- * centre of mass in a 28×28 frame, then 2×2 average-pool and threshold.
- *
- * The previous version centred by bounding box and used a thinner brush, which
- * shifted digits like 7 and 9 relative to the training distribution.
+ * Turns strokes into the 28×28 binary grid the circuit was trained on,
+ * following MNIST's preprocessing: scale the bounding box to 20×20 and centre
+ * by centre of mass in a 28×28 frame. The circuit reads all 784 pixels, which
+ * keeps the loops and holes that 2×2 pooling used to close (digit 8 in
+ * particular).
  */
 export function digitInputFromStrokes(strokes: Strokes): boolean[] {
   const output: boolean[] = new Array<boolean>(DIGIT_GRID * DIGIT_GRID).fill(
@@ -177,8 +176,8 @@ export function digitInputFromStrokes(strokes: Strokes): boolean[] {
     }
   }
 
-  // 28×28 coverage (0..1) from the supersampled bitmap, thresholded like the
-  // training pipeline's average-pool-of-4 at 0.25, then 2×2 any-pooled.
+  // 28×28 coverage (0..1) from the supersampled bitmap, thresholded at 0.25
+  // like the training pipeline.
   const frame = new Uint8Array(FRAME * FRAME);
   const samples = SUPERSAMPLE * SUPERSAMPLE;
   for (let y = 0; y < FRAME; y++) {
@@ -194,17 +193,8 @@ export function digitInputFromStrokes(strokes: Strokes): boolean[] {
     }
   }
 
-  for (let y = 0; y < DIGIT_GRID; y++) {
-    for (let x = 0; x < DIGIT_GRID; x++) {
-      const sy = y * 2;
-      const sx = x * 2;
-      output[y * DIGIT_GRID + x] = Boolean(
-        frame[sy * FRAME + sx] ||
-          frame[sy * FRAME + sx + 1] ||
-          frame[(sy + 1) * FRAME + sx] ||
-          frame[(sy + 1) * FRAME + sx + 1],
-      );
-    }
+  for (let index = 0; index < FRAME * FRAME; index++) {
+    output[index] = frame[index] === 1;
   }
   return output;
 }
