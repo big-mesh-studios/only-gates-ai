@@ -29,6 +29,9 @@ All models use the same soft-gate semantics as `src/main.c`:
 | `conv-grid-head` | same, then 64 filters @ 1×1 (shared across the 4×4 grid) | global OR → 64 → 10×K gates |
 | `conv-deep-grid` | two stacked 3×3 gates per detector (12 then 24 filters), 2×2 OR pooling | 4×4×24 → 64 → 64 → 10×K gates |
 | `dense-small` | none (fully connected) | 48 → 48 → 10×K gates |
+| `dense-lut3` | none, 3-input LUT cell | width sweep → 10×K gates |
+| `dense-lut4` | none, 4-input LUT cell | width sweep → 10×K gates |
+| `dense-lut5` | none, 5-input LUT cell | width sweep → 10×K gates |
 
 `conv-deep` is the "multi-layer per feature detector" variant: each detector
 is a two-gate circuit before pooling. `conv-shallow` is the control with one
@@ -570,6 +573,12 @@ LUT4 does hold the accuracy record — **92.25% hard at 512×3, 1,616 cells** �
 but the last 0.7 points over LUT3 cost about 2× the hardware. Widening to
 768×3 gives 92.1% at 2,384 cells, so width is exhausted.
 
+A LUT5 cell is the next and last step: 32 pins-worth of truth table
+(`2^32` functions), reach `5^L`. It is implemented as `dense-lut5`, but the
+lowering cost is high — a one-variable Shannon split needs a LUT4 mux per
+level, so a cell is roughly 2–3× a LUT4 cell in two-input gates. It is only
+worth it if the accuracy jump clears that cost.
+
 Implemented as `dense-lut3`. Constant width 512, K=8, 75% pinned:
 
 | Shape | Depth | Cells | Soft | Hard |
@@ -721,6 +730,9 @@ Useful options for both runners: `--size`, `--threshold`, `--batch`, `--lr`,
   28×28 image before pooling and thresholding, regenerated every batch.
   `--augment-rotation` (degrees, default 10), `--augment-scale` (default 0.1)
   and `--augment-translate` (default 0.1) control the ranges.
+- `--one-vs-rest` — train ten independent yes/no forests (one per digit)
+  instead of one shared-trunk 10-class forest, then vote. `--ovr-pos-weight`
+  (default 3) weights the positive class.
 - `--class-dro <eta>` — group-DRO step on the per-class training loss. `0.2`
   rebalances toward weak digits and improved both mean and worst-class recall
   in testing; `1.0` destabilises training. Off by default.

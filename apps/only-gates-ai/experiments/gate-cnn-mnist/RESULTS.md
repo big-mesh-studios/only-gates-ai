@@ -538,6 +538,30 @@ pipeline: 20×20 box, centre of mass, ~2.3 px brush at 28×28, then 2×2
 average-pool and threshold. This changes the demo input only; the exported
 circuit is unchanged.
 
+## One-vs-rest forests
+
+The shipped symbol classifier trains one circuit per label, not one shared
+trunk. `--one-vs-rest` reproduces that: ten independent LUT4 forests of the
+same width and depth, each trained as `is this digit c?` with a positive-class
+weight of 3, then the label with the most raw votes wins.
+
+First run, LUT4 256×128, K=8, 20 epochs, 10k train / 2k test:
+
+| | Overall | Worst | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OVR, raw votes | 89.45% | 83.51% | 97.4 | 98.7 | 84.0 | 86.1 | 84.4 | 83.5 | 91.9 | 91.0 | 91.0 | 84.8 |
+| shared trunk 512×3 | 92.50% | 89.45% | 96.3 | 97.4 | 90.5 | 91.6 | 92.8 | 92.8 | 92.4 | 91.4 | 89.4 | 89.8 |
+
+The per-class pattern is the tell. 0/1/6/7/8 improve, and 8 reaches 91.0 —
+better than the shared model — while 2/3/4/5/9 lose 4–8 points. Each yes/no
+model is over-positive because of the class weight, and classes whose models
+fire on more negatives win the argmax. Raw vote totals are not comparable
+across models.
+
+`--ovr-calibrate` fixes this by choosing, per class, the vote level that makes
+the class fire on 10% of the training set (MNIST is balanced), and scoring
+`votes - offset`. The calibrated run is pending.
+
 ## Gate simplification
 
 Taxonomy of a hardened cell by argmax gate: constant (`0`,`15`) reads nothing;

@@ -143,7 +143,9 @@ def straight_through(probabilities):
 
 def random_logits(shape, generator):
     """Dirichlet(1) sample, stored as logits. Matches the C core's init."""
-    weights = -torch.log(torch.rand(shape, generator=generator).clamp_min(1e-12))
+    weights = -torch.log(
+        torch.rand(tuple(int(v) for v in shape), generator=generator).clamp_min(1e-12)
+    )
     weights = weights / weights.sum(dim=1, keepdim=True)
     return nn.Parameter(torch.log(weights))
 
@@ -497,6 +499,77 @@ class GateDenseNet4(nn.Module):
         return value
 
 
+class GateDense5(nn.Module):
+    """Dense cell with five input pins and an arbitrary 5-input Boolean gate."""
+
+    def __init__(self, in_features, out_features, generator):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        for name in ("wire_a", "wire_b", "wire_c", "wire_d", "wire_e"):
+            setattr(self, name, random_logits([out_features, in_features], generator))
+        self.table = nn.Parameter(
+            torch.randn(out_features, 32, generator=generator) * 0.5
+        )
+        self.temperature = 1.0
+        self.ste = False
+
+    def forward(self, x):
+        values = [
+            x @ F.softmax(getattr(self, name) / self.temperature, dim=1).t()
+            for name in ("wire_a", "wire_b", "wire_c", "wire_d", "wire_e")
+        ]
+        weights = [
+            torch.stack([1.0 - value, value], dim=-1) for value in values
+        ]
+        weight = (
+            weights[0].unsqueeze(3).unsqueeze(4).unsqueeze(5).unsqueeze(6)
+            * weights[1].unsqueeze(2).unsqueeze(4).unsqueeze(5).unsqueeze(6)
+            * weights[2].unsqueeze(2).unsqueeze(3).unsqueeze(5).unsqueeze(6)
+            * weights[3].unsqueeze(2).unsqueeze(3).unsqueeze(4).unsqueeze(6)
+            * weights[4].unsqueeze(2).unsqueeze(3).unsqueeze(4).unsqueeze(5)
+        ).reshape(x.shape[0], self.out_features, 32)
+        table = torch.sigmoid(self.table / self.temperature)
+        return (weight * table.unsqueeze(0)).sum(dim=-1)
+
+    def hard_forward(self, x):
+        bits = [
+            x[:, getattr(self, name).argmax(dim=1)].float()
+            for name in ("wire_a", "wire_b", "wire_c", "wire_d", "wire_e")
+        ]
+        index = (
+            bits[0] * 16 + bits[1] * 8 + bits[2] * 4 + bits[3] * 2 + bits[4]
+        ).long().unsqueeze(-1)
+        table = (self.table > 0).float()
+        return torch.gather(
+            table.unsqueeze(0).expand(x.shape[0], -1, -1), 2, index
+        ).squeeze(-1)
+
+
+class GateDenseNet5(nn.Module):
+    def __init__(self, input_size, hidden, output_size, generator):
+        super().__init__()
+        layers = []
+        previous = input_size
+        for size in [*hidden, output_size]:
+            layers.append(GateDense5(previous, size, generator))
+            previous = size
+        self.layers = nn.ModuleList(layers)
+        self.output_size = output_size
+
+    def forward(self, x):
+        value = x.flatten(1)
+        for layer in self.layers:
+            value = layer(value)
+        return value
+
+    def hard_forward(self, x):
+        value = x.bool().flatten(1).float()
+        for layer in self.layers:
+            value = layer.hard_forward(value)
+        return value
+
+
 class GateDenseNet3(nn.Module):
     def __init__(self, input_size, hidden, output_size, generator):
         super().__init__()
@@ -769,24 +842,24 @@ def load_mnist(
 
 def set_ste(model, enabled):
     for module in model.modules():
-        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
+        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             module.ste = enabled
 
 
 def set_temperature(model, value):
     for module in model.modules():
-        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
+        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             module.temperature = value
 
 
 def set_mask_constants(model, enabled):
     for module in model.modules():
-        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
+        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             module.mask_constants = enabled
 
 
 def wire_parameters(module):
-    for name in ("wire_a", "wire_b", "wire_c", "wire_d"):
+    for name in ("wire_a", "wire_b", "wire_c", "wire_d", "wire_e"):
         parameter = getattr(module, name, None)
         if parameter is not None:
             yield name, parameter
@@ -803,7 +876,7 @@ def freeze_wires(model, generator, first_only=False):
     """
     seen = 0
     for module in model.modules():
-        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
+        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             continue
         if first_only and seen > 0:
             break
@@ -1002,7 +1075,7 @@ def pin_wires(model, generator, fraction):
     re-imposed after every optimiser step (see ``reimpose_pinned``).
     """
     for module in model.modules():
-        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
+        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             continue
         for index, (_, parameter) in enumerate(wire_parameters(module)):
             name = f"pin_{index}"
@@ -1024,7 +1097,7 @@ def pin_wires(model, generator, fraction):
 def reimpose_pinned(model):
     """Restore pinned wire rows after an optimiser step."""
     for module in model.modules():
-        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDenseAlu)):
+        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             continue
         for index, (_, parameter) in enumerate(wire_parameters(module)):
             pinned = getattr(module, f"pin_{index}", None)
@@ -1588,7 +1661,9 @@ def lut3_gate_cost(model):
 
 def export_hard_model(model):
     """Export a hardened LUT3/LUT4 circuit as wire indices + truth tables."""
-    if isinstance(model, GateDenseNet4):
+    if isinstance(model, GateDenseNet5):
+        width = 5
+    elif isinstance(model, GateDenseNet4):
         width = 4
     elif isinstance(model, GateDenseNet3):
         width = 3
@@ -1597,7 +1672,7 @@ def export_hard_model(model):
     layers = []
     for layer in model.layers:
         params = [getattr(layer, name) for name in
-                  ("wire_a", "wire_b", "wire_c", "wire_d")[:width]]
+                  ("wire_a", "wire_b", "wire_c", "wire_d", "wire_e")[:width]]
         wires = torch.stack(
             [param.argmax(dim=1) for param in params], dim=1
         ).flatten().tolist()
@@ -1623,7 +1698,7 @@ def export_hard_model(model):
 def gate_cell_count(model, input_size):
     if isinstance(
         model,
-        (GateDenseNet, GateDenseNetTri, GateDenseNet3, GateDenseNet4, GateDenseNetAlu),
+        (GateDenseNet, GateDenseNetTri, GateDenseNet3, GateDenseNet4, GateDenseNet5, GateDenseNetAlu),
     ):
         return sum(layer.out_features for layer in model.layers)
 
@@ -1675,6 +1750,10 @@ def build_model(
     elif name == "dense-alut":
         model = GateDenseNetAlu(
             features, list(dense_hidden), outputs, generator
+        )
+    elif name == "dense-lut5":
+        model = GateDenseNet5(
+            input_size * input_size, list(dense_hidden), outputs, generator
         )
     elif name == "dense-lut4":
         model = GateDenseNet4(
@@ -1783,6 +1862,136 @@ def build_model(
     return model.to(device)
 
 
+def build_ovr_model(name, features, hidden, circuits, generator):
+    if name == "dense-lut4":
+        return GateDenseNet4(features, list(hidden), circuits, generator)
+    if name == "dense-lut3":
+        return GateDenseNet3(features, list(hidden), circuits, generator)
+    if name == "dense-tri":
+        return GateDenseNetTri(features, list(hidden), circuits, generator)
+    if name == "dense":
+        return GateDenseNet(features, list(hidden), circuits, generator)
+    raise ValueError(f"one-vs-rest does not support {name}")
+
+
+def summed_votes(model, x, batch=512):
+    """Summed hard forest votes per sample (0..K)."""
+    chunks = []
+    with torch.no_grad():
+        for start in range(0, len(x), batch):
+            bits = model.hard_forward(x[start : start + batch]).float()
+            chunks.append(bits.sum(dim=1))
+    return torch.cat(chunks, 0)
+
+
+def train_binary(model, train_x, train_y, args, target):
+    """Train one class's yes/no forest; returns the fitted model."""
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    total = len(train_x)
+    positive_weight = args.ovr_pos_weight
+    for epoch in range(args.epochs):
+        if args.epochs <= 1:
+            temperature = args.t_min
+        else:
+            ratio = epoch / (args.epochs - 1)
+            temperature = args.t_start * (args.t_min / args.t_start) ** ratio
+        set_temperature(model, temperature)
+        model.train()
+        permutation = torch.randperm(total, device=train_x.device)
+        for start in range(0, total, args.batch):
+            indices = permutation[start : start + args.batch]
+            output = model(train_x[indices])
+            targets = (
+                (train_y[indices] == target).float().unsqueeze(1).expand(
+                    -1, output.shape[1]
+                )
+            )
+            eps = 1e-6
+            probabilities = output * (1 - 2 * eps) + eps
+            loss = -(
+                positive_weight * targets * torch.log(probabilities)
+                + (1 - targets) * torch.log(1 - probabilities)
+            ).mean()
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            reimpose_pinned(model)
+        print(
+            f"    class {target} epoch {epoch + 1:2d}/{args.epochs} "
+            f"loss {loss.item():.4f}",
+            flush=True,
+        )
+    model.eval()
+    return model
+
+
+def run_one_vs_rest(
+    args, train_x, train_y, test_x, test_y, dense_hidden, input_features, device
+):
+    """Ten independent yes/no forests, each voting for one label."""
+    name = args.models.split(",")[0].strip()
+    circuits = args.circuits_per_label
+    scores = []
+    offsets = []
+    params = 0
+    prior = 0.1
+    for target in range(10):
+        generator = torch.Generator().manual_seed(args.seed + 101 * target)
+        model = build_ovr_model(
+            name, input_features, dense_hidden, circuits, generator
+        )
+        model.to(device)
+        pin_wires(model, generator, args.pin_fraction)
+        params = parameter_count(model)
+        print(f"  training class {target}: {params:,} params", flush=True)
+        model = train_binary(model, train_x, train_y, args, target)
+        train_votes = summed_votes(model, train_x)
+        if args.ovr_calibrate:
+            # Each yes/no model is trained with a positive-class weight, so
+            # its vote rate is not a probability. Pick the vote level that
+            # makes the class fire on `prior` of the training set; subtracting
+            # it puts every class's score on the same scale.
+            offset = torch.quantile(
+                train_votes.float(), 1.0 - prior
+            ).item()
+        else:
+            offset = 0.0
+        offsets.append(offset)
+        scores.append(summed_votes(model, test_x) - offset)
+        print(
+            f"    class {target} offset {offset:.2f} "
+            f"(train mean {train_votes.mean().item():.2f})",
+            flush=True,
+        )
+        del model
+    matrix = torch.stack(scores, dim=1)
+    prediction = matrix.argmax(dim=1)
+    accuracy = (prediction == test_y).float().mean().item()
+    recall = []
+    for label in range(10):
+        mask = test_y == label
+        recall.append(
+            ((prediction[mask] == label).float().mean().item())
+            if mask.any()
+            else 0.0
+        )
+    print(
+        f"one-vs-rest overall {accuracy * 100:.2f}% worst {min(recall) * 100:.2f}%\n"
+        + "  per-class: "
+        + " ".join(f"{i}:{r * 100:.1f}" for i, r in enumerate(recall)),
+        flush=True,
+    )
+    return {
+        "model": f"{name}-ovr",
+        "params": params * 10,
+        "gateCells": None,
+        "softAccuracy": None,
+        "hardAccuracy": accuracy,
+        "perClassAccuracy": recall,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--train", type=int, default=10000)
@@ -1795,6 +2004,9 @@ def main():
     parser.add_argument("--t-start", type=float, default=1.0)
     parser.add_argument("--t-min", type=float, default=0.25)
     parser.add_argument("--mask-constants", action="store_true")
+    parser.add_argument("--one-vs-rest", action="store_true")
+    parser.add_argument("--ovr-pos-weight", type=float, default=3.0)
+    parser.add_argument("--ovr-calibrate", action="store_true")
     parser.add_argument(
         "--pyramid",
         action="store_true",
@@ -1914,6 +2126,26 @@ def main():
         if args.pyramid
         else args.size * args.size
     )
+    if args.one_vs_rest:
+        # --circuits-per-label is a string so the normal path can sweep it.
+        ovr_counts = [
+            int(item) for item in str(args.circuits_per_label).split(",") if item.strip()
+        ]
+        args.circuits_per_label = ovr_counts[0]
+        ovr_hidden = tuple(
+            int(item) for item in str(args.dense_hidden).split(",") if item.strip()
+        )
+        run_one_vs_rest(
+            args,
+            train_x,
+            train_y,
+            test_x,
+            test_y,
+            ovr_hidden,
+            input_features,
+            device,
+        )
+        return
     models = [item.strip() for item in args.models.split(",") if item.strip()]
     circuit_counts = [
         int(item) for item in str(args.circuits_per_label).split(",") if item.strip()
