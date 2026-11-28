@@ -447,6 +447,29 @@ a hardening one: with 2.7M parameters and 10k examples, the larger gate space
 is harder to fit. It might become viable with 50k samples, but there is no
 reason to expect it to beat LUT4 on the same budget.
 
+## More data and augmentation
+
+With 10k examples the 2.7M-parameter LUT4 512×3 model is data-starved. Using
+the full 50k training set with on-the-fly rotation (±10°), scale (±10%) and
+translation (±8%) applied to the raw 28×28 image *before* pooling and
+thresholding, 15 epochs, LUT4 512×3, DRO 0.2:
+
+| Training set | Test | Soft | Hard | Worst |
+| --- | --- | --- | --- | --- |
+| 10k, no augment | 2k | 93.10% | 92.50% | 89.45% |
+| 10k, no augment | 10k | — | 92.26% | 88.30% |
+| **50k + augment** | **10k** | **93.74%** | **93.23%** | 88.19% |
+
+Per-class recall at 50k: 0:98.9 1:97.2 2:93.2 3:93.6 4:92.6 5:92.0 6:92.5
+7:91.9 **8:88.2** 9:91.6. Every class improves except 8, which is unchanged —
+the residual weakness is not a data-quantity problem.
+
+The training curve also shows the annealing schedule overshoots. Hard accuracy
+peaks at **93.99% when T = 0.41** (epoch 10) and falls to 93.23% as T reaches
+0.25. Soft accuracy peaks even earlier, at 95.3% (epoch 5). So the last five
+epochs are spent sharpening past the best hard point; `--t-min 0.4` is the
+better setting for this configuration.
+
 ## 2-bit ALU cells
 
 Signals are 2-bit values in `{0,1,2,3}`, held as 4-way one-hot distributions.
