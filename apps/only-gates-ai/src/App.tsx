@@ -1269,12 +1269,13 @@ export default function App() {
                           }
                         >
                           <span>
-                            Hardened 4-input LUT forest: 2,128 cells, 8 circuits
-                            per label, 94.2% on the MNIST test split.
+                            Vote of five hardened 4-input LUT forests: 5 × 2,128
+                            cells, 40 circuits per label, 97.0% on the MNIST
+                            test split.
                           </span>
                           <span>
                             Drawings are rasterised to 28×28 binary and run
-                            through four 512-cell LUT layers. Nothing leaves
+                            through five four-layer circuits. Nothing leaves
                             this browser tab.
                           </span>
                         </Show>

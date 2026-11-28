@@ -16,23 +16,28 @@ import {
 import { hasInk } from "../lib/rasterizer";
 import type { Point, Strokes } from "../lib/types";
 import DrawingPad from "./DrawingPad";
-// Imported through Vite so the file gets a content hash in its name. A cached
-// copy of an older build then keeps requesting its own model instead of
-// pairing old JS with a new circuit of the wrong input size.
+// Imported through Vite so each file gets a content hash in its name. A cached
+// copy of an older build then keeps requesting its own models instead of
+// pairing old JS with circuits of the wrong input size.
 import modelUrl from "../assets/lut4-mnist-784.json?url";
+import seedA from "../assets/lut4-mnist-1338.json?url";
+import seedB from "../assets/lut4-mnist-1339.json?url";
+import seedC from "../assets/lut4-mnist-1340.json?url";
+import seedD from "../assets/lut4-mnist-1341.json?url";
 
+const MODEL_URLS = [modelUrl, seedA, seedB, seedC, seedD];
 const DIGIT_COLOR = "#7cc4ff";
 
 export default function DigitsPanel() {
   const [strokes, setStrokes] = createSignal<Strokes>([]);
-  const [model, setModel] = createSignal<LutModel | null>(null);
+  const [models, setModels] = createSignal<LutModel[] | null>(null);
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
 
   onSettled(() => {
     void (async () => {
       try {
-        setModel(await loadLutModel(modelUrl));
+        setModels(await Promise.all(MODEL_URLS.map(loadLutModel)));
       } catch (error) {
         setLoadError(error instanceof Error ? error.message : String(error));
       } finally {
@@ -44,11 +49,27 @@ export default function DigitsPanel() {
   const input = createMemo(() => digitInputFromStrokes(strokes()));
   const hasDrawing = createMemo(() => hasInk(strokes()));
   const prediction = createMemo(() => {
-    const loaded = model();
+    const loaded = models();
     if (!loaded || !hasDrawing()) {
       return null;
     }
-    return predictDigit(loaded, input());
+    const bits = input();
+    const scores = new Array<number>(10).fill(0);
+    let totalCircuits = 0;
+    for (const model of loaded) {
+      const result = predictDigit(model, bits);
+      for (let label = 0; label < scores.length; label++) {
+        scores[label] = scores[label]! + result.scores[label]!;
+      }
+      totalCircuits += result.totalCircuits;
+    }
+    let best = 0;
+    for (let label = 1; label < scores.length; label++) {
+      if (scores[label]! > scores[best]!) {
+        best = label;
+      }
+    }
+    return { label: best, scores, totalCircuits };
   });
 
   function handleStrokeStart(point: Point): void {
@@ -113,7 +134,7 @@ export default function DigitsPanel() {
           <div class="section-heading">
             <span>Prediction</span>
             <span class="muted">
-              hard 4-input LUT forest · 92.25% MNIST
+              5-model LUT4 vote · 97.0% MNIST
             </span>
           </div>
 

@@ -848,9 +848,11 @@ artifact: eight circuits per label, one FP32-FMA's worth of logic, and a
 the convolutional one.
 
 The gate-budget framing strengthens rather than weakens that conclusion. The
-best accuracy found is **94.20% from 2,128 LUT4 cells** (512×4 at 28×28, 50k
+best single circuit is **94.20% from 2,128 LUT4 cells** (512×4 at 28×28, 50k
 training, augmentation, DRO 0.2, ~10,400 two-input gates); the gate-efficient
-point is **91.6% from 1,616 LUT3 cells**. Lowered to
+point is **91.6% from 1,616 LUT3 cells**. Voting five independently seeded
+forests reaches **97.04% with worst-class 95.34%** at five times the gates,
+which is how the demo clears the 97% target. Lowered to
 two-input logic, the LUT3 circuit is ~4,250 gates — less than one FP32
 multiply-add (5,000–10,000) — and ~1,700–3,300× below a 1,418-parameter float
 CNN. Raising the primitive from a 2-input cell to a 3-input LUT is what broke

@@ -111,17 +111,19 @@ def main():
     truth = [label for _, label in samples]
 
     summed = [[0] * 10 for _ in samples]
-    for path, (model, layers) in zip(args.models, compiled):
+    for index, (path, (model, layers)) in enumerate(zip(args.models, compiled), 1):
         predictions = []
-        for index, (bits, _) in enumerate(samples):
+        for sample, (bits, _) in enumerate(samples):
             totals = votes(model, layers, bits)
             for label in range(10):
-                summed[index][label] += totals[label]
+                summed[sample][label] += totals[label]
             predictions.append(max(range(10), key=lambda label: totals[label]))
         report(pathlib.Path(path).name, predictions, truth)
-
-    ensemble = [max(range(10), key=lambda label: row[label]) for row in summed]
-    report(f"ensemble of {len(compiled)}", ensemble, truth)
+        if index > 1:
+            ensemble = [
+                max(range(10), key=lambda label: row[label]) for row in summed
+            ]
+            report(f"ensemble of first {index}", ensemble, truth)
 
 
 if __name__ == "__main__":

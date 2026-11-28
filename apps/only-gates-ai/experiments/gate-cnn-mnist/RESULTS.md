@@ -782,9 +782,40 @@ OR leaves only 16 features for the head.
   ensembles (3–5 models) would give a dependable +1–2 but multiply inference
   cost by the ensemble size.
 
+## Seed ensemble
+
+Five forests trained with the same configuration and different seeds
+(1337–1341). Individually they score 93.23–94.20% hard. Summing their votes
+(400 circuits, 40 per label) gives:
+
+| Models | Overall | Worst class |
+| --- | --- | --- |
+| 1 (seed 1337) | 94.20% | 89.99% |
+| 2 | 96.13% | 93.46% |
+| 3 | 96.84% | 95.24% |
+| 4 | 96.98% | 94.85% |
+| **5** | **97.04%** | **95.34%** |
+
+Per-class at five models: 0:98.9 1:98.3 2:97.6 3:96.7 4:97.0 5:96.1 6:97.2
+7:96.7 8:96.3 9:95.3. The weakest digit is 95.3 — no class is below 95, versus
+a single model whose 8 sat at 88–92.
+
+The first extra model adds 1.9 points, then the curve saturates: three models
+already give 96.84%, five give 97.04%. That is the shape expected from
+decorrelated errors — seeds differ in wiring and vote differently on the
+confusable pairs (4/9, 3/5/8).
+
+Cost is linear: five times the cells (10,640), five times the compiled gates
+(~52,000), five times the inference and 220 KB of assets. Seeds were
+consecutive and none was chosen on the test set, so the number is not
+test-tuned.
+
 ## Final state
 
 Best single circuit: **94.20% hard, worst class 89.99%, 2,128 LUT4 cells,
 10,398 compiled two-input gates**, from 50k + augmentation, DRO 0.2, 28×28
-input, depth 5, T_min 0.4. That model is what the demo ships. Soft accuracy is
-95.2%, so the remaining gap to 97% is capacity/architecture, not hardening.
+input, depth 5, T_min 0.4. Soft accuracy is 95.2%, so the single-circuit gap
+to 97% is capacity, not hardening.
+
+The 97% target is met by voting five such circuits: **97.04% hard, worst class
+95.34%**, at five times the gates. That is the model bundled in the demo.
