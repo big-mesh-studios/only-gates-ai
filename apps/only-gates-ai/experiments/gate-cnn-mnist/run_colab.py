@@ -141,6 +141,12 @@ def straight_through(probabilities):
     return probabilities + (hard - probabilities).detach()
 
 
+def straight_through_bits(probabilities):
+    """Hard 0/1 forward pass with the soft gradient."""
+    hard = (probabilities > 0.5).to(probabilities.dtype)
+    return probabilities + (hard - probabilities).detach()
+
+
 def random_logits(shape, generator):
     """Dirichlet(1) sample, stored as logits. Matches the C core's init."""
     weights = -torch.log(
@@ -208,6 +214,85 @@ class GateConv(nn.Module):
             padding=self.kernel // 2,
         ) > 0.5
         return gate_mix_bool(a, b, gate_indices(self.gates, self.mask_constants))
+
+
+class GateConv4(nn.Module):
+    """Convolutional cell with four pins and a shared 4-input LUT.
+
+    The wires and the 16-bit table are shared across every spatial position of
+    a channel, so the cell learns a translation-equivariant detector instead
+    of a separate gate per pixel. Soft mode interpolates the expected table at
+    the continuous pin values.
+    """
+
+    def __init__(self, in_channels, filters, kernel, stride, generator):
+        super().__init__()
+        self.in_channels = in_channels
+        self.filters = filters
+        self.kernel = kernel
+        self.stride = stride
+        self.padding = kernel // 2
+        fan_in = kernel * kernel * in_channels
+        for name in ("wire_a", "wire_b", "wire_c", "wire_d"):
+            setattr(self, name, random_logits([filters, fan_in], generator))
+        # Symmetric init: log(weights) would harden every table to 0.
+        self.table = nn.Parameter(
+            torch.randn(filters, 16, generator=generator) * 0.5
+        )
+        self.temperature = 1.0
+        self.ste = False
+
+    def _output_shape(self, x):
+        height = (x.shape[2] + 2 * self.padding - self.kernel) // self.stride + 1
+        width = (x.shape[3] + 2 * self.padding - self.kernel) // self.stride + 1
+        return height, width
+
+    def forward(self, x):
+        patches = F.unfold(
+            x, self.kernel, padding=self.padding, stride=self.stride
+        )
+        wires = [
+            F.softmax(getattr(self, name) / self.temperature, dim=1)
+            for name in ("wire_a", "wire_b", "wire_c", "wire_d")
+        ]
+        if self.ste:
+            wires = [straight_through(wire) for wire in wires]
+        values = [
+            torch.einsum("bfl,cf->blc", patches, wire) for wire in wires
+        ]
+        weights = [torch.stack([1.0 - value, value], dim=-1) for value in values]
+        weight = (
+            weights[0].unsqueeze(4).unsqueeze(5).unsqueeze(6)
+            * weights[1].unsqueeze(3).unsqueeze(5).unsqueeze(6)
+            * weights[2].unsqueeze(3).unsqueeze(4).unsqueeze(6)
+            * weights[3].unsqueeze(3).unsqueeze(4).unsqueeze(5)
+        )
+        table = torch.sigmoid(self.table / self.temperature)
+        if self.ste:
+            table = straight_through_bits(table)
+        table = table.view(self.filters, 2, 2, 2, 2)
+        result = (weight * table.unsqueeze(0).unsqueeze(0)).sum(
+            dim=(3, 4, 5, 6)
+        )
+        height, width = self._output_shape(x)
+        return result.permute(0, 2, 1).reshape(
+            x.shape[0], self.filters, height, width
+        )
+
+    def hard_forward(self, x):
+        patches = F.unfold(
+            x.float(), self.kernel, padding=self.padding, stride=self.stride
+        )
+        a = patches[:, self.wire_a.argmax(dim=1), :]
+        b = patches[:, self.wire_b.argmax(dim=1), :]
+        c = patches[:, self.wire_c.argmax(dim=1), :]
+        d = patches[:, self.wire_d.argmax(dim=1), :]
+        index = (a * 8 + b * 4 + c * 2 + d).long()
+        table = (self.table > 0).float()
+        table = table.unsqueeze(0).expand(x.shape[0], -1, -1)
+        result = torch.gather(table, 2, index)
+        height, width = self._output_shape(x)
+        return result.reshape(x.shape[0], self.filters, height, width)
 
 
 TRIT_VALUES = (0.0, 0.5, 1.0)
@@ -723,6 +808,150 @@ class GateConvNet(nn.Module):
             value = layer.hard_forward(value)
         return value
 
+class GatePool4(nn.Module):
+    """Depthwise 2x2 LUT4 downscale: one learned gate per channel per window."""
+
+    def __init__(self, channels, generator, kernel=2, stride=2):
+        super().__init__()
+        self.channels = channels
+        self.kernel = kernel
+        self.stride = stride
+        fan_in = kernel * kernel
+        for name in ("wire_a", "wire_b", "wire_c", "wire_d"):
+            setattr(self, name, random_logits([channels, fan_in], generator))
+        self.table = nn.Parameter(
+            torch.randn(channels, 16, generator=generator) * 0.5
+        )
+        self.temperature = 1.0
+        self.ste = False
+
+    def _patches(self, x):
+        batch, channels, height, width = x.shape
+        fan_in = self.kernel * self.kernel
+        patches = F.unfold(x, self.kernel, stride=self.stride)
+        patches = patches.view(batch, channels, fan_in, -1)
+        out_h = (height - self.kernel) // self.stride + 1
+        out_w = (width - self.kernel) // self.stride + 1
+        return patches, out_h, out_w
+
+    def forward(self, x):
+        patches, out_h, out_w = self._patches(x)
+        wires = [
+            F.softmax(getattr(self, name) / self.temperature, dim=1)
+            for name in ("wire_a", "wire_b", "wire_c", "wire_d")
+        ]
+        if self.ste:
+            wires = [straight_through(wire) for wire in wires]
+        values = [
+            torch.einsum("bcfl,cf->bcl", patches, wire) for wire in wires
+        ]
+        weights = [torch.stack([1.0 - value, value], dim=-1) for value in values]
+        weight = (
+            weights[0].unsqueeze(4).unsqueeze(5).unsqueeze(6)
+            * weights[1].unsqueeze(3).unsqueeze(5).unsqueeze(6)
+            * weights[2].unsqueeze(3).unsqueeze(4).unsqueeze(6)
+            * weights[3].unsqueeze(3).unsqueeze(4).unsqueeze(5)
+        )
+        table = torch.sigmoid(self.table / self.temperature)
+        if self.ste:
+            table = straight_through_bits(table)
+        table = table.view(self.channels, 2, 2, 2, 2)
+        # weight is [batch, channels, positions, 2, 2, 2, 2]; align the
+        # table's channel axis with dim 1 and broadcast over positions.
+        shaped = table.view(1, self.channels, 1, 2, 2, 2, 2)
+        result = (weight * shaped).sum(dim=(3, 4, 5, 6))
+        return result.reshape(x.shape[0], self.channels, out_h, out_w)
+
+    def hard_forward(self, x):
+        patches, out_h, out_w = self._patches(x.float())
+        batch, channels = x.shape[0], self.channels
+        pins = []
+        for name in ("wire_a", "wire_b", "wire_c", "wire_d"):
+            index = getattr(self, name).argmax(dim=1).view(1, channels, 1, 1)
+            expanded = index.expand(batch, channels, 1, patches.shape[-1])
+            pins.append(torch.gather(patches, 2, expanded).squeeze(2))
+        index = (pins[0] * 8 + pins[1] * 4 + pins[2] * 2 + pins[3]).long()
+        table = (self.table > 0).float()
+        table = table.unsqueeze(0).expand(batch, -1, -1)
+        result = torch.gather(table, 2, index)
+        return result.reshape(batch, channels, out_h, out_w)
+
+
+class GateConvNet4(nn.Module):
+    """Stack of shared LUT4 convolutions with a dense LUT4 head."""
+
+    def __init__(self, input_size, blocks_spec, head_sizes, output_size, generator):
+        super().__init__()
+        self.input_size = input_size
+        blocks = []
+        in_channels = 1
+        height = width = input_size
+        for spec in blocks_spec:
+            layers = []
+            for layer_spec in spec["layers"]:
+                layers.append(
+                    GateConv4(
+                        in_channels,
+                        layer_spec["filters"],
+                        layer_spec.get("kernel", 3),
+                        layer_spec.get("stride", 1),
+                        generator,
+                    )
+                )
+                in_channels = layer_spec["filters"]
+                height = math.ceil(height / layer_spec.get("stride", 1))
+                width = math.ceil(width / layer_spec.get("stride", 1))
+            pool = spec["pool"]
+            if pool == "lut4":
+                layers.append(GatePool4(in_channels, generator))
+            blocks.append(GateBlock(layers, pool))
+            if pool == "lut4":
+                height = (height - 2) // 2 + 1
+                width = (width - 2) // 2 + 1
+            elif pool == "max2":
+                height = math.ceil(height / 2)
+                width = math.ceil(width / 2)
+            elif pool == "global":
+                height = width = 1
+        self.blocks = nn.ModuleList(blocks)
+
+        head_input = height * width * in_channels
+        head = []
+        for size in [*head_sizes, output_size]:
+            head.append(GateDense4(head_input, size, generator))
+            head_input = size
+        self.head = nn.ModuleList(head)
+        self.output_size = output_size
+
+    def forward(self, x):
+        value = x
+        for block in self.blocks:
+            for layer in block.layers:
+                value = layer(value)
+            if block.pool == "max2":
+                value = F.max_pool2d(value, 2, 2, ceil_mode=True)
+            elif block.pool == "global":
+                value = value.amax(dim=(2, 3))
+        value = value.flatten(1)
+        for layer in self.head:
+            value = layer(value)
+        return value
+
+    def hard_forward(self, x):
+        value = x.bool()
+        for block in self.blocks:
+            for layer in block.layers:
+                value = layer.hard_forward(value)
+            if block.pool == "max2":
+                value = F.max_pool2d(value.float(), 2, 2, ceil_mode=True) > 0.5
+            elif block.pool == "global":
+                value = value.float().amax(dim=(2, 3)) > 0.5
+        value = value.flatten(1)
+        for layer in self.head:
+            value = layer.hard_forward(value)
+        return value
+
+
 class GateDenseNet(nn.Module):
     def __init__(self, input_size, hidden, output_size, generator):
         super().__init__()
@@ -842,19 +1071,19 @@ def load_mnist(
 
 def set_ste(model, enabled):
     for module in model.modules():
-        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
+        if isinstance(module, (GateConv, GateConv4, GatePool4, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             module.ste = enabled
 
 
 def set_temperature(model, value):
     for module in model.modules():
-        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
+        if isinstance(module, (GateConv, GateConv4, GatePool4, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             module.temperature = value
 
 
 def set_mask_constants(model, enabled):
     for module in model.modules():
-        if isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
+        if isinstance(module, (GateConv, GateConv4, GatePool4, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             module.mask_constants = enabled
 
 
@@ -876,7 +1105,7 @@ def freeze_wires(model, generator, first_only=False):
     """
     seen = 0
     for module in model.modules():
-        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
+        if not isinstance(module, (GateConv, GateConv4, GatePool4, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             continue
         if first_only and seen > 0:
             break
@@ -1075,7 +1304,7 @@ def pin_wires(model, generator, fraction):
     re-imposed after every optimiser step (see ``reimpose_pinned``).
     """
     for module in model.modules():
-        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
+        if not isinstance(module, (GateConv, GateConv4, GatePool4, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             continue
         for index, (_, parameter) in enumerate(wire_parameters(module)):
             name = f"pin_{index}"
@@ -1097,7 +1326,7 @@ def pin_wires(model, generator, fraction):
 def reimpose_pinned(model):
     """Restore pinned wire rows after an optimiser step."""
     for module in model.modules():
-        if not isinstance(module, (GateConv, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
+        if not isinstance(module, (GateConv, GateConv4, GatePool4, GateDense, GateDenseTri, GateDense3, GateDense4, GateDense5, GateDenseAlu)):
             continue
         for index, (_, parameter) in enumerate(wire_parameters(module)):
             pinned = getattr(module, f"pin_{index}", None)
@@ -1615,18 +1844,43 @@ def _lut4_cost(table):
 
 
 def lut4_gate_cost(model):
-    if not isinstance(model, GateDenseNet4):
+    """Compiled two-input gate count, counting deployed conv instances."""
+    if isinstance(model, GateDenseNet4):
+        entries = [(layer.table, 1) for layer in model.layers]
+    elif isinstance(model, GateConvNet4):
+        entries = []
+        height = width = model.input_size
+        for block in model.blocks:
+            for layer in block.layers:
+                if isinstance(layer, GatePool4):
+                    height = (height - layer.kernel) // layer.stride + 1
+                    width = (width - layer.kernel) // layer.stride + 1
+                else:
+                    height = (
+                        height + 2 * layer.padding - layer.kernel
+                    ) // layer.stride + 1
+                    width = (
+                        width + 2 * layer.padding - layer.kernel
+                    ) // layer.stride + 1
+                entries.append((layer.table, height * width))
+            if block.pool == "max2":
+                height = math.ceil(height / 2)
+                width = math.ceil(width / 2)
+            elif block.pool == "global":
+                height = width = 1
+        entries.extend((layer.table, 1) for layer in model.head)
+    else:
         return None
     cells = 0
     total = 0
-    for layer in model.layers:
-        bits = (layer.table > 0).long()
+    for table, positions in entries:
+        bits = (table > 0).long()
         for row in bits:
-            table = 0
+            value = 0
             for index in range(16):
-                table |= int(row[index].item()) << index
-            total += _lut4_cost(table)
-            cells += 1
+                value |= int(row[index].item()) << index
+            total += _lut4_cost(value) * positions
+            cells += positions
     return {
         "cells": cells,
         "compiledGates": total,
@@ -1707,9 +1961,13 @@ def gate_cell_count(model, input_size):
     channels = 1
     for block in model.blocks:
         for layer in block.layers:
-            height = math.ceil(height / layer.stride)
-            width = math.ceil(width / layer.stride)
-            channels = layer.filters
+            if isinstance(layer, GatePool4):
+                height = (height - layer.kernel) // layer.stride + 1
+                width = (width - layer.kernel) // layer.stride + 1
+            else:
+                height = math.ceil(height / layer.stride)
+                width = math.ceil(width / layer.stride)
+                channels = layer.filters
             count += height * width * channels
         if block.pool == "max2":
             height = math.ceil(height / 2)
@@ -1754,6 +2012,31 @@ def build_model(
     elif name == "dense-lut5":
         model = GateDenseNet5(
             input_size * input_size, list(dense_hidden), outputs, generator
+        )
+    elif name in ("conv-lut4", "conv-lut4-wide"):
+        widths = (8, 16, 32) if name == "conv-lut4" else (16, 32, 64)
+        # Sliding 3x3 LUT4 detectors, each followed by a learned 2x2 LUT4
+        # downscaler instead of max/OR pooling.
+        model = GateConvNet4(
+            input_size,
+            [
+                {"layers": [], "pool": "lut4"},
+                {
+                    "layers": [{"filters": widths[0], "kernel": 3, "stride": 1}],
+                    "pool": "lut4",
+                },
+                {
+                    "layers": [{"filters": widths[1], "kernel": 3, "stride": 1}],
+                    "pool": "lut4",
+                },
+                {
+                    "layers": [{"filters": widths[2], "kernel": 3, "stride": 1}],
+                    "pool": "none",
+                },
+            ],
+            list(dense_hidden),
+            outputs,
+            generator,
         )
     elif name == "dense-lut4":
         model = GateDenseNet4(

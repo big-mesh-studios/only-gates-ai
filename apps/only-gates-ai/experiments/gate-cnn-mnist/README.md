@@ -32,6 +32,8 @@ All models use the same soft-gate semantics as `src/main.c`:
 | `dense-lut3` | none, 3-input LUT cell | width sweep → 10×K gates |
 | `dense-lut4` | none, 4-input LUT cell | width sweep → 10×K gates |
 | `dense-lut5` | none, 5-input LUT cell | width sweep → 10×K gates |
+| `conv-lut4` | stacked 3×3 LUT4, learned LUT4 2×2 downscale | dense LUT4 → 10×K gates |
+| `conv-lut4-wide` | same with 16/32/64 channels | dense LUT4 → 10×K gates |
 
 `conv-deep` is the "multi-layer per feature detector" variant: each detector
 is a two-gate circuit before pooling. `conv-shallow` is the control with one

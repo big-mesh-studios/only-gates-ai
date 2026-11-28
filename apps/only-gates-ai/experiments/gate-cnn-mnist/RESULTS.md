@@ -492,6 +492,54 @@ Note the soft/hard gap is only 1.0 point, and soft accuracy is 95.2% — the
 remaining gap to 97% is model/optimisation capacity, not hardening. The trained
 circuit compiles to 10,398 two-input gates (4.89 per cell).
 
+## Convolutional LUT4
+
+The last structural idea: use the same LUT4 primitive for both stages, with
+3×3 sliding-window detectors and *learned* 2×2 downscaling (a 4-input LUT per
+channel instead of max/OR pooling). At 28×28:
+
+| Stage | Cell | Output |
+| --- | --- | --- |
+| downscale | LUT4 over each 2×2 window, per channel | 14×14 |
+| detect | 3×3 LUT4, 8/16 channels | 14×14 |
+| downscale | LUT4 2×2 per channel | 7×7 |
+| detect | 3×3 LUT4, 16/32 channels | 7×7 |
+| downscale | LUT4 2×2 per channel | 3×3 |
+| detect | 3×3 LUT4, 32/64 channels | 3×3 |
+| head | dense LUT4 → 80 | 10×8 votes |
+
+Results, 10k train / 2k test unless noted:
+
+| Variant | Soft | Hard | Cells | Compiled gates |
+| --- | --- | --- | --- | --- |
+| narrow 8/16/32 | 85.4% | 78.0% | 3,708 | 20,924 |
+| wide 16/32/64 | 87.8% | 66.8% | 6,884 | 30,876 |
+| narrow, 50k (stopped at epoch 3) | 88.0% | 61.5% | 3,708 | — |
+| narrow + 4 STE epochs | — | 57.7% | 3,708 | — |
+| narrow, `--pin-fraction 0` | stuck at chance | — | — | — |
+| dense LUT4 512×4 (best) | 95.2% | **94.2%** | 2,128 | **10,398** |
+
+Three separate failures:
+
+- **soft→hard gap.** The narrow net has a 7-point gap before STE and a
+  26-point gap at 50k; widening capacity raises soft accuracy and *increases*
+  the gap. The soft model is encoding position-dependent information in the
+  continuous pin mixtures, which vanishes when pins are discretised. The dense
+  net has a 1-point gap because every cell has its own wires.
+- **STE destabilises it.** Straight-through hardening oscillated
+  (77 → 63 → 77 → 58% hard) and made the final model worse (78 → 57.7%).
+  It was also a no-op before this experiment: only the 2-input cells
+  implemented it, so earlier `--ste-epochs` runs on LUT models did nothing.
+- **Free wires do not train.** With `--pin-fraction 0` the loss stayed at
+  ln(10) for three epochs and the net predicted a near-constant class.
+  Pinning is load-bearing: the soft mixture needs near-discrete wires at
+  initialisation to carry any signal through four LUT layers.
+
+Negative result: weight sharing saves configuration parameters (0.4–0.8M
+instead of 4.95M) but not gate instances — every spatial position still needs
+its own gate, so the conv nets cost 2–3× the gates for 7–16 fewer points.
+The dense free-wiring forest remains the better circuit.
+
 ## 2-bit ALU cells
 
 Signals are 2-bit values in `{0,1,2,3}`, held as 4-way one-hot distributions.
