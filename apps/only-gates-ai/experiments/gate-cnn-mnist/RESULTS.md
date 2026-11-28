@@ -430,6 +430,23 @@ per cell**, not the 8.04 uniform bound — trained functions are simpler than
 random ones. So LUT4 512×3 is ~8,150 two-input gates, still about 2× LUT3 for
 +0.7 points.
 
+## Five-input LUTs
+
+A LUT5 cell has five pins and a 32-bit truth table, so `2^32` functions and
+reach `5^L`. It is the last primitive step above LUT4, and it does not pay at
+10k samples:
+
+| Model | Cells | Params | Soft | Hard | Worst class |
+| --- | --- | --- | --- | --- | --- |
+| `lut4` 512×3, DRO 0.2 | 1,616 | 2,689,256 | 93.10% | **92.50%** | **89.45%** |
+| `lut5` 512×3, DRO 0.2 | 1,616 | 3,379,712 | 92.05% | 91.65% | 87.82% |
+
+LUT5 adds 26% parameters and loses 0.85 points. The soft accuracy is also
+*worse* (92.05 vs 93.10), so this is an optimisation/overfitting failure, not
+a hardening one: with 2.7M parameters and 10k examples, the larger gate space
+is harder to fit. It might become viable with 50k samples, but there is no
+reason to expect it to beat LUT4 on the same budget.
+
 ## 2-bit ALU cells
 
 Signals are 2-bit values in `{0,1,2,3}`, held as 4-way one-hot distributions.
