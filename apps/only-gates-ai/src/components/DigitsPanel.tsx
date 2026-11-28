@@ -16,8 +16,11 @@ import {
 import { hasInk } from "../lib/rasterizer";
 import type { Point, Strokes } from "../lib/types";
 import DrawingPad from "./DrawingPad";
+// Imported through Vite so the file gets a content hash in its name. A cached
+// copy of an older build then keeps requesting its own model instead of
+// pairing old JS with a new circuit of the wrong input size.
+import modelUrl from "../assets/lut4-mnist-784.json?url";
 
-const MODEL_URL = `${import.meta.env.BASE_URL}models/lut4-mnist/model.json`;
 const DIGIT_COLOR = "#7cc4ff";
 
 export default function DigitsPanel() {
@@ -29,7 +32,7 @@ export default function DigitsPanel() {
   onSettled(() => {
     void (async () => {
       try {
-        setModel(await loadLutModel(MODEL_URL));
+        setModel(await loadLutModel(modelUrl));
       } catch (error) {
         setLoadError(error instanceof Error ? error.message : String(error));
       } finally {
