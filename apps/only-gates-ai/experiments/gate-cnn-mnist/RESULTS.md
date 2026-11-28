@@ -574,8 +574,18 @@ Separation, not firing rate, is what differs between classes.
 `--ovr-calibrate` therefore scores by the per-class log-likelihood ratio
 `log P(votes | this digit) / P(votes | other digits)`, with Laplace smoothing,
 fitted on the training votes. A vote of 8 then counts for more in a class whose
-positives reliably reach 8 than in one whose positives do not. Full-data
-numbers pending.
+positives reliably reach 8 than in one whose positives do not:
+
+| | Overall | Worst | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OVR, raw votes | 89.45% | 83.51% | 97.4 | 98.7 | 84.0 | 86.1 | 84.4 | 83.5 | 91.9 | 91.0 | 91.0 | 84.8 |
+| OVR, log-odds | 89.55% | 84.44% | 95.8 | 98.3 | 85.0 | 87.1 | 84.4 | 85.6 | 92.4 | 90.5 | 89.4 | 85.3 |
+
+Calibration buys about a point on the worst class and nothing overall. Even
+with the right decision rule, ten independent LUT4 256×128 forests are ~3
+points behind one shared LUT4 512×3 trunk at *more* parameters (3.4M vs
+2.7M). Trunk sharing is not the bottleneck; the shared model is the better
+use of gates. OVR is a negative result.
 
 ## Gate simplification
 
