@@ -842,13 +842,17 @@ artifact: eight circuits per label, one FP32-FMA's worth of logic, and a
 the convolutional one.
 
 The gate-budget framing strengthens rather than weakens that conclusion. The
-best accuracy found is **92.25% from 1,616 LUT4 cells** (512×3, 75% pinned);
-the gate-efficient point is **91.6% from 1,616 LUT3 cells**. Lowered to
+best accuracy found is **94.20% from 2,128 LUT4 cells** (512×4 at 28×28, 50k
+training, augmentation, DRO 0.2, ~10,400 two-input gates); the gate-efficient
+point is **91.6% from 1,616 LUT3 cells**. Lowered to
 two-input logic, the LUT3 circuit is ~4,250 gates — less than one FP32
 multiply-add (5,000–10,000) — and ~1,700–3,300× below a 1,418-parameter float
 CNN. Raising the primitive from a 2-input cell to a 3-input LUT is what broke
-the ~87% ceiling: more data, depth, width, resolution, augmentation and the
-readout all failed to do it. And the budget is certainly not what limits the
+the ~87% ceiling. The remaining levers were tested, not assumed: full 50k
+training plus augmentation (+0.97), full-resolution 28×28 input (+0.97), a
+gentle class-DRO (+0.5 mean, +2.9 worst class), one-vs-rest forests (−3), and
+5-input LUT cells (−0.85). The final ceiling is a soft accuracy of 95.2%, so
+97% would need a different architecture, not another tuning pass. And the budget is certainly not what limits the
 conv variants: they spend 4,872 cells to reach 58%, i.e. 6× the gates for a
 much worse error rate. Weight sharing saves *parameters you must configure*,
 not *gates you must build*, so it is the wrong tool when gates are the

@@ -701,8 +701,19 @@ The forest lifts `conv-grid` by ~20 points of hard accuracy, so the readout is
 not what limits the conv nets. `conv-shallow` barely moves, because its global
 OR leaves only 16 features for the head.
 
-## Pending
+## Pending / not pursued
 
 - `conv-grid-head` full 20-epoch run never completed (Colab preemption); its
   visible trajectory was soft ~58–62% / hard ~29–36%, so it is not competitive
   with the dense forest regardless.
+- A convolutional LUT4 at 28×28 is the only structural change with a plausible
+  path past 96%, but it is a new architecture and was not attempted. Seed
+  ensembles (3–5 models) would give a dependable +1–2 but multiply inference
+  cost by the ensemble size.
+
+## Final state
+
+Best single circuit: **94.20% hard, worst class 89.99%, 2,128 LUT4 cells,
+10,398 compiled two-input gates**, from 50k + augmentation, DRO 0.2, 28×28
+input, depth 5, T_min 0.4. That model is what the demo ships. Soft accuracy is
+95.2%, so the remaining gap to 97% is capacity/architecture, not hardening.
