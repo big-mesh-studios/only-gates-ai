@@ -470,6 +470,28 @@ peaks at **93.99% when T = 0.41** (epoch 10) and falls to 93.23% as T reaches
 epochs are spent sharpening past the best hard point; `--t-min 0.4` is the
 better setting for this configuration.
 
+## Full-resolution input
+
+At 14×14 the digit 8 stayed at 88% no matter how much data or capacity it got.
+A 28×28 input keeps the loops and holes that 2×2 pooling closes. LUT4 512×3 at
+14×14 reaches 196 pixels in four layers (`4^4 = 256`); at 28×28 the same reach
+needs five layers (`4^5 = 1024 ≥ 784`), so the comparison is also one cell
+deeper:
+
+| Input | Shape | Cells | Params | Soft | Hard | Worst |
+| --- | --- | --- | --- | --- | --- | --- |
+| 14×14 | 512×3 | 1,616 | 2.69M | 93.74% | 93.23% | 88.19% |
+| **28×28** | **512×4** | **2,128** | **4.95M** | **95.21%** | **94.20%** | **89.99%** |
+
+Both use 50k + augmentation, DRO 0.2. Per-class at 28×28: 0:98.2 1:97.6 2:94.8
+3:94.2 4:92.8 5:92.7 6:94.9 7:94.6 **8:91.8** 9:90.0. The 8 gains 3.6 points,
+7 gains 2.7, and 2/6 gain ~1.6–2.4; 9 gives back 1.6. Resolution was the
+binding constraint on loop-shaped digits.
+
+Note the soft/hard gap is only 1.0 point, and soft accuracy is 95.2% — the
+remaining gap to 97% is model/optimisation capacity, not hardening. The trained
+circuit compiles to 10,398 two-input gates (4.89 per cell).
+
 ## 2-bit ALU cells
 
 Signals are 2-bit values in `{0,1,2,3}`, held as 4-way one-hot distributions.

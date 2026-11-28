@@ -27,21 +27,25 @@ def read_idx(path):
     return sizes, data[4 + 4 * dims :]
 
 
-def load_test(data_dir, count):
+def load_test(data_dir, count, size):
     (_, rows, cols), images = read_idx(pathlib.Path(data_dir) / "t10k-images-idx3-ubyte")
     _, labels = read_idx(pathlib.Path(data_dir) / "t10k-labels-idx1-ubyte")
     count = min(count, len(labels))
+    factor = rows // size
     samples = []
     for index in range(count):
         offset = index * rows * cols
         grid = []
-        for y in range(14):
-            for x in range(14):
+        for y in range(size):
+            for x in range(size):
                 total = 0
-                for dy in range(2):
-                    for dx in range(2):
-                        total += images[offset + (2 * y + dy) * cols + 2 * x + dx]
-                grid.append(1 if total >= 255 else 0)
+                for dy in range(factor):
+                    for dx in range(factor):
+                        total += images[
+                            offset + (factor * y + dy) * cols + factor * x + dx
+                        ]
+                # Matches avg_pool(size) >= 0.25 in the trainer.
+                grid.append(1 if total >= 0.25 * factor * factor * 255 else 0)
         samples.append((grid, labels[index]))
     return samples
 
@@ -99,9 +103,12 @@ def main():
     parser.add_argument("--count", type=int, default=10000)
     args = parser.parse_args()
 
-    samples = load_test(args.data, args.count)
-    truth = [label for _, label in samples]
     compiled = [compile_model(path) for path in args.models]
+    size = round(compiled[0][0]["inputSize"] ** 0.5)
+    if any(round(model["inputSize"] ** 0.5) != size for model, _ in compiled):
+        raise SystemExit("all models must share an input size")
+    samples = load_test(args.data, args.count, size)
+    truth = [label for _, label in samples]
 
     summed = [[0] * 10 for _ in samples]
     for path, (model, layers) in zip(args.models, compiled):
