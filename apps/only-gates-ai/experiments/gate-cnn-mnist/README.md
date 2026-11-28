@@ -732,7 +732,10 @@ Useful options for both runners: `--size`, `--threshold`, `--batch`, `--lr`,
   and `--augment-translate` (default 0.1) control the ranges.
 - `--one-vs-rest` — train ten independent yes/no forests (one per digit)
   instead of one shared-trunk 10-class forest, then vote. `--ovr-pos-weight`
-  (default 3) weights the positive class.
+  (default 3) weights the positive class. `--ovr-calibrate` scores each test
+  example by its per-class log-likelihood ratio over the vote count, fitted on
+  the training votes, because a raw vote total is not comparable across
+  classes.
 - `--class-dro <eta>` — group-DRO step on the per-class training loss. `0.2`
   rebalances toward weak digits and improved both mean and worst-class recall
   in testing; `1.0` destabilises training. Off by default.

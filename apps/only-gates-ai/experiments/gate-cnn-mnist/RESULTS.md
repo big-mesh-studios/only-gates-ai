@@ -558,9 +558,24 @@ model is over-positive because of the class weight, and classes whose models
 fire on more negatives win the argmax. Raw vote totals are not comparable
 across models.
 
-`--ovr-calibrate` fixes this by choosing, per class, the vote level that makes
-the class fire on 10% of the training set (MNIST is balanced), and scoring
-`votes - offset`. The calibrated run is pending.
+Equalising firing rates is not enough. Choosing, per class, the vote level
+that makes the class fire on 10% of the training set and scoring
+`votes - offset` gives:
+
+| | Overall | Worst | 1 | 2 | 3 | 4 | 5 | 8 | 9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OVR, raw votes | 89.45% | 83.51% | 98.7 | 84.0 | 86.1 | 84.4 | 83.5 | 91.0 | 84.8 |
+| OVR, quantile offset | 88.90% | 82.23% | 90.5 | 87.0 | 88.1 | 87.2 | 90.7 | 87.4 | 82.2 |
+
+This flattens every class to a 10% firing rate, which helps the classes that
+were under-firing (5 +7.2) and hurts the ones that were genuinely easy (1 −8.2).
+Separation, not firing rate, is what differs between classes.
+
+`--ovr-calibrate` therefore scores by the per-class log-likelihood ratio
+`log P(votes | this digit) / P(votes | other digits)`, with Laplace smoothing,
+fitted on the training votes. A vote of 8 then counts for more in a class whose
+positives reliably reach 8 than in one whose positives do not. Full-data
+numbers pending.
 
 ## Gate simplification
 

@@ -1933,9 +1933,7 @@ def run_one_vs_rest(
     name = args.models.split(",")[0].strip()
     circuits = args.circuits_per_label
     scores = []
-    offsets = []
     params = 0
-    prior = 0.1
     for target in range(10):
         generator = torch.Generator().manual_seed(args.seed + 101 * target)
         model = build_ovr_model(
@@ -1947,21 +1945,34 @@ def run_one_vs_rest(
         print(f"  training class {target}: {params:,} params", flush=True)
         model = train_binary(model, train_x, train_y, args, target)
         train_votes = summed_votes(model, train_x)
-        if args.ovr_calibrate:
-            # Each yes/no model is trained with a positive-class weight, so
-            # its vote rate is not a probability. Pick the vote level that
-            # makes the class fire on `prior` of the training set; subtracting
-            # it puts every class's score on the same scale.
-            offset = torch.quantile(
-                train_votes.float(), 1.0 - prior
-            ).item()
-        else:
-            offset = 0.0
-        offsets.append(offset)
-        scores.append(summed_votes(model, test_x) - offset)
+        test_votes = summed_votes(model, test_x)
+        if not args.ovr_calibrate:
+            scores.append(test_votes)
+            del model
+            continue
+        # A yes/no model's vote count is not a probability, and the classes
+        # are not equally separable. Turn each vote count into its per-class
+        # log-likelihood ratio P(votes | this digit) / P(votes | other digits)
+        # using the training votes, so a vote of 8 counts more for a class
+        # whose positives reliably reach 8 than for one whose do not.
+        bins = circuits + 1
+        smooth = 0.5
+        positive = train_votes[train_y == target].long()
+        negative = train_votes[train_y != target].long()
+        counts_positive = torch.bincount(positive, minlength=bins).float()
+        counts_negative = torch.bincount(negative, minlength=bins).float()
+        p_positive = (counts_positive + smooth) / (
+            counts_positive.sum() + smooth * bins
+        )
+        p_negative = (counts_negative + smooth) / (
+            counts_negative.sum() + smooth * bins
+        )
+        ratio = torch.log(p_positive) - torch.log(p_negative)
+        scores.append(ratio[test_votes.long()])
         print(
-            f"    class {target} offset {offset:.2f} "
-            f"(train mean {train_votes.mean().item():.2f})",
+            f"    class {target} log-odds "
+            f"[{ratio.min().item():+.2f}, {ratio.max().item():+.2f}] "
+            f"train mean {train_votes.mean().item():.2f}",
             flush=True,
         )
         del model
