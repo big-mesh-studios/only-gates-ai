@@ -540,6 +540,29 @@ instead of 4.95M) but not gate instances — every spatial position still needs
 its own gate, so the conv nets cost 2–3× the gates for 7–16 fewer points.
 The dense free-wiring forest remains the better circuit.
 
+## Distillation from a float CNN
+
+If the forest's limit were supervision, a stronger teacher should help. A
+16/32-channel float CNN trained on the same 28×28 binary input reaches
+**99.25%** (8 epochs), so the input representation is not the constraint.
+Training the LUT4 512×4 forest with an added temperature-scaled KL term:
+
+| Setting | Soft | Hard | Worst | Peak hard |
+| --- | --- | --- | --- | --- |
+| baseline | 95.21% | **94.20%** | 89.99% | 94.22% |
+| distill 0.5, T=2, teacher 98.40% | 94.92% | 94.00% | 88.91% | 94.16% |
+| distill 0.1, T=2, teacher 99.25% | 94.84% | 93.73% | 88.30% | 94.32% |
+
+No gain at either weight. The hard-accuracy peak is unchanged within noise
+(94.2 ± 0.1), and soft accuracy gets slightly *worse*, so the KL term is
+interfering with the vote distribution rather than teaching it anything.
+A stronger teacher makes no difference either.
+
+Interpretation: the forest is already fitting all the signal 50k examples
+contain. The teacher's advantage is representational — float convolutions and
+million-way weights — not extra information about the data. Distilling soft
+targets cannot create the capacity the circuit lacks. Negative result.
+
 ## 2-bit ALU cells
 
 Signals are 2-bit values in `{0,1,2,3}`, held as 4-way one-hot distributions.

@@ -1011,17 +1011,34 @@ class DistillTeacher(nn.Module):
         return self.fc2(x)
 
 
-def train_teacher(teacher, x, y, device, epochs, batch=128, lr=1e-3):
-    """Fit the float teacher and report its clean accuracy."""
-    optimizer = torch.optim.Adam(teacher.parameters(), lr=lr)
+def train_teacher(teacher, x, y, args, device, train_raw=None, epochs=None):
+    """Fit the float teacher with the same augmentation the student sees."""
+    epochs = epochs if epochs is not None else args.distill_epochs
+    optimizer = torch.optim.Adam(teacher.parameters(), lr=1e-3)
     teacher.train()
     total = len(x)
+    generator = torch.Generator(device=x.device)
+    generator.manual_seed(args.seed + 7)
     for epoch in range(epochs):
         permutation = torch.randperm(total, device=x.device)
         correct = 0
-        for start in range(0, total, batch):
-            indices = permutation[start : start + batch]
-            logits = teacher(x[indices])
+        for start in range(0, total, 128):
+            indices = permutation[start : start + 128]
+            batch = x[indices]
+            if train_raw is not None and args.augment:
+                batch = build_features(
+                    augment_batch(
+                        train_raw[indices],
+                        generator,
+                        args.augment_rotation,
+                        args.augment_scale,
+                        args.augment_translate,
+                    ),
+                    args.size,
+                    args.threshold,
+                    args.pyramid,
+                )
+            logits = teacher(batch)
             loss = F.cross_entropy(logits, y[indices])
             optimizer.zero_grad()
             loss.backward()
@@ -2479,7 +2496,7 @@ def main():
             raise SystemExit("distillation needs --size 28 without --pyramid")
         teacher = DistillTeacher().to(device)
         teacher = train_teacher(
-            teacher, train_x, train_y, device, args.distill_epochs
+            teacher, train_x, train_y, args, device, train_raw
         )
 
     input_features = (
