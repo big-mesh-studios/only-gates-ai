@@ -721,6 +721,9 @@ Useful options for both runners: `--size`, `--threshold`, `--batch`, `--lr`,
   28×28 image before pooling and thresholding, regenerated every batch.
   `--augment-rotation` (degrees, default 10), `--augment-scale` (default 0.1)
   and `--augment-translate` (default 0.1) control the ranges.
+- `--class-dro <eta>` — group-DRO step on the per-class training loss. `0.2`
+  rebalances toward weak digits and improved both mean and worst-class recall
+  in testing; `1.0` destabilises training. Off by default.
 - `--stacked-readout linear|gate` — after hardening, retrain a combiner on the
   `10×K` forest bits. `linear` is a weighted vote; `gate` is a small second
   gate layer (`--stacked-hidden`, default 32) that can learn non-additive

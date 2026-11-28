@@ -503,20 +503,32 @@ Mean accuracy hides weak digits. The exported LUT4 512×3 circuit on the full
 Overall 92.13%, worst class 87.27%, spread 10.7 points. The top confusions
 are 9→4 (48), 5→3 (33), 7→2 (28), 8→5 (24).
 
+With `--class-dro 0.2` the full-test numbers become:
+
+| Digit | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Recall | 98.2 | 97.4 | 92.0 | 91.2 | 92.9 | 90.6 | 91.9 | 91.1 | **88.3** | **88.4** |
+
+Overall 92.26%, worst 88.30%. The gain is concentrated on the weak digits
+(8 +1.0, 9 +1.1, 5 +0.9) while 6 gives back 1.7, which is the intended
+worst-class trade. This is the model bundled in the demo.
+
 `--class-dro <eta>` adds a group-DRO step on the per-class training loss, and
 the runner now reports `perClassAccuracy` for every model so a weak class
 cannot hide behind the mean.
 
-First DRO test, LUT3 256×128:
+DRO on LUT3 256×128, step size matters a lot:
 
-| Setting | Overall | Worst class |
-| --- | --- | --- |
-| baseline | 88.6% | 82.4% |
-| `--class-dro 1.0` | 87.7% | 77.7% |
+| Setting | Overall | Worst class | Weak classes (5 / 8 / 9) |
+| --- | --- | --- | --- |
+| baseline | 88.6% | 82.4% | 83.0 / 82.4 / 82.7 |
+| `--class-dro 1.0` | 87.7% | 77.7% | 83.0 / 87.4 / 77.7 |
+| `--class-dro 0.2` | **89.1%** | **85.3%** | 87.1 / 85.9 / 85.3 |
 
-Reweighting made both worse — it moves capacity between classes rather than
-creating it, and the per-class spread is representational. The metric is worth
-keeping; the objective is not.
+A gentle step improves both mean and worst-class: 5/8/9 gain 2.4–4.1 points
+while 0/1/6 give back 1–4, so capacity is being rebalanced rather than
+created. An aggressive step destabilises training and loses both metrics.
+`--class-dro 0.2` is the useful setting.
 
 ### Demo preprocessing
 
