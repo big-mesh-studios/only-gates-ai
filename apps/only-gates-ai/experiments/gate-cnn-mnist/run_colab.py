@@ -993,6 +993,48 @@ class FloatCNN(nn.Module):
         return F.softmax(self.fc(x), dim=1)
 
 
+class DistillTeacher(nn.Module):
+    """Small float CNN used only to produce soft targets for the gate forest."""
+
+    def __init__(self, output_size=10):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, 16, 3, padding=1)
+        self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
+        self.fc1 = nn.Linear(32 * 7 * 7, 128)
+        self.fc2 = nn.Linear(128, output_size)
+
+    def forward(self, x):
+        x = F.max_pool2d(F.relu(self.conv1(x)), 2)
+        x = F.max_pool2d(F.relu(self.conv2(x)), 2)
+        x = x.flatten(1)
+        x = F.relu(self.fc1(x))
+        return self.fc2(x)
+
+
+def train_teacher(teacher, x, y, device, epochs, batch=128, lr=1e-3):
+    """Fit the float teacher and report its clean accuracy."""
+    optimizer = torch.optim.Adam(teacher.parameters(), lr=lr)
+    teacher.train()
+    total = len(x)
+    for epoch in range(epochs):
+        permutation = torch.randperm(total, device=x.device)
+        correct = 0
+        for start in range(0, total, batch):
+            indices = permutation[start : start + batch]
+            logits = teacher(x[indices])
+            loss = F.cross_entropy(logits, y[indices])
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            correct += (logits.argmax(dim=1) == y[indices]).sum().item()
+        print(
+            f"  teacher epoch {epoch + 1}/{epochs} acc {correct / total * 100:5.2f}%",
+            flush=True,
+        )
+    teacher.eval()
+    return teacher
+
+
 # ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------
@@ -1613,7 +1655,10 @@ def augment_batch(images, generator, rotation, scale, translate):
     return F.grid_sample(images, grid, align_corners=False, padding_mode="zeros")
 
 
-def train(model, train_x, train_y, test_x, test_y, args, hard_capable, train_raw=None):
+def train(
+    model, train_x, train_y, test_x, test_y, args, hard_capable,
+    train_raw=None, teacher=None
+):
     # The float reference dies with relu at the gate models' high LR; keep it
     # at a conventional CNN learning rate.
     lr = args.lr if hard_capable else min(args.lr, 0.01)
@@ -1667,6 +1712,16 @@ def train(model, train_x, train_y, test_x, test_y, args, hard_capable, train_raw
                 args.score_scale,
                 class_weights,
             )
+            if teacher is not None:
+                with torch.no_grad():
+                    teacher_logits = teacher(batch_x)
+                kd_temp = args.distill_temp
+                teacher_probs = F.softmax(teacher_logits / kd_temp, dim=1)
+                student_log = F.log_softmax(
+                    scores * args.score_scale / kd_temp, dim=1
+                )
+                kl = -(teacher_probs * student_log).sum(dim=1).mean()
+                loss = loss + args.distill * kd_temp * kd_temp * kl
             with torch.no_grad():
                 target = train_y[indices]
                 for label in range(10):
@@ -2319,6 +2374,9 @@ def main():
         default=0.0,
         help="Group-DRO step size on per-class training loss (0 disables).",
     )
+    parser.add_argument("--distill", type=float, default=0.0)
+    parser.add_argument("--distill-temp", type=float, default=2.0)
+    parser.add_argument("--distill-epochs", type=int, default=4)
     parser.add_argument(
         "--export-hard",
         action="store_true",
@@ -2415,6 +2473,15 @@ def main():
         f"{args.size}x{args.size} binary"
     )
 
+    teacher = None
+    if args.distill > 0:
+        if args.size != 28 or args.pyramid:
+            raise SystemExit("distillation needs --size 28 without --pyramid")
+        teacher = DistillTeacher().to(device)
+        teacher = train_teacher(
+            teacher, train_x, train_y, device, args.distill_epochs
+        )
+
     input_features = (
         args.size * args.size * pyramid_channels(args.size)
         if args.pyramid
@@ -2510,6 +2577,7 @@ def main():
             args,
             hard_capable,
             train_raw,
+            teacher,
         )
         soft = soft_accuracy(
             model,

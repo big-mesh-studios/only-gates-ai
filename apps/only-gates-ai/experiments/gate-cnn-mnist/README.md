@@ -738,6 +738,10 @@ Useful options for both runners: `--size`, `--threshold`, `--batch`, `--lr`,
   example by its per-class log-likelihood ratio over the vote count, fitted on
   the training votes, because a raw vote total is not comparable across
   classes.
+- `--distill <weight>` — train a small float CNN teacher on the same input,
+  then add `weight * T^2 * KL(teacher_T || forest_T)` to the loss.
+  `--distill-temp` (default 2) and `--distill-epochs` (default 4) control it.
+  Requires `--size 28` without `--pyramid`.
 - `--class-dro <eta>` — group-DRO step on the per-class training loss. `0.2`
   rebalances toward weak digits and improved both mean and worst-class recall
   in testing; `1.0` destabilises training. Off by default.
