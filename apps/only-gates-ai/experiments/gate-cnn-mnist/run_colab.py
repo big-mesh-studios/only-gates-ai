@@ -920,6 +920,28 @@ def hard_accuracy(
     return correct / len(x), all_zero / len(x)
 
 
+def per_class_accuracy(
+    model, x, y, circuits_per_label=1, batch=512, threshold=None
+):
+    """Recall for each digit, so a weak class cannot hide behind the mean."""
+    model.eval()
+    correct = [0] * 10
+    total = [0] * 10
+    with torch.no_grad():
+        for start in range(0, len(x), batch):
+            output = model.hard_forward(x[start : start + batch]).float()
+            if threshold is not None:
+                output = (output >= threshold).float()
+            votes = class_scores(output, circuits_per_label)
+            prediction = votes.argmax(dim=1)
+            target = y[start : start + batch]
+            for label in range(10):
+                mask = target == label
+                total[label] += int(mask.sum().item())
+                correct[label] += int(((prediction == label) & mask).sum().item())
+    return [correct[label] / total[label] if total[label] else 0.0 for label in range(10)]
+
+
 def forest_loss(output, labels, circuits_per_label, scale=8.0):
     """Cross-entropy over the per-label mean vote.
 
@@ -932,6 +954,15 @@ def forest_loss(output, labels, circuits_per_label, scale=8.0):
     """
     scores = class_scores(output, circuits_per_label) / circuits_per_label
     return F.cross_entropy(scores * scale, labels)
+
+
+def weighted_ce(scores, labels, scale, class_weights):
+    logits = scores * scale
+    log_probabilities = F.log_softmax(logits, dim=1)
+    nll = -log_probabilities.gather(1, labels.unsqueeze(1)).squeeze(1)
+    if class_weights is None:
+        return nll.mean(), nll
+    return (nll * class_weights[labels]).mean(), nll
 
 
 def hard_outputs(model, x, batch=512):
@@ -1297,11 +1328,18 @@ def train(model, train_x, train_y, test_x, test_y, args, hard_capable, train_raw
     augment_generator = torch.Generator(device=train_x.device)
     augment_generator.manual_seed(args.seed + 1)
 
+    class_weights = None
+    if args.class_dro > 0:
+        class_weights = torch.ones(10, device=train_x.device)
+
     def run_epoch(epoch, phase, temperature):
+        nonlocal class_weights
         model.train()
         permutation = torch.randperm(total, device=train_x.device)
         loss_sum = 0.0
         batches = 0
+        class_loss = torch.zeros(10, device=train_x.device)
+        class_count = torch.zeros(10, device=train_x.device)
         for start in range(0, total, args.batch):
             indices = permutation[start : start + args.batch]
             if train_raw is not None and args.augment:
@@ -1318,12 +1356,21 @@ def train(model, train_x, train_y, test_x, test_y, args, hard_capable, train_raw
             else:
                 batch_x = train_x[indices]
             output = model(batch_x)
-            loss = forest_loss(
-                output,
-                train_y[indices],
-                circuits_per_label,
-                args.score_scale,
+            scores = (
+                class_scores(output, circuits_per_label) / circuits_per_label
             )
+            loss, per_sample = weighted_ce(
+                scores,
+                train_y[indices],
+                args.score_scale,
+                class_weights,
+            )
+            with torch.no_grad():
+                target = train_y[indices]
+                for label in range(10):
+                    mask = target == label
+                    class_loss[label] += per_sample[mask].sum()
+                    class_count[label] += mask.sum()
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -1331,6 +1378,13 @@ def train(model, train_x, train_y, test_x, test_y, args, hard_capable, train_raw
             reimpose_pinned(model)
             loss_sum += loss.item()
             batches += 1
+        if class_weights is not None and phase == "soft":
+            mean_loss = class_loss / class_count.clamp_min(1)
+            advantage = mean_loss - mean_loss.mean()
+            class_weights = (
+                class_weights * torch.exp(args.class_dro * advantage)
+            ).clamp(0.25, 4.0)
+            class_weights = class_weights / class_weights.mean()
         soft = soft_accuracy(model, test_x, test_y, circuits_per_label)
         line = {
             "epoch": epoch + 1,
@@ -1754,6 +1808,12 @@ def main():
     )
     parser.add_argument("--stacked-hidden", default="32")
     parser.add_argument(
+        "--class-dro",
+        type=float,
+        default=0.0,
+        help="Group-DRO step size on per-class training loss (0 disables).",
+    )
+    parser.add_argument(
         "--export-hard",
         action="store_true",
         help="Print the hardened circuit as EXPORT_HARD <json>.",
@@ -2009,6 +2069,17 @@ def main():
             "steSoftAccuracy": soft if before else None,
             "hardAccuracy": hard,
             "hardAllZeroRate": zero,
+            "perClassAccuracy": (
+                per_class_accuracy(
+                    model,
+                    test_x,
+                    test_y,
+                    args.circuits_per_label,
+                    threshold=hard_threshold,
+                )
+                if hard_capable
+                else None
+            ),
             "hardPrunedAccuracy": pruned,
             "activeCircuitFraction": active_fraction,
             "ensembleCurve": curve,
@@ -2031,6 +2102,15 @@ def main():
             )
         if hard is not None:
             message += f" hard-post {hard * 100:.2f}% (zero {zero * 100:.1f}%)"
+            per_class = result.get("perClassAccuracy")
+            if per_class:
+                message += (
+                    f"\n  per-class: " + " ".join(
+                        f"{label}:{value * 100:.1f}"
+                        for label, value in enumerate(per_class)
+                    )
+                    + f"  worst {min(per_class) * 100:.2f}%"
+                )
         if pruned is not None:
             message += (
                 f"\n  prune: active circuits {active_fraction * 100:.1f}%"

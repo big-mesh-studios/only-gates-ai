@@ -491,6 +491,41 @@ plus 16-bit truth tables). Re-running the exported circuit in plain Python
 scores **92.13% on the full 10,000-image test set**, matching training, so the
 export is exact. The web app's Digit classifier tab runs that file in JS.
 
+## Per-class accuracy
+
+Mean accuracy hides weak digits. The exported LUT4 512×3 circuit on the full
+10k test set:
+
+| Digit | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Recall | 97.8 | 98.0 | 91.2 | 91.2 | 93.9 | 89.7 | 93.6 | 90.6 | **87.3** | **87.3** |
+
+Overall 92.13%, worst class 87.27%, spread 10.7 points. The top confusions
+are 9→4 (48), 5→3 (33), 7→2 (28), 8→5 (24).
+
+`--class-dro <eta>` adds a group-DRO step on the per-class training loss, and
+the runner now reports `perClassAccuracy` for every model so a weak class
+cannot hide behind the mean.
+
+First DRO test, LUT3 256×128:
+
+| Setting | Overall | Worst class |
+| --- | --- | --- |
+| baseline | 88.6% | 82.4% |
+| `--class-dro 1.0` | 87.7% | 77.7% |
+
+Reweighting made both worse — it moves capacity between classes rather than
+creating it, and the per-class spread is representational. The metric is worth
+keeping; the objective is not.
+
+### Demo preprocessing
+
+The first demo centred drawings by bounding box on a 24×24 raster with a thin
+brush, which shifted 7s and 9s relative to MNIST. It now follows the MNIST
+pipeline: 20×20 box, centre of mass, ~2.3 px brush at 28×28, then 2×2
+average-pool and threshold. This changes the demo input only; the exported
+circuit is unchanged.
+
 ## Gate simplification
 
 Taxonomy of a hardened cell by argmax gate: constant (`0`,`15`) reads nothing;

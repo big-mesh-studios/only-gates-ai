@@ -1,4 +1,4 @@
-import { rasterizeStrokes } from "./rasterizer";
+import { flattenStrokes } from "./rasterizer";
 import type { Strokes } from "./types";
 
 /**
@@ -28,6 +28,12 @@ export interface DigitPrediction {
 
 export const DIGIT_GRID = 14;
 export const DIGIT_LABELS = 10;
+
+const FRAME = 28;
+const FRAME_BOX = 20;
+const SUPERSAMPLE = 4;
+const BRUSH = 1.15;
+const COVERAGE = 0.25;
 
 /** Load the bundled hard circuit. */
 export async function loadLutModel(url: string): Promise<LutModel> {
@@ -88,32 +94,115 @@ export function predictDigit(
 }
 
 /**
- * Turns strokes into the same 14×14 binary grid the circuit was trained on:
- * rasterise at 24×24, centre it in a 28×28 frame, then 2×2 any-pool. The
- * training pipeline thresholded 2×2 average pooling at 0.25, which is exactly
- * "at least one of the four cells is set".
+ * Turns strokes into the 14×14 binary grid the circuit was trained on,
+ * following MNIST's preprocessing: scale the bounding box to 20×20, centre by
+ * centre of mass in a 28×28 frame, then 2×2 average-pool and threshold.
+ *
+ * The previous version centred by bounding box and used a thinner brush, which
+ * shifted digits like 7 and 9 relative to the training distribution.
  */
 export function digitInputFromStrokes(strokes: Strokes): boolean[] {
-  const grid = rasterizeStrokes(strokes, 24);
-  const frame = new Uint8Array(28 * 28);
-  for (let y = 0; y < 24; y++) {
-    for (let x = 0; x < 24; x++) {
-      if (grid[y * 24 + x]) {
-        frame[(y + 2) * 28 + (x + 2)] = 1;
+  const output: boolean[] = new Array<boolean>(DIGIT_GRID * DIGIT_GRID).fill(
+    false,
+  );
+  const points = flattenStrokes(strokes);
+  if (points.length === 0) {
+    return output;
+  }
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let sumX = 0;
+  let sumY = 0;
+  for (const point of points) {
+    if (point.x < minX) minX = point.x;
+    if (point.x > maxX) maxX = point.x;
+    if (point.y < minY) minY = point.y;
+    if (point.y > maxY) maxY = point.y;
+    sumX += point.x;
+    sumY += point.y;
+  }
+
+  const scale = FRAME_BOX / Math.max(1, maxX - minX, maxY - minY);
+  const centreX = sumX / points.length;
+  const centreY = sumY / points.length;
+  const half = FRAME / 2;
+
+  // Map drawing coordinates into the 28×28 frame, centred on the ink centroid.
+  const map = (x: number, y: number): [number, number] => [
+    (x - centreX) * scale + half,
+    (y - centreY) * scale + half,
+  ];
+
+  const size = FRAME * SUPERSAMPLE;
+  const bitmap = new Uint8Array(size * size);
+  const radius = BRUSH * SUPERSAMPLE;
+  const radiusSquared = radius * radius;
+
+  const stamp = (frameX: number, frameY: number): void => {
+    const centreXpx = frameX * SUPERSAMPLE;
+    const centreYpx = frameY * SUPERSAMPLE;
+    const startX = Math.max(0, Math.floor(centreXpx - radius));
+    const endX = Math.min(size - 1, Math.ceil(centreXpx + radius));
+    const startY = Math.max(0, Math.floor(centreYpx - radius));
+    const endY = Math.min(size - 1, Math.ceil(centreYpx + radius));
+    for (let y = startY; y <= endY; y++) {
+      const dy = y - centreYpx;
+      for (let x = startX; x <= endX; x++) {
+        const dx = x - centreXpx;
+        if (dx * dx + dy * dy <= radiusSquared) {
+          bitmap[y * size + x] = 1;
+        }
+      }
+    }
+  };
+
+  for (const stroke of strokes) {
+    for (let index = 0; index < stroke.length; index++) {
+      const point = stroke[index]!;
+      const [fx, fy] = map(point.x, point.y);
+      const next = stroke[index + 1];
+      if (!next) {
+        stamp(fx, fy);
+        continue;
+      }
+      const [nx, ny] = map(next.x, next.y);
+      const steps = Math.max(1, Math.ceil(Math.hypot(nx - fx, ny - fy)));
+      for (let step = 0; step < steps; step++) {
+        const t = step / steps;
+        stamp(fx + (nx - fx) * t, fy + (ny - fy) * t);
       }
     }
   }
 
-  const output: boolean[] = new Array<boolean>(DIGIT_GRID * DIGIT_GRID);
+  // 28×28 coverage (0..1) from the supersampled bitmap, thresholded like the
+  // training pipeline's average-pool-of-4 at 0.25, then 2×2 any-pooled.
+  const frame = new Uint8Array(FRAME * FRAME);
+  const samples = SUPERSAMPLE * SUPERSAMPLE;
+  for (let y = 0; y < FRAME; y++) {
+    for (let x = 0; x < FRAME; x++) {
+      let covered = 0;
+      for (let dy = 0; dy < SUPERSAMPLE; dy++) {
+        for (let dx = 0; dx < SUPERSAMPLE; dx++) {
+          covered +=
+            bitmap[(y * SUPERSAMPLE + dy) * size + (x * SUPERSAMPLE + dx)]!;
+        }
+      }
+      frame[y * FRAME + x] = covered / samples >= COVERAGE ? 1 : 0;
+    }
+  }
+
   for (let y = 0; y < DIGIT_GRID; y++) {
     for (let x = 0; x < DIGIT_GRID; x++) {
       const sy = y * 2;
       const sx = x * 2;
       output[y * DIGIT_GRID + x] = Boolean(
-        frame[sy * 28 + sx] ||
-          frame[sy * 28 + sx + 1] ||
-          frame[(sy + 1) * 28 + sx] ||
-          frame[(sy + 1) * 28 + sx + 1],
+        frame[sy * FRAME + sx] ||
+          frame[sy * FRAME + sx + 1] ||
+          frame[(sy + 1) * FRAME + sx] ||
+          frame[(sy + 1) * FRAME + sx + 1],
       );
     }
   }
